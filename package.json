@@ -1,0 +1,12 @@
+{
+  "name": "kintai-app",
+  "version": "1.0.0",
+  "description": "勤怠・有給・稟議をまとめて管理する小規模チーム向けWebアプリ",
+  "main": "server.js",
+  "private": true,
+  "engines": { "node": ">=22.5.0" },
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "test": "node --no-warnings --test test/*.test.js"
+  }
+}
