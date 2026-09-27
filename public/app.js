@@ -6,17 +6,39 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const state = { me: null, today: null, rules: null, pending: { leave: 0, holiday: 0, ringi: 0 } };
 
 // ------------------------------------------------------------ 通信
+// サーバー（Google Apps Script）のURLは config.js で設定する
+const API_URL = window.KINTAI_API_URL || '';
+const TOKEN_KEY = 'kintai_token';
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
+const setToken = (t) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch { /* 保存できない環境 */ } };
+
 async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : {},
-    body: method !== 'GET' ? JSON.stringify(body ?? {}) : undefined,
-    credentials: 'same-origin',
-  });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== '/api/login') { state.me = null; renderLogin(); throw new Error(data.error || 'ログインしてください'); }
-  if (!res.ok) throw new Error(data.error || `エラーが発生しました（${res.status}）`);
-  return data;
+  if (!API_URL || API_URL.includes('ここに')) throw new Error('サーバーのURLが設定されていません（public/config.js）');
+  let res;
+  try {
+    // text/plain で送ると、Apps Script でも事前確認なしで受け付けられる
+    res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ method, path, body, token: getToken() }), redirect: 'follow' });
+  } catch {
+    throw new Error('サーバーに接続できませんでした。電波の状態を確認して、もう一度お試しください');
+  }
+  const out = await res.json().catch(() => ({ ok: false, status: 500, error: 'サーバーの応答を読み取れませんでした' }));
+  if (out.status === 401 && path !== '/api/login') { setToken(null); state.me = null; renderLogin(); throw new Error(out.error || 'ログインしてください'); }
+  if (!out.ok) throw new Error(out.error || `エラーが発生しました（${out.status}）`);
+  return out.data;
+}
+
+// サーバーから受け取った内容をファイルとして保存させる
+function saveFile(name, content, type) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+async function downloadCsv(path) {
+  try { const d = await api(path); saveFile(d.filename, d.csv, 'text/csv;charset=utf-8'); } catch (e) { toast(e.message, true); }
 }
 
 function toast(msg, isError = false) {
@@ -55,12 +77,20 @@ function shiftMonth(month, delta) {
   const d = new Date(y, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
-const monthLabel = (m) => `${m.slice(0, 4)}年${Number(m.slice(5))}月`;
+const monthLabel = (m) => `${m.slice(0, 4)}年${Number(m.slice(5))}月度`;
+// その日が含まれる「◯月度」（20日締めなら 9/21 は 10月度）
+function periodOf(date) {
+  const c = state.rules.closingDay;
+  const ym = date.slice(0, 7);
+  return c && c < 28 && Number(date.slice(8, 10)) > c ? shiftMonth(ym, 1) : ym;
+}
+const rangeLabel = (from, to) => `${dateLabel(from)}〜${dateLabel(to)}`;
 const isAdmin = () => state.me && state.me.role === 'admin';
-const monthNav = (base, month) => `
+const monthNav = (base, month, from, to) => `
   <a class="btn secondary small" href="${base}/${shiftMonth(month, -1)}">← 前の月</a>
-  <strong>${monthLabel(month)}</strong>
-  <a class="btn secondary small" href="${base}/${shiftMonth(month, 1)}">次の月 →</a>`;
+  <strong>${monthLabel(month)}<span class="muted small">（${rangeLabel(from, to)}）</span></strong>
+  <a class="btn secondary small" href="${base}/${shiftMonth(month, 1)}">次の月 →</a>
+  ${month !== state.period ? `<a class="btn ghost small" href="${base}/${state.period}">今月度へ</a>` : ''}`;
 
 // ------------------------------------------------------------ モーダル
 function openModal(html, onSubmit, { wide = false } = {}) {
@@ -97,7 +127,7 @@ function renderLogin() {
   $('#app').innerHTML = `
   <div class="login-wrap">
     <form class="card login" id="login-form">
-      <div class="brand"><img src="/icon.svg" alt="">勤怠・有給・稟議</div>
+      <div class="brand"><img src="icon.svg" alt="">勤怠・有給・稟議</div>
       <label>ログインID（メールアドレス）<input name="login_id" autocomplete="username" required></label>
       <label>パスワード<input name="password" type="password" autocomplete="current-password" required></label>
       <p class="error" id="login-error"></p>
@@ -108,7 +138,8 @@ function renderLogin() {
   $('#login-form').onsubmit = async (ev) => {
     ev.preventDefault();
     try {
-      await api('/api/login', { method: 'POST', body: Object.fromEntries(new FormData(ev.target)) });
+      const d = await api('/api/login', { method: 'POST', body: Object.fromEntries(new FormData(ev.target)) });
+      setToken(d.token);
       await boot();
     } catch (e) { $('#login-error').textContent = e.message; }
   };
@@ -118,7 +149,7 @@ function renderForcePassword() {
   $('#app').innerHTML = `
   <div class="login-wrap">
     <form class="card login" id="pw-form">
-      <div class="brand"><img src="/icon.svg" alt="">はじめにパスワードを変更</div>
+      <div class="brand"><img src="icon.svg" alt="">はじめにパスワードを変更</div>
       <p class="small muted">仮のパスワードでログインしています。ご自身だけが知っているパスワード（8文字以上）に変更してください。</p>
       <label>現在（仮）のパスワード<input name="current" type="password" autocomplete="current-password" required></label>
       <label>新しいパスワード（8文字以上）<input name="next" type="password" minlength="8" autocomplete="new-password" required></label>
@@ -143,8 +174,9 @@ function renderForcePassword() {
 
 async function logout() {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
+  setToken(null);
   state.me = null;
-  history.replaceState(null, '', '/');
+  history.replaceState(null, '', location.pathname);
   renderLogin();
 }
 
@@ -172,7 +204,7 @@ function renderShell() {
   $('#app').innerHTML = `
   <div class="layout">
     <aside class="side" id="side">
-      <div class="brand"><img src="/icon.svg" alt="">勤怠・有給・稟議</div>
+      <div class="brand"><img src="icon.svg" alt="">勤怠・有給・稟議</div>
       <button class="secondary small menu-toggle" id="menu-toggle" type="button">メニュー</button>
       <div class="nav-wrap">
         <nav class="nav">
@@ -255,7 +287,7 @@ async function router() {
 async function boot() {
   try {
     const d = await api('/api/me');
-    Object.assign(state, { me: d.user, today: d.today, rules: d.rules });
+    Object.assign(state, { me: d.user, today: d.today, period: d.period, rules: d.rules });
   } catch { renderLogin(); return; }
   if (state.me.must_change_password) { renderForcePassword(); return; }
   if (!location.hash) location.hash = '#/punch';
@@ -268,7 +300,7 @@ document.addEventListener('DOMContentLoaded', boot);
 
 function ruleText() {
   const r = state.rules;
-  return `実働が${hm(r.breakAfter)}を超えた日は休憩${r.breakMinutes}分を自動で差し引き、${hm(r.standard)}を超えた分を残業として数えます。`;
+  return `${r.closingDay ? `毎月${r.closingDay}日締め（${r.closingDay + 1}日から翌月${r.closingDay}日まで）で集計します。` : ''}実働が${hm(r.breakAfter)}を超えた日は休憩${r.breakMinutes}分を自動で差し引き、${hm(r.standard)}を超えた分を残業として数えます。`;
 }
 
 // ============================================================ 打刻
@@ -278,7 +310,6 @@ page(/^#\/punch$/, async (main) => {
     const segs = r?.segments || [];
     const working = r?.open || !!d.carry;
     const st = working ? ['勤務中', 'b-working'] : segs.length ? ['退勤済み', 'b-off'] : ['未出勤', 'b-off'];
-    const inLabel = segs.length ? '再開（もう一度出勤）' : '出勤';
     main.innerHTML = `
       <h1>打刻</h1>
       <div class="card clock">
@@ -287,8 +318,9 @@ page(/^#\/punch$/, async (main) => {
         <span class="badge ${st[1]} state">${st[0]}</span>
         ${d.carry ? `<p class="small">前日（${dateLabel(d.carry.work_date)}）${esc(d.carry.segments.at(-1).in)}からの勤務が続いています。退勤を押すと前日の記録として保存します。</p>` : ''}
         <div class="punch-buttons">
-          <button data-act="in" ${working || segs.length >= state.rules.maxSegments ? 'disabled' : ''}>${inLabel}</button>
+          <button data-act="in" ${working || segs.length ? 'disabled' : ''}>出勤</button>
           <button data-act="out" class="amber" ${working ? '' : 'disabled'}>退勤</button>
+          <button data-act="resume" class="resume" ${working || !segs.length || segs.length >= state.rules.maxSegments ? 'disabled' : ''}>再開<small>退勤後にもう一度働くとき</small></button>
         </div>
         <div class="punch-log">
           <div><span class="small muted">出勤</span><b>${esc(r?.clock_in || '—')}</b></div>
@@ -299,7 +331,7 @@ page(/^#\/punch$/, async (main) => {
         ${segs.length > 1 ? `<p class="small muted">本日の打刻：${segs.map((s) => `${esc(s.in)}〜${esc(s.out || '')}`).join('　/　')}</p>` : ''}
       </div>
       <div class="notice info small">
-        一度退勤したあとに仕事を再開するときは「再開」を押してください（1日${state.rules.maxSegments}回まで）。<br>
+        帰宅後などに仕事を再開するときは「再開」を、終わったら「退勤」を押してください（1日${state.rules.maxSegments}回まで）。<br>
         ${ruleText()}<br>
         押し忘れ・押し間違いは「勤怠の記録」の備考欄に書いて、管理者へ修正を依頼してください。
       </div>`;
@@ -308,7 +340,7 @@ page(/^#\/punch$/, async (main) => {
         b.disabled = true;
         try {
           const res = await api('/api/attendance/punch', { method: 'POST', body: { action: b.dataset.act } });
-          toast(b.dataset.act === 'in' ? (segs.length ? '勤務を再開しました' : '出勤しました。今日もよろしくお願いします') : '退勤しました。おつかれさまでした');
+          toast({ in: '出勤しました。今日もよろしくお願いします', resume: '勤務を再開しました', out: '退勤しました。おつかれさまでした' }[b.dataset.act]);
           draw(res);
         } catch (e) { toast(e.message, true); b.disabled = false; }
       };
@@ -327,13 +359,12 @@ page(/^#\/punch$/, async (main) => {
 // ============================================================ 勤怠の記録（本人・管理者共通）
 function attendanceTable(data, { editable }) {
   const byDate = Object.fromEntries(data.records.map((r) => [r.work_date, r]));
-  const [y, m] = data.month.split('-').map(Number);
-  const last = new Date(y, m, 0).getDate();
   let rows = '';
-  for (let d = 1; d <= last; d++) {
-    const date = `${data.month}-${String(d).padStart(2, '0')}`;
+  const end = new Date(data.to + 'T00:00:00');
+  for (let cur = new Date(data.from + 'T00:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
+    const date = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
     const r = byDate[date];
-    const wd = new Date(y, m - 1, d).getDay();
+    const wd = cur.getDay();
     const tags = [];
     for (const l of data.leaves) {
       if (l.start_date <= date && date <= l.end_date) {
@@ -412,11 +443,11 @@ function bindAttendanceRows(main, data, { editable }) {
 }
 
 page(/^#\/attendance(?:\/(\d{4}-\d{2}))?$/, async (main, m) => {
-  const month = m[1] || state.today.slice(0, 7);
+  const month = m[1] || state.period;
   const data = await api(`/api/attendance?month=${month}`);
   main.innerHTML = `
     <h1>勤怠の記録</h1>
-    <div class="toolbar">${monthNav('#/attendance', month)}</div>
+    <div class="toolbar">${monthNav('#/attendance', month, data.from, data.to)}</div>
     ${attendanceTable(data, { editable: false })}`;
   bindAttendanceRows(main, data, { editable: false });
 });
@@ -636,7 +667,7 @@ function newRingiModal(meta, prefill = {}) {
       <label>購入数量<input name="quantity" maxlength="50" value="${esc(prefill.quantity || '')}" placeholder="例：1、4点、1箱(100個入り)"></label>
       <label>経費種別<select name="category" required>${meta.categories.map((c) => `<option ${c === prefill.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
     </div>
-    <label>支出理由・目的<textarea name="content" maxlength="4000" required placeholder="例：上田様の洗面台のタイル穴あけのため">${esc(prefill.content || '')}</textarea></label>
+    <label>支出理由・目的<textarea name="content" maxlength="4000" required placeholder="例：〇〇様の洗面台のタイル穴あけのため">${esc(prefill.content || '')}</textarea></label>
     <div class="form-row">
       <label>見積金額（税込・数字のみ）<input name="amount" inputmode="numeric" value="${prefill.amount ?? ''}" placeholder="例：1760"></label>
       <label>金額の確度<select name="certainty">${meta.certainty.map((c) => `<option ${c === prefill.certainty ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
@@ -678,7 +709,7 @@ page(/^#\/ringi\/(\d+)$/, async (main, m) => {
         <dt>支出理由・目的</dt><dd class="pre">${esc(r.content)}</dd>
         <dt>見積金額（税込）</dt><dd>${yen(r.amount)}（${esc(r.certainty)}）</dd>
         <dt>支出日</dt><dd>${r.expense_date ? `${fullDate(r.expense_date)}（${dow(r.expense_date)}）` : '—'}</dd>
-        <dt>見積書・資料</dt><dd>${r.has_attachment ? `<a href="/api/ringi/${r.id}/attachment">${esc(r.attachment_name)}</a>` : 'なし'}</dd>
+        <dt>見積書・資料</dt><dd>${r.has_attachment ? `<button type="button" class="small secondary" id="r-attach">${esc(r.attachment_name)} を開く</button>` : r.attachment_url ? `<a href="${esc(r.attachment_url)}" target="_blank" rel="noopener noreferrer">旧シートの添付を開く</a>` : 'なし'}</dd>
       </dl>
     </div>
     ${r.status === 'approved' || r.status === 'rejected' ? `<div class="card"><h2>決裁結果</h2><dl class="detail">
@@ -692,6 +723,13 @@ page(/^#\/ringi\/(\d+)$/, async (main, m) => {
       <button class="ghost" id="r-print" type="button">印刷する</button>
     </div>`;
   $('#r-print').onclick = () => window.print();
+  if ($('#r-attach')) $('#r-attach').onclick = async () => {
+    try {
+      const f = await api(`/api/ringi/${r.id}/attachment`);
+      const bytes = Uint8Array.from(atob(f.data), (ch) => ch.charCodeAt(0));
+      saveFile(f.name, new Blob([bytes], { type: f.type }));
+    } catch (e) { toast(e.message, true); }
+  };
   if (canCopy) $('#r-copy').onclick = () => newRingiModal(d, r);
   if (canCancel) $('#r-cancel').onclick = async () => {
     if (!confirm('この申請を取り下げますか？')) return;
@@ -730,12 +768,12 @@ page(/^#\/admin$/, async (main) => {
     ${d.missing.length ? `<div class="card table-wrap"><h2>退勤の打刻漏れ（${d.missing.length}件）</h2>
       <p class="small muted">クリックすると、その日の勤怠を修正できる画面に移ります。</p>
       <table><thead><tr><th>日付</th><th>社員</th><th>最後の出勤（再開）</th><th>備考</th></tr></thead><tbody>
-      ${d.missing.map((r) => `<tr class="clickable" data-goto="#/admin/attendance/${r.user_id}/${r.work_date.slice(0, 7)}"><td class="nowrap">${dateLabel(r.work_date)}</td><td>${esc(r.name)}</td><td>${esc(r.segments.at(-1).in)}</td><td>${esc(r.note)}</td></tr>`).join('')}
+      ${d.missing.map((r) => `<tr class="clickable" data-goto="#/admin/attendance/${r.user_id}/${periodOf(r.work_date)}"><td class="nowrap">${dateLabel(r.work_date)}</td><td>${esc(r.name)}</td><td>${esc(r.segments.at(-1).in)}</td><td>${esc(r.note)}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
     <div class="card table-wrap">
       <h2>本日の出勤状況</h2>
       <table><thead><tr><th>社員</th><th>状態</th><th class="right">出勤</th><th class="right">退勤</th><th class="right">実働</th></tr></thead><tbody>
-      ${d.today.map((t) => `<tr class="clickable" data-goto="#/admin/attendance/${t.user.id}/${d.date.slice(0, 7)}">
+      ${d.today.map((t) => `<tr class="clickable" data-goto="#/admin/attendance/${t.user.id}/${state.period}">
         <td>${esc(t.user.name)}</td><td><span class="badge ${cls[t.status]}">${t.status}</span></td>
         <td class="num">${esc(t.record?.clock_in || '')}</td><td class="num">${esc(t.record?.clock_out || '')}</td>
         <td class="num">${t.record && !t.record.open ? hm(t.record.work_minutes) : ''}</td>
@@ -753,13 +791,13 @@ async function activeUsers() {
 page(/^#\/admin\/attendance(?:\/(\d+))?(?:\/(\d{4}-\d{2}))?$/, async (main, m) => {
   const users = await activeUsers();
   const uid = Number(m[1]) || users[0]?.id;
-  const month = m[2] || state.today.slice(0, 7);
+  const month = m[2] || state.period;
   const data = await api(`/api/attendance?user_id=${uid}&month=${month}`);
   main.innerHTML = `
     <h1>勤怠の確認・修正</h1>
     <div class="toolbar">
       <label>社員<select id="att-user">${users.map((u) => `<option value="${u.id}" ${u.id === uid ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
-      ${monthNav(`#/admin/attendance/${uid}`, month)}
+      ${monthNav(`#/admin/attendance/${uid}`, month, data.from, data.to)}
     </div>
     ${attendanceTable(data, { editable: true })}`;
   $('#att-user').onchange = (ev) => { location.hash = `#/admin/attendance/${ev.target.value}/${month}`; };
@@ -768,15 +806,15 @@ page(/^#\/admin\/attendance(?:\/(\d+))?(?:\/(\d{4}-\d{2}))?$/, async (main, m) =
 
 // ============================================================ 管理者：月次集計
 page(/^#\/admin\/monthly(?:\/(\d{4}-\d{2}))?$/, async (main, m) => {
-  const month = m[1] || state.today.slice(0, 7);
+  const month = m[1] || state.period;
   const d = await api(`/api/admin/monthly?month=${month}`);
   const total = d.rows.reduce((a, r) => ({ w: a.w + r.work_minutes, o: a.o + r.overtime_minutes }), { w: 0, o: 0 });
   main.innerHTML = `
     <h1>月次集計</h1>
     <div class="toolbar">
-      ${monthNav('#/admin/monthly', month)}
-      <a class="btn small" href="/api/admin/monthly/export?month=${month}" download>集計をCSVで出力</a>
-      <a class="btn small secondary" href="/api/attendance/export?month=${month}" download>日別の明細をCSVで出力</a>
+      ${monthNav('#/admin/monthly', month, d.from, d.to)}
+      <button class="small" id="csv-summary" type="button">集計をCSVで出力</button>
+      <button class="small secondary" id="csv-detail" type="button">日別の明細をCSVで出力</button>
     </div>
     <div class="card table-wrap">
       <table><thead><tr><th>社員名</th><th class="right">出勤日数</th><th class="right">総労働時間</th><th class="right">残業時間</th><th class="right">打刻漏れ</th><th class="right">休日出勤</th><th></th></tr></thead><tbody>
@@ -791,6 +829,8 @@ page(/^#\/admin\/monthly(?:\/(\d{4}-\d{2}))?$/, async (main, m) => {
       </tbody></table>
       <p class="small muted">${ruleText()} 退勤の打刻漏れがある日は、労働時間に含まれていません。</p>
     </div>`;
+  $('#csv-summary').onclick = () => downloadCsv(`/api/admin/monthly/export?month=${month}`);
+  $('#csv-detail').onclick = () => downloadCsv(`/api/attendance/export?month=${month}`);
 }, true);
 
 // ============================================================ 管理者：休暇・有給の管理
@@ -928,6 +968,16 @@ page(/^#\/admin\/users$/, async (main) => {
       </tr>`).join('')}
       </tbody></table>
     </div>
+    <div class="card">
+      <h2>今までのスプレッドシートから取り込む</h2>
+      <p class="small muted">今お使いのスプレッドシートのURLを貼り付けると、社員（氏名・メールアドレス）、打刻、購入申請、休暇申請、休日出勤申請を取り込みます。
+      何度実行しても、取り込み済みの記録は重複しません。新しく追加された社員には、ここに一度だけ初期パスワードを表示します。</p>
+      <form id="import-form" class="toolbar">
+        <label class="grow">スプレッドシートのURL<input name="url" required placeholder="https://docs.google.com/spreadsheets/d/..."></label>
+        <button id="import-btn">取り込む</button>
+      </form>
+      <div id="import-result"></div>
+    </div>
     <div class="notice info small">
       「管理者」は全員の勤怠の修正、有給の付与、休暇・休日出勤・稟議の承認、社員の追加ができます。「社員」は自分の打刻と申請だけを行えます。<br>
       退職した方は削除せず「利用停止」にすると、過去の記録を残したままログインできなくなります。
@@ -941,6 +991,25 @@ page(/^#\/admin\/users$/, async (main) => {
     </div>
     ${u.id ? `<label>状態<select name="active"><option value="1" ${u.active ? 'selected' : ''}>利用中</option><option value="0" ${u.active ? '' : 'selected'}>利用停止</option></select></label>`
       : '<label>初期パスワード（8文字以上・本人に伝えてください）<input name="password" minlength="8" required></label><p class="small muted">初回ログイン時に、本人がパスワードを変更します。</p>'}`;
+  $('#import-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const btn = $('#import-btn');
+    btn.disabled = true; btn.textContent = '取り込み中…（1分ほどかかります）';
+    try {
+      const r = await api('/api/admin/import', { method: 'POST', body: { url: ev.target.url.value } });
+      $('#import-result').innerHTML = `
+        <div class="notice info">取り込みました：社員 ${r.users_created.length}人／打刻 ${r.attendance}日分／購入申請 ${r.ringi}件／休暇申請 ${r.leave}件／休日出勤申請 ${r.holiday}件
+        ${r.attendance_skipped ? `<br><span class="small">取り込み済み・氏名不明などで飛ばした打刻：${r.attendance_skipped}件</span>` : ''}
+        ${r.notes.map((n) => `<br><span class="small">${esc(n)}</span>`).join('')}</div>
+        ${r.users_created.length ? `<div class="notice"><b>初期パスワード（この画面を閉じると二度と表示されません。各自にお伝えください）</b>
+          <table><thead><tr><th>氏名</th><th>ログインID</th><th>権限</th><th>初期パスワード</th></tr></thead><tbody>
+          ${r.users_created.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.login_id)}</td><td>${u.role === 'admin' ? '管理者' : '社員'}</td><td><code>${esc(u.password)}</code></td></tr>`).join('')}
+          </tbody></table>
+          <p class="small">承認をしていた方は「管理者」にしています。入社日は各社員の「編集」から入れてください。</p></div>` : ''}`;
+      toast('取り込みが完了しました');
+    } catch (e) { toast(e.message, true); }
+    btn.disabled = false; btn.textContent = '取り込む';
+  };
   $('#add-user').onclick = () => openModal(`<h2>社員を追加</h2>${userForm()}${modalButtons('追加する')}`, async (fd) => {
     await api('/api/users', { method: 'POST', body: fd });
     toast('社員を追加しました');
