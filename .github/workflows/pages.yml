@@ -1,10 +1,9 @@
-# public/ フォルダを GitHub Pages に公開する
+# テストを実行し、public/ フォルダを GitHub Pages に公開する
 name: 画面を公開（GitHub Pages）
 
 on:
   push:
     branches: [main, claude/kind-carson-7crxpa]
-    paths: ['public/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -26,8 +25,10 @@ jobs:
           node-version: 22
       - run: npm test
 
+  # リポジトリが非公開（無料プラン）の間は GitHub Pages を使えないため、公開はスキップする
   deploy:
     needs: test
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     environment:
       name: github-pages

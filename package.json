@@ -3,9 +3,12 @@
   "version": "2.0.0",
   "description": "勤怠・有給・稟議をまとめて管理する小規模チーム向けWebアプリ（画面: GitHub Pages / サーバー: Google Apps Script）",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node dev/server.js",
+    "build": "node dev/build-gas-html.js",
     "test": "node --test test/*.test.js"
   }
 }

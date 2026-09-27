@@ -376,11 +376,11 @@ function handle_(req) {
   return match.handler({ user: user, body: req.body || {}, params: params, query: query, token: req.token });
 }
 
-function doPost(e) {
+function respond_(contents) {
   var out;
   var lock = null;
   try {
-    var req = JSON.parse(e.postData.contents);
+    var req = JSON.parse(contents);
     if (req.method && req.method !== 'GET') {
       lock = LockService.getScriptLock();
       lock.waitLock(20000);
@@ -392,12 +392,26 @@ function doPost(e) {
   } finally {
     if (lock) lock.releaseLock();
   }
-  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+  return JSON.stringify(out);
 }
+// GitHub Pages など別の場所に置いた画面からの呼び出し
+function doPost(e) {
+  return ContentService.createTextOutput(respond_(e.postData.contents)).setMimeType(ContentService.MimeType.JSON);
+}
+// このURLを開いたときは、アプリの画面（Index.html）をそのまま表示する
 function doGet() {
-  return ContentService.createTextOutput(JSON.stringify({ ok: true, status: 200, data: { app: 'kintai', message: '勤怠アプリのサーバーは動いています' } }))
-    .setMimeType(ContentService.MimeType.JSON);
+  try {
+    return HtmlService.createHtmlOutputFromFile('Index')
+      .setTitle('勤怠・有給・稟議')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setFaviconUrl('https://www.gstatic.com/images/icons/material/system/2x/schedule_black_48dp.png');
+  } catch (e) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, status: 200, data: { app: 'kintai', message: '勤怠アプリのサーバーは動いています（画面ファイル Index が見つかりません）' } }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }
+// Index.html の画面から google.script.run で呼ばれる
+function apiCall(contents) { return respond_(contents); }
 
 // ---------------------------------------------------------------- 認証
 route_('POST', '/api/login', { auth: false }, function (c) {

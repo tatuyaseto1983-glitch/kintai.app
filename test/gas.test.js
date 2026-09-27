@@ -197,3 +197,8 @@ test('旧スプレッドシートからの取り込み', () => {
   const again = admin('POST', '/api/admin/import', { url: 'OLD_SHEET_ID_1234567890abcdef' }).data;
   assert.equal(again.users_created.length, 0); assert.equal(again.attendance, 0); assert.equal(again.ringi, 0); assert.equal(again.holiday, 0);
 });
+
+test('gas/Index.html が最新の画面と一致している（npm run build 済み）', () => {
+  const { build } = require('../dev/build-gas-html');
+  assert.equal(fs.readFileSync(path.join(__dirname, '..', 'gas', 'Index.html'), 'utf8'), build(), 'npm run build を実行してください');
+});

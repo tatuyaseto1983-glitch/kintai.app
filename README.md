@@ -3,8 +3,9 @@
 6名ほどの小さなチーム向けに、**打刻・休暇（有給）・休日出勤・稟議（購入申請）** を1つにまとめたWebアプリです。
 スマホからもパソコンからも使えます。
 
-- **画面**：GitHub Pages で公開（`https://<GitHubのユーザー名>.github.io/kintai.app/` のURLを社員に共有）
 - **データ**：Google スプレッドシートに保存（Google Apps Script がサーバーの役目をします）
+- **画面**：Apps Script のURL（`https://script.google.com/macros/s/…/exec`）でそのまま開けます。
+  GitHub Pages（`https://<GitHubのユーザー名>.github.io/kintai.app/`）で公開することもできます
 
 費用はかかりません（GitHub の無料プランと Google アカウントで動きます）。
 
@@ -39,35 +40,39 @@
 
 ## 公開の手順（最初に1回だけ）
 
-### 1. データを置くスプレッドシートとサーバーを用意する（Google）
+いちばん簡単なのは、**Google だけで公開する方法（A）** です。GitHub の設定は要りません。
+GitHub のURLで共有したい場合は、A のあとに B も行います。
+
+### A. Google だけで公開する（おすすめ・15分）
 
 1. Google ドライブで新しいスプレッドシートを作成（名前は例：「勤怠アプリ データ」）
 2. メニューの **拡張機能 → Apps Script** を開く
-3. 最初からある `コード.gs` の中身をすべて消し、このリポジトリの `gas/Code.gs` の中身を貼り付けて保存
-4. 左の歯車（プロジェクトの設定）→「`appsscript.json` マニフェスト ファイルをエディタで表示する」にチェック →
-   `appsscript.json` を `gas/appsscript.json` の中身に置き換えて保存
-5. 上の関数の選択で **`setup`** を選んで「実行」→ 権限の確認が出たら許可
+3. 最初からある `コード.gs` の中身をすべて消し、このリポジトリの **`gas/Code.gs`** の中身を貼り付けて保存（💾）
+4. 左の「ファイル」の **＋ → HTML** を押し、名前を **`Index`** にする（`.html` は自動で付きます）。
+   中身をすべて消し、**`gas/Index.html`** の中身を貼り付けて保存
+5. 上の関数の選択で **`setup`** を選んで「▷ 実行」→ 権限の確認が出たら
+   「権限を確認」→ ご自身のアカウント →（「このアプリは確認されていません」と出たら）「詳細」→「〜に移動」→「許可」
    （スプレッドシートに `users` や `attendance` などのシートができれば成功です）
-6. 右上の **デプロイ → 新しいデプロイ** →「種類の選択」で **ウェブアプリ**
+6. 右上の **デプロイ → 新しいデプロイ** → 歯車から **ウェブアプリ** を選ぶ
    - 次のユーザーとして実行：**自分**
    - アクセスできるユーザー：**全員**
-7. 「デプロイ」を押し、表示された **ウェブアプリのURL**（`https://script.google.com/macros/s/…/exec`）をコピー
+7. 「デプロイ」を押すと **ウェブアプリのURL**（`https://script.google.com/macros/s/…/exec`）が表示されます。
+   **このURLを開けばアプリが使えます。社員にはこのURLを共有してください**（スマホならホーム画面に追加すると便利です）
 
 > 「全員」にしても、アプリのログイン（ID・パスワード）がないとデータは見られません。
 
-### 2. 画面を公開する（GitHub）
+### B. GitHub のURLで共有したい場合（任意）
 
-1. `public/config.js` を開き、`'ここにApps ScriptのURLを貼り付け'` を、手順1-7のURLに書き換えて保存（コミット）
-2. GitHub のリポジトリで **Settings → Pages** を開き、「Source」を **GitHub Actions** にする
-3. **Actions** タブで「画面を公開（GitHub Pages）」が緑色になれば完了。
-   `https://<GitHubのユーザー名>.github.io/kintai.app/` を開くとログイン画面が出ます
+1. `public/config.js` の `'ここにApps ScriptのURLを貼り付け'` を、A-7 のURLに書き換える
+2. GitHub のリポジトリで **Settings → General** の一番下 **Danger Zone → Change visibility → Make public**
+   （無料プランでは公開リポジトリでないと Pages を使えません。公開されるのはプログラムだけで、社員のデータやパスワードは Google 側にあります）
+3. **Settings → Pages** の「Source」を **GitHub Actions** にする
+4. **Actions** タブで「画面を公開（GitHub Pages）」を開き「Run workflow」→ 緑色になれば
+   `https://<GitHubのユーザー名>.github.io/kintai.app/` で開けます
 
-> GitHub の無料プランでは、Pages を使うにはリポジトリを **Public（公開）** にする必要があります（有料の Pro なら非公開のままで可）。
-> 公開されるのはプログラムだけで、**社員のデータやパスワードはGoogleスプレッドシート側にあり、公開されません**。
+### 使い始める
 
-### 3. 使い始める
-
-1. 公開したURLを開き、ID `admin`／パスワード `admin1234` でログイン → 新しいパスワードに変更
+1. アプリを開き、ID `admin`／パスワード `admin1234` でログイン → 新しいパスワードに変更
 2. **社員の管理 → 今までのスプレッドシートから取り込む** に、今お使いのスプレッドシートのURLを貼り付けて「取り込む」
    - 社員（氏名・メールアドレス）、打刻、購入申請、休暇申請、休日出勤申請が入ります
    - 承認をしていた方は「管理者」になります
@@ -78,8 +83,9 @@
 
 ### プログラムを更新したとき
 
-- `gas/Code.gs` を変えた場合：Apps Script に貼り直して保存 → **デプロイ → デプロイを管理 → 編集（鉛筆）→ バージョン「新バージョン」→ デプロイ**（URLは変わりません）
-- `public/` を変えた場合：GitHub に反映すると自動で公開されます
+- `gas/Code.gs` や `gas/Index.html` が変わった場合：Apps Script の同じファイルに貼り直して保存 →
+  **デプロイ → デプロイを管理 → 編集（鉛筆）→ バージョン「新バージョン」→ デプロイ**（URLは変わりません）
+- 画面（`public/`）を変えたときは `npm run build` で `gas/Index.html` を作り直します
 
 ### データについて
 
@@ -96,4 +102,5 @@ Node.js 20 以上で、Google のサービスをまねた環境の上で `gas/Co
 ```bash
 npm start   # http://localhost:3000 で画面を確認（ID admin / パスワード admin1234）
 npm test    # 自動テスト
+npm run build  # 画面を gas/Index.html にまとめ直す
 ```
