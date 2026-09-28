@@ -55,6 +55,7 @@ class Spreadsheet {
   }
   dirty() { this.onChange(); }
   getId() { return this.id; }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/' + this.id + '/edit'; }
   getSheets() { return this.sheets; }
   getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
   insertSheet(n) { const s = new Sheet(this, n); this.sheets.push(s); this.dirty(); return s; }
@@ -88,7 +89,8 @@ function createGas(opts = {}) {
   const context = {
     console,
     SpreadsheetApp: {
-      getActiveSpreadsheet: () => main,
+      getActiveSpreadsheet: () => (opts.standalone ? null : main),
+      create: () => main,
       openById: (id) => { const b = books.get(id); if (!b) throw new Error('not found'); return b; },
     },
     PropertiesService: {

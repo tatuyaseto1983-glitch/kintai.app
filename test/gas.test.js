@@ -202,3 +202,10 @@ test('gas/Index.html が最新の画面と一致している（npm run build 済
   const { build } = require('../dev/build-gas-html');
   assert.equal(fs.readFileSync(path.join(__dirname, '..', 'gas', 'Index.html'), 'utf8'), build(), 'npm run build を実行してください');
 });
+
+test('スプレッドシートに付いていない（単独の）スクリプトでも setup できる', () => {
+  const gas = createGas({ standalone: true });
+  const admin = loginFresh(gas, 'admin', 'admin1234', 'adminpass1');
+  assert.equal(admin('GET', '/api/me').status, 200);
+  assert.ok(gas.main.getSheetByName('users'));
+});

@@ -33,8 +33,13 @@ var TABLES = {
 // ---------------------------------------------------------------- 初期設定（エディタから1回だけ実行）
 function setup() {
   var props = PropertiesService.getScriptProperties();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (ss) props.setProperty('SPREADSHEET_ID', ss.getId());
+  var ss = null;
+  var saved = props.getProperty('SPREADSHEET_ID');
+  if (saved) { try { ss = SpreadsheetApp.openById(saved); } catch (e) { ss = null; } }
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  // スプレッドシートから開いていない（単独の）スクリプトでも動くよう、なければ新しく作る
+  if (!ss) ss = SpreadsheetApp.create('勤怠アプリ データ');
+  props.setProperty('SPREADSHEET_ID', ss.getId());
   Object.keys(TABLES).forEach(function (t) { sheet_(t); });
   if (!props.getProperty('UPLOAD_FOLDER_ID')) {
     props.setProperty('UPLOAD_FOLDER_ID', DriveApp.createFolder('勤怠アプリ_添付ファイル').getId());
@@ -45,14 +50,17 @@ function setup() {
       password_hash: hashPassword_('admin1234'), must_change_password: 1, active: 1, created_at: nowJST_().stamp,
     });
   }
-  Logger.log('初期設定が完了しました。次に「デプロイ」→「新しいデプロイ」でWebアプリとして公開してください。');
+  Logger.log('初期設定が完了しました。データの保存先：' + ss.getUrl());
+  Logger.log('次に「デプロイ」→「新しいデプロイ」でWebアプリとして公開してください。');
 }
 
 // ---------------------------------------------------------------- 表（シート）の読み書き
 var cache_ = {};
 function ss_() {
   var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  var ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new HttpError(500, '初期設定がまだです。Apps Script の画面で関数「setup」を実行してください');
+  return ss;
 }
 function cols_(t) { return TABLES[t].map(function (c) { var p = c.split(':'); return { name: p[0], type: p[1] || 's' }; }); }
 function sheet_(t) {
