@@ -168,11 +168,11 @@
       }
       var d = result.data || {};
       if (d.user) applyUser(d.user);
+      if (d.overtimeRule) applyOvertimeRule(d.overtimeRule); // 本日の記録の「要確認」の説明で使うので先に反映
       if (d.today) applyToday(d.today);
       if (d.month && !showingOtherMonth) applyMonth(d.month, true);
       if (d.staffStatus) applyStaffStatus(d.staffStatus);
       if (d.flex) applyFlex(d.flex);
-      if (d.overtimeRule) applyOvertimeRule(d.overtimeRule);
       if (d.overtime) applyOvertime(d.overtime);
       state.loadedAt = Date.now();
       renderActions();

@@ -130,7 +130,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       const today = await page.locator('#todayBody').innerText();
       assert.match(today, /実働時間\s+08:15/);
       assert.match(today, /社内超過時間\s+00:30/);
-      assert.match(today, /要確認/);
+      assert.match(today, /要確認：社内超過時間が30分以上ですが/, '要確認の説明は設定値（30分）で表示');
       const row = await page.locator('#monthRows tr').first().innerText();
       assert.match(row, /6\/1（月）\s+出社\s+09:25\s+19:00\s+00:20\s+08:15/);
       assert.match(await page.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*退勤済み/);
