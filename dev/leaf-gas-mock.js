@@ -196,6 +196,8 @@ function createLeafGas(opts = {}) {
           let code = 'var __out = [];\n';
           let last = 0;
           source.replace(/<\?(!=|=)?([\s\S]*?)\?>/g, (m, kind, body, index) => {
+            // 本物の Apps Script と同じく、中身が空の <?= ?> / <?!= ?> は構文エラーにする
+            if (kind && !body.trim()) throw new SyntaxError("Unexpected token ';'（" + name + '.html の空のスクリプトレット）');
             code += '__out.push(' + JSON.stringify(source.slice(last, index)) + ');\n';
             if (kind === '=') code += '__out.push(__esc(' + body + '));\n';
             else if (kind === '!=') code += '__out.push(String(' + body + '));\n';

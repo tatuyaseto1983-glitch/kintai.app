@@ -23,7 +23,8 @@
         <div class="brand">
           <? if (logoSrc) { ?>
           <!-- ロゴは WebApp.gs の getLogoDataUri_()（中身は Logo.html）から入ります。
-               <?!= ?> は文字をそのまま出す書き方ですが、getLogoDataUri_() が base64 の文字だけであることを確認済みです -->
+               ロゴの値はエスケープせずにそのまま出力していますが、getLogoDataUri_() が base64 の文字だけであることを確認済みです。
+               （注意：このコメントの中にテンプレートの記号を書くと、Apps Script がそれを実行しようとしてエラーになります） -->
           <img class="brand-logo" src="<?!= logoSrc ?>" alt="<?= brandName ?> ロゴ" width="136" height="56">
           <? } ?>
           <div class="brand-text">

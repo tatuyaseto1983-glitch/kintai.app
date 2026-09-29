@@ -920,3 +920,38 @@ test('ロゴ：Logo.html の中身が画像の形でなければ、ロゴなし�
   assert.doesNotMatch(html, /<img class="brand-logo"|alert\(1\)/);
   assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd<\/span>/);
 });
+
+test('HTML：コメントや説明文の中にテンプレートの記号（<? <?= <?!=）がない', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = path.join(__dirname, '..', 'leaf-portal', 'gas');
+  const problems = [];
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.html'))) {
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    // HTMLコメントの中（Apps Script はコメントの中の記号も実行しようとする）
+    for (const m of text.matchAll(/<!--[\s\S]*?-->/g)) {
+      if (m[0].includes('<?')) problems.push(file + '：コメントの中に「<?」があります');
+    }
+    // 中身が空の <?= ?> / <?!= ?>
+    if (/<\?!?=\s*\?>/.test(text)) problems.push(file + '：中身が空の <?= ?> / <?!= ?> があります');
+    // テンプレートとして評価するのは Index.html だけ。ほかのファイルに記号があると、そのまま画面に出てしまう
+    if (file !== 'Index.html' && text.includes('<?')) problems.push(file + '：テンプレートではないファイルに「<?」があります');
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('テスト用のまね：空のスクリプトレットは本物の Apps Script と同じく構文エラーになる', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const file = path.join(__dirname, '..', 'leaf-portal', 'gas', 'Index.html');
+  const original = fs.readFileSync(file, 'utf8');
+  const gas = createLeafGas();
+  const realRead = fs.readFileSync;
+  fs.readFileSync = (p, ...rest) => (String(p) === file ? original.replace('</body>', '<!-- 例：<?!= ?> --></body>') : realRead(p, ...rest));
+  try {
+    assert.throws(() => gas.g.doGet(), /Unexpected token ';'/);
+  } finally {
+    fs.readFileSync = realRead;
+  }
+  assert.doesNotThrow(() => gas.g.doGet(), '元の Index.html は正常に評価できる');
+});
