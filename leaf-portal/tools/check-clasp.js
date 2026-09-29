@@ -22,6 +22,8 @@ const REQUIRED_FILES = [
   'WebApp.gs', 'Index.html', 'Styles.html', 'Scripts.html',
   // 管理者画面
   'AdminDashboardService.gs', 'AdminView.html', 'AdminStyles.html', 'AdminScripts.html',
+  // ロゴ（assets/logo.png から npm run logo で作る）
+  'Logo.html',
 ];
 
 function checkClaspProject(projectDir) {

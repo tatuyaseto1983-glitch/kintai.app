@@ -175,6 +175,7 @@ function createLeafGas(opts = {}) {
       getTitle() { return this.title; },
       addMetaTag(name, value) { this.metaTags[name] = value; return this; },
       setXFrameOptionsMode() { return this; },
+      setFaviconUrl(url) { this.faviconUrl = url; return this; },
     };
     return out;
   };
@@ -186,14 +187,26 @@ function createLeafGas(opts = {}) {
   const escapeHtml = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   context.HtmlService = {
     createHtmlOutputFromFile: (name) => htmlOutput(readHtml(name)),
+    // テンプレート：<?= 式 ?>（エスケープ）・<?!= 式 ?>（そのまま）・<? 文 ?>（if など）に対応。
     // テンプレートに付けた値（template.initialView など）も、式の中で使えるようにする
     createTemplateFromFile: (name) => {
       const template = {
-        evaluate: () => htmlOutput(readHtml(name).replace(/<\?(!?)=([\s\S]*?)\?>/g, (m, raw, expr) => {
-          const run = vm.runInContext('(function (__t) { with (__t) { return (' + expr + '); } })', context);
-          const value = run(template);
-          return raw ? String(value) : escapeHtml(value);
-        })),
+        evaluate: () => {
+          const source = readHtml(name);
+          let code = 'var __out = [];\n';
+          let last = 0;
+          source.replace(/<\?(!=|=)?([\s\S]*?)\?>/g, (m, kind, body, index) => {
+            code += '__out.push(' + JSON.stringify(source.slice(last, index)) + ');\n';
+            if (kind === '=') code += '__out.push(__esc(' + body + '));\n';
+            else if (kind === '!=') code += '__out.push(String(' + body + '));\n';
+            else code += body + '\n';
+            last = index + m.length;
+            return m;
+          });
+          code += '__out.push(' + JSON.stringify(source.slice(last)) + ');\nreturn __out.join("");';
+          const run = vm.runInContext('(function (__t, __esc) { with (__t) { ' + code + ' } })', context);
+          return htmlOutput(run(template, escapeHtml));
+        },
       };
       return template;
     },

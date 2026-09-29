@@ -436,7 +436,15 @@ test('スタッフ画面：doGet() が画面を返し、Styles・Scripts が読�
   const gas = createLeafGas();
   const out = gas.g.doGet();
   const html = out.getContent();
-  assert.equal(out.getTitle(), 'リーフ 社内ポータル｜勤怠管理');
+  assert.equal(out.getTitle(), 'Leaf Co.,Ltd｜勤怠管理');
+  // ヘッダー：会社ロゴ（Logo.html の data URI）と「Leaf Co.,Ltd」「勤怠管理」
+  const logo = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'leaf-portal', 'gas', 'Logo.html'), 'utf8').trim();
+  assert.ok(html.includes('<img class="brand-logo" src="' + logo + '"'), 'ロゴは Logo.html の内容をそのまま使う');
+  assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd<\/span>/);
+  assert.match(html, /<span class="brand-sub" id="brandSub">勤怠管理<\/span>/);
+  assert.match(html, /<footer class="site-footer">Leaf Co\.,Ltd<\/footer>/);
+  assert.doesNotMatch(html, /リーフ 社内ポータル|brand-mark/, '古い表記・葉っぱアイコンは残っていない');
+  assert.equal(out.faviconUrl, undefined, 'favicon のURLが未設定なら設定しない');
   assert.equal(out.metaTags.viewport, 'width=device-width, initial-scale=1');
   assert.ok(html.includes('<style>') && html.includes('function callGas'));
   assert.doesNotMatch(html, /<\?/, 'テンプレートの記号が残っていない');
@@ -884,4 +892,31 @@ test('残業申請：申請不要の上限は設定シート「残業_申請不�
   assert.equal(gas.g.getStaffDashboard(['overtimeRule']).data.overtimeRule.data, null, 'フレックスには返さない');
   gas.loginAs('nobody@example.com');
   assert.equal(gas.g.getStaffDashboard(['overtimeRule']).data.overtimeRule.success, false, '未登録なら返さない');
+});
+
+test('ロゴ：assets/logo.png から Logo.html を作る（PNG以外・大きすぎる画像は止める）', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { buildLogo } = require('../leaf-portal/tools/build-logo');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logo-'));
+  const out = path.join(dir, 'Logo.html');
+  const png = path.join(__dirname, '..', 'leaf-portal', 'assets', 'logo.png');
+  buildLogo(png, out);
+  assert.equal(fs.readFileSync(out, 'utf8'), fs.readFileSync(path.join(__dirname, '..', 'leaf-portal', 'gas', 'Logo.html'), 'utf8'), 'リポジトリの Logo.html は最新の logo.png から作られている');
+  const notPng = path.join(dir, 'x.png');
+  fs.writeFileSync(notPng, 'hello');
+  assert.throws(() => buildLogo(notPng, out), /PNG 画像ではありません/);
+  const big = path.join(dir, 'big.png');
+  fs.writeFileSync(big, Buffer.concat([fs.readFileSync(png).subarray(0, 8), Buffer.alloc(300 * 1024)]));
+  assert.throws(() => buildLogo(big, out), /大きすぎます/);
+});
+
+test('ロゴ：Logo.html の中身が画像の形でなければ、ロゴなし（会社名だけ）で表示する', () => {
+  const gas = createLeafGas();
+  const real = gas.g.HtmlService.createHtmlOutputFromFile;
+  gas.g.HtmlService.createHtmlOutputFromFile = (name) => (name === 'Logo' ? { getContent: () => '"><script>alert(1)</script>' } : real(name));
+  const html = gas.g.doGet().getContent();
+  assert.doesNotMatch(html, /<img class="brand-logo"|alert\(1\)/);
+  assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd<\/span>/);
 });

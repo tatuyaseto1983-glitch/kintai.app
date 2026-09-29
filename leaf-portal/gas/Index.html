@@ -21,11 +21,13 @@
     <header class="site-header">
       <div class="header-inner">
         <div class="brand">
-          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-            <path d="M27 5C15 5 6 11 6 21c0 2 .4 3.7 1 5 1.5-6 6-11 13-14-6 4-10 9-11.5 15 1.3.6 2.8 1 4.5 1C23 28 27 18 27 5z" />
-          </svg>
+          <? if (logoSrc) { ?>
+          <!-- ロゴは WebApp.gs の getLogoDataUri_()（中身は Logo.html）から入ります。
+               <?!= ?> は文字をそのまま出す書き方ですが、getLogoDataUri_() が base64 の文字だけであることを確認済みです -->
+          <img class="brand-logo" src="<?!= logoSrc ?>" alt="<?= brandName ?> ロゴ" width="136" height="56">
+          <? } ?>
           <div class="brand-text">
-            <span class="brand-name">リーフ 社内ポータル</span>
+            <span class="brand-name"><?= brandName ?></span>
             <span class="brand-sub" id="brandSub">勤怠管理</span>
           </div>
         </div>
@@ -167,7 +169,7 @@
     <!-- ================= 管理者画面（AdminView.html） ================= -->
     <?!= includeHtml_('AdminView') ?>
 
-    <footer class="site-footer">株式会社リーフ 社内ポータル</footer>
+    <footer class="site-footer"><?= brandName ?></footer>
   </div>
 
   <!-- ================= 打刻修正申請のフォーム ================= -->

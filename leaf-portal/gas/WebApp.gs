@@ -14,7 +14,18 @@
  */
 
 /** 画面のタイトル */
-const WEB_APP_TITLE = 'リーフ 社内ポータル｜勤怠管理';
+/** 会社名（ヘッダー・ブラウザのタイトル・フッターに表示） */
+const APP_BRAND_NAME = 'Leaf Co.,Ltd';
+
+/** 画面のタイトル（ブラウザのタブに表示） */
+const WEB_APP_TITLE = 'Leaf Co.,Ltd｜勤怠管理';
+
+/**
+ * ブラウザのタブのアイコン（favicon）にする画像のURL。空欄なら Google の標準アイコンのまま。
+ * Apps Script の仕組み上、ここには「インターネットから見られる画像のURL（https://…）」しか指定できません。
+ * （ロゴ画像を画面に埋め込む方法は favicon には使えないため。README「N」参照）
+ */
+const APP_FAVICON_URL = '';
 
 /** getStaffDashboard() で取得できる情報の種類 */
 const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime', 'overtimeRule'];
@@ -29,9 +40,28 @@ function doGet(e) {
   const template = HtmlService.createTemplateFromFile('Index');
   const requested = e && e.parameter ? String(e.parameter.view || '') : '';
   template.initialView = requested === 'admin' ? 'admin' : 'staff';
-  return template.evaluate()
+  template.brandName = APP_BRAND_NAME;
+  template.logoSrc = getLogoDataUri_();
+  const output = template.evaluate()
     .setTitle(WEB_APP_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  if (APP_FAVICON_URL) output.setFaviconUrl(APP_FAVICON_URL);
+  return output;
+}
+
+/**
+ * ロゴ画像（Logo.html に入っている data:image/png;base64,... の文字）。
+ * ロゴはこの1か所から読み込みます。差し替えは leaf-portal/assets/logo.png を置き換えて npm run logo。
+ * 形が正しくないときは空文字を返し、画面は会社名の文字だけで表示します。
+ */
+function getLogoDataUri_() {
+  let text = '';
+  try {
+    text = HtmlService.createHtmlOutputFromFile('Logo').getContent().trim();
+  } catch (e) {
+    return '';
+  }
+  return /^data:image\/(png|jpeg|svg\+xml|webp);base64,[A-Za-z0-9+\/=]+$/.test(text) ? text : '';
 }
 
 /**

@@ -56,9 +56,9 @@ h2, h3, p { margin: 0; }
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
-.brand-mark { width: 40px; height: 40px; padding: 7px; border-radius: 12px; background: var(--green-light); fill: var(--green); }
+.brand-logo { display: block; height: 56px; width: auto; max-width: 160px; object-fit: contain; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.3; }
-.brand-name { font-weight: 700; color: var(--green-dark); letter-spacing: .02em; }
+.brand-name { font-weight: 700; font-size: 18px; color: var(--green-dark); letter-spacing: .02em; }
 .brand-sub { font-size: 13px; color: var(--text-sub); }
 .user-box { text-align: right; }
 .user-name { font-weight: 700; font-size: 17px; }
@@ -284,6 +284,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid #CDEBDA; border-c
   #mainContent, .grid { gap: 14px; }
   .card { padding: 16px; }
   .header-inner { padding: 12px 14px; }
+  .brand-logo { height: 44px; max-width: 120px; }
+  .brand-name { font-size: 16px; }
   .user-box { text-align: left; width: 100%; }
   .user-meta { justify-content: flex-start; }
   .clock-time { font-size: 48px; }

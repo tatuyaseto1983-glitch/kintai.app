@@ -30,6 +30,7 @@ Google スプレッドシートをデータベースにして、Google Apps Scri
 | `Index.html` / `Styles.html` / `Scripts.html` | スタッフ画面の骨組み・見た目・動き |
 | `AdminDashboardService.gs` | 管理者画面の情報取得 `getAdminDashboard()`、部署入りCSV `exportAdminAttendanceCsv()` |
 | `AdminView.html` / `AdminStyles.html` / `AdminScripts.html` | 管理者画面の骨組み・見た目・動き |
+| `Logo.html` | ヘッダーの会社ロゴ（`assets/logo.png` から `npm run logo` で自動作成。直接編集しない） |
 | `appsscript.json` | タイムゾーン（Asia/Tokyo）などの設定 |
 
 clasp（パソコンから一括反映）用のファイル（`leaf-portal/` 直下。Apps Script には送られません）：
@@ -48,7 +49,7 @@ clasp（パソコンから一括反映）用のファイル（`leaf-portal/` 直
 ## B. 最初にやる作業（clasp でパソコンから一括反映）
 
 ファイルを1つずつコピーする代わりに、Google 公式のツール **clasp（クラスプ）** を使って、
-パソコンの `leaf-portal/gas` にある23ファイルをまとめて Apps Script に反映します。
+パソコンの `leaf-portal/gas` にある24ファイルをまとめて Apps Script に反映します。
 
 ### 全体の流れ
 
@@ -155,7 +156,7 @@ open -e .clasp.json
 ```
 npm run check
 ```
-`✔ 反映先のスクリプトID：…` と `✔ 反映するファイル（23個）` が出れば OK。
+`✔ 反映先のスクリプトID：…` と `✔ 反映するファイル（24個）` が出れば OK。
 表示されたIDが、Apps Script の ⚙ に出ている「スクリプト ID」と同じか見比べてください。
 
 ### B-7. 全ファイルを反映する（`clasp push`）
@@ -167,8 +168,8 @@ npm run push
 - 最初に自動で設定を確認し、問題があれば ✖ を表示して **反映せずに止まります**
 - 「Manifest file has been updated. Do you want to push and overwrite?」と聞かれたら `y` → Enter
   （`appsscript.json`＝日本時間などの設定を反映してよいか、という確認です）
-- `Pushed 23 files at （時刻）.` と出れば成功
-- Apps Script のタブを **再読み込み** すると、左に `Config.gs` など23ファイルが並びます
+- `Pushed 24 files at （時刻）.` と出れば成功
+- Apps Script のタブを **再読み込み** すると、左に `Config.gs` など24ファイルが並びます
   （最初からあった `コード.gs` は、パソコン側にないので消えます。これで正常です）
 
 コードを直したときも、同じく `npm run push` だけで反映できます。
@@ -507,7 +508,7 @@ GAS のまね（モック）は `dev/leaf-gas-mock.js` です。
 
 公開前に、自分だけが開けるURLで動作を確認できます。
 
-1. パソコンで `npm run push`（B-7 と同じ）→ 23ファイルが反映される
+1. パソコンで `npm run push`（B-7 と同じ）→ 24ファイルが反映される
 2. Apps Script の画面右上の **デプロイ → デプロイをテスト**
 3. 「種類の選択」の歯車 ⚙ で **ウェブアプリ** が選ばれていることを確認
 4. 表示された **ウェブアプリの URL（末尾が `/dev`）** をクリック
@@ -700,7 +701,7 @@ npm run test:ui        # スタッフ画面・管理者画面をブラウザで�
 2. **`.clasp.json` をコピー**：前のフォルダの `leaf-portal/.clasp.json` を、新しい `leaf-portal` に入れる
    （名前が「.」で始まるので、見えないときは隠しファイルを表示する設定にしてください）
 3. 新しい `leaf-portal` に移動して **`npm install`**
-4. **`npm run check`** →「反映するファイル（23個）」と、いつものスクリプトIDが出ることを確認
+4. **`npm run check`** →「反映するファイル（24個）」と、いつものスクリプトIDが出ることを確認
 5. **`npm run push`**（「overwrite?」には `y`）
 6. Apps Script の画面を **再読み込み**
 7. `TestRunner.gs` を開いて **`runAllScenarioTests`** を実行 →「43件中43件 成功」
@@ -717,3 +718,35 @@ npm run test:ui        # スタッフ画面・管理者画面をブラウザで�
 
 > 実際に夜まで待てない場合：12〜13 は、退勤後に「勤怠記録」の退勤を 19:12 などに書き換え、
 > 管理者画面の「今月の勤怠を再計算」で確かめることもできます。
+
+---
+
+## N. 会社名・ロゴ（ヘッダー・タイトル・favicon）
+
+| 表示する場所 | 内容 | 設定している場所 |
+|---|---|---|
+| ヘッダー左（スタッフ画面・管理者画面で共通） | 会社ロゴ ＋「Leaf Co.,Ltd」＋「勤怠管理」（管理者画面は「勤怠管理｜管理者画面」） | ロゴ：`assets/logo.png`／会社名：`WebApp.gs` の `APP_BRAND_NAME` |
+| ブラウザのタブのタイトル | Leaf Co.,Ltd｜勤怠管理 | `WebApp.gs` の `WEB_APP_TITLE` |
+| 画面の一番下 | Leaf Co.,Ltd | `APP_BRAND_NAME` |
+| ブラウザのタブのアイコン（favicon） | 今は Google の標準アイコン（下を参照） | `WebApp.gs` の `APP_FAVICON_URL` |
+
+### ロゴを差し替えるとき
+
+1. `leaf-portal/assets/logo.png` を新しいロゴ画像（PNG・200KB以下）に置き換える（ファイル名は同じ `logo.png`）
+2. `leaf-portal` で `npm run logo` →「✔ ロゴを変換しました」
+3. `npm run push`
+
+Apps Script の Webアプリは画像ファイルをそのまま配信できないため、画像を文字（data URI）にした `gas/Logo.html` を一緒に反映しています。
+画面はこの1か所だけを見てロゴを表示します。`Logo.html` が壊れていても、画面は会社名の文字だけで表示されます。
+
+### favicon（タブのアイコン）について
+
+Apps Script の Webアプリは、外側の Google の画面の中に表示されるため、HTML の中にアイコンを書いても効きません。
+favicon を変えられるのは `setFaviconUrl()` だけで、**インターネットから見られる画像のURL（https://…）** が必要です（埋め込み画像は使えません）。
+
+設定する場合：
+1. ロゴ画像を、誰でも見られる場所に置く（例：会社のホームページにアップロード）
+2. そのURLを `WebApp.gs` の `APP_FAVICON_URL = 'https://…/logo.png';` に入れる
+3. `npm run push` → デプロイを新しいバージョンに更新
+
+※ 小さなアイコン（16〜32px）では、横長のロゴは細い線がつぶれて見えにくくなります。正方形に切り抜いた画像（例：家のマーク部分）がおすすめです。

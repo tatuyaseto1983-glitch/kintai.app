@@ -12,7 +12,8 @@
     "check": "node tools/check-clasp.js",
     "status": "node tools/check-clasp.js && clasp status",
     "push": "node tools/check-clasp.js && clasp push",
-    "open": "clasp open-script"
+    "open": "clasp open-script",
+    "logo": "node tools/build-logo.js"
   },
   "devDependencies": {
     "@google/clasp": "3.4.1"
