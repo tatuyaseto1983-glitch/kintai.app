@@ -17,7 +17,7 @@
 const WEB_APP_TITLE = 'リーフ 社内ポータル｜勤怠管理';
 
 /** getStaffDashboard() で取得できる情報の種類 */
-const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime'];
+const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime', 'overtimeRule'];
 
 /**
  * WebアプリのURLを開いたときに呼ばれ、画面を返します。
@@ -52,6 +52,7 @@ function includeHtml_(fileName) {
  *   'staffStatus' 全スタッフの今の状況          … getTodayStaffStatus()（氏名・勤務形態・状態だけ）
  *   'flex'        フレックス集計（フレックスの人だけ） … getFlexSummary()
  *   'overtime'    自分の残業申請（固定勤務の人だけ）   … getMyOvertimeRequests()
+ *   'overtimeRule' 残業申請のルール（設定「残業_申請不要上限」。固定勤務の人だけ）
  *
  * 戻り値：{ success, message, data: { user: {...}, today: {...}, ... } }
  *   data の中の各項目も { success, message, data } の形です。
@@ -85,6 +86,14 @@ function getStaffDashboard(parts) {
       } else {
         result.overtime = { success: true, message: '残業申請の対象外です', data: null };
       }
+    }
+
+    if (wanted.indexOf('overtimeRule') !== -1) {
+      result.overtimeRule = runApi_(function () {
+        const staff = getCurrentStaff_();
+        if (staff.workType !== WORK_TYPES.FIXED) return { message: '残業申請の対象外です', data: null };
+        return { message: '残業申請のルールを取得しました', data: getOvertimeRule_() };
+      });
     }
 
     return { message: '画面の情報を取得しました', data: result };

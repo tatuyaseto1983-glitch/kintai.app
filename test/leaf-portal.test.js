@@ -454,7 +454,8 @@ test('スタッフ画面：getStaffDashboard() は本人の情報だけをまと
   gas.setNow('2026-06-01 09:30');
   let r = gas.g.getStaffDashboard();
   assert.equal(r.success, true);
-  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'overtime', 'staffStatus', 'today', 'user']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'overtime', 'overtimeRule', 'staffStatus', 'today', 'user']);
+  assert.deepEqual(plain(r.data.overtimeRule.data), { freeLimitMinutes: 30, freeLimitLabel: '30分' }, '設定シートの 00:30');
   assert.deepEqual(r.data.overtime.data, [], '固定勤務は自分の残業申請（まだ0件）');
   assert.equal(r.data.user.data.employeeId, 'E002');
   assert.equal(r.data.today.data.record, null, '未出勤');
@@ -854,4 +855,33 @@ test('残業申請 15：同じ申請を続けて送っても1件だけ（ロッ�
   assert.equal(results.filter((r) => r.success).length, 1);
   assert.equal(gas.main.rows('残業申請').length, 1);
   assert.ok(results.slice(1).every((r) => /すでに提出されています/.test(r.message)));
+});
+
+test('残業申請：申請不要の上限は設定シート「残業_申請不要上限」を使う（画面用の値とサーバーの判定）', () => {
+  const gas = ready();
+  const settings = gas.main.getSheetByName('設定');
+  const row = settings.data.findIndex((r) => r[0] === '残業_申請不要上限');
+  const req = (end, date) => ({ targetDate: date, plannedStart: '18:30', plannedEnd: end, reason: '図面' });
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-01 10:00');
+
+  settings.data[row][1] = '00:45';
+  assert.deepEqual(plain(gas.g.getStaffDashboard(['overtimeRule']).data.overtimeRule.data), { freeLimitMinutes: 45, freeLimitLabel: '45分' });
+  let r = gas.g.submitOvertimeRequest(req('19:14', '2026-06-01'));
+  assert.match(r.message, /^45分未満の残業は事前申請不要です（予定残業時間：00:44）$/);
+  assert.equal(gas.g.submitOvertimeRequest(req('19:15', '2026-06-01')).success, true, '45分ちょうどは申請できる');
+
+  settings.data[row][1] = '01:30';
+  assert.equal(gas.g.getStaffDashboard(['overtimeRule']).data.overtimeRule.data.freeLimitLabel, '1時間30分');
+  assert.match(gas.g.submitOvertimeRequest(req('19:59', '2026-06-02')).message, /^1時間30分未満の残業は事前申請不要です/);
+  assert.equal(gas.g.submitOvertimeRequest(req('20:00', '2026-06-02')).success, true);
+
+  settings.data[row][1] = '00:30';
+  assert.match(gas.g.submitOvertimeRequest(req('18:59', '2026-06-03')).message, /^30分未満の残業は事前申請不要です/);
+  assert.deepEqual([0, 30, 60, 75].map((m) => gas.g.formatDurationLabel_(m)), ['0分', '30分', '1時間', '1時間15分']);
+
+  gas.loginAs(FLEX);
+  assert.equal(gas.g.getStaffDashboard(['overtimeRule']).data.overtimeRule.data, null, 'フレックスには返さない');
+  gas.loginAs('nobody@example.com');
+  assert.equal(gas.g.getStaffDashboard(['overtimeRule']).data.overtimeRule.success, false, '未登録なら返さない');
 });

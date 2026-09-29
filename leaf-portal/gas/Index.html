@@ -141,7 +141,7 @@
           <!-- 固定勤務の人だけに表示（フレックスは残業申請の対象外） -->
           <div class="card link-card" id="overtimeCard" hidden>
             <h2 class="card-title">残業申請</h2>
-            <p>30分以上の残業を予定している場合は、事前に申請してください。</p>
+            <p id="otCardText">事前申請が必要な残業を予定している場合は、事前に申請してください。</p>
             <ul class="mini-list" id="overtimeMiniList"></ul>
             <button type="button" class="btn btn-outline" id="btnOpenOvertime">申請する</button>
           </div>
@@ -230,7 +230,7 @@
         <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
       </div>
       <form id="overtimeForm" novalidate>
-        <p class="form-lead">標準退勤（18:30）以降の残業が30分以上になる予定の日は、事前に申請してください。管理者が承認すると「承認済み」になります。</p>
+        <p class="form-lead" id="otFormLead">標準退勤以降の残業が一定時間以上になる予定の日は、事前に申請してください。管理者が承認すると「承認済み」になります。</p>
         <div class="form-row">
           <label for="otDate">対象日</label>
           <input type="date" id="otDate" required>

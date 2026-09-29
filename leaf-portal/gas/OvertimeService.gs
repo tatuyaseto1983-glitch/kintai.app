@@ -56,7 +56,7 @@ function submitOvertimeRequest_(request) {
   const now = getNowInfo_();
   const targetDate = requireDateKey_(request.targetDate, '対象日');
   if (targetDate < now.date) fail_('事前の申請のため、過去の日付は申請できません。管理者に相談してください');
-  // フレックス社員には、固定勤務の「18:30以降・30分以上は事前申請」のルールを適用しない
+  // フレックス社員には、固定勤務の「標準退勤以降・一定時間以上は事前申請」のルールを適用しない
   if (staff.workType === WORK_TYPES.FLEX) fail_('フレックス勤務の方は、残業申請の対象外です');
   const start = requireClockMinutes_(request.plannedStart, '予定開始');
   const end = requireClockMinutes_(request.plannedEnd, '予定終了');
@@ -88,16 +88,34 @@ function submitOvertimeRequest_(request) {
 /**
  * 予定時間のチェック（同じ日の中で、開始より後に終わること・申請が必要な長さであること）。
  *   終了が開始以前   → エラー（日付をまたぐ残業は、この画面からは申請できません）
- *   30分未満        → エラー「30分未満の残業は事前申請不要です」（設定「残業_申請不要上限」）
- *   30分ちょうど以上 → OK（社内超過30分以上は事前申請が必要なため）
+ *   上限未満        → エラー「30分未満の残業は事前申請不要です」（上限＝設定「残業_申請不要上限」。00:45 なら「45分未満」）
+ *   上限ちょうど以上 → OK（社内超過がこの時間以上になると事前申請が必要なため）
+ * 画面側でも同じ設定値で事前に判定しますが、最終的な判定は必ずここ（設定シートの値）で行います。
  */
 function checkOvertimePlan_(startMinutes, endMinutes, settings) {
   if (endMinutes <= startMinutes) fail_('予定終了は予定開始より後の時刻にしてください（日付をまたぐ残業は管理者に相談してください）');
   const planned = endMinutes - startMinutes;
   if (planned < settings.overtimeFreeLimitMinutes) {
-    fail_(formatMinutes_(settings.overtimeFreeLimitMinutes).replace(/^00:/, '') + '分未満の残業は事前申請不要です（予定残業時間：' + formatMinutes_(planned) + '）');
+    fail_(formatDurationLabel_(settings.overtimeFreeLimitMinutes) + '未満の残業は事前申請不要です（予定残業時間：' + formatMinutes_(planned) + '）');
   }
   return planned;
+}
+
+/**
+ * 残業申請のルール（画面の説明文・事前チェック用）。値は設定シート「残業_申請不要上限」から取る。
+ *   { freeLimitMinutes: 30, freeLimitLabel: '30分' }
+ */
+function getOvertimeRule_() {
+  const minutes = getSettings_().overtimeFreeLimitMinutes;
+  return { freeLimitMinutes: minutes, freeLimitLabel: formatDurationLabel_(minutes) };
+}
+
+/** 分を「45分」「1時間」「1時間30分」の形にする（画面・メッセージ用） */
+function formatDurationLabel_(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (!h) return m + '分';
+  return h + '時間' + (m ? m + '分' : '');
 }
 
 function decideOvertimeRequest_(requestId, newStatus, reason) {

@@ -146,6 +146,40 @@ test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Pl
       await page.click('#overtimeModal [data-close]');
     });
 
+    await t.test('設定を 00:45 に変えると、画面の説明・判定・メッセージが45分になり、サーバーも45分で判定する', async () => {
+      const settings = gas.main.getSheetByName('設定');
+      const row = settings.data.findIndex((r) => r[0] === '残業_申請不要上限');
+      settings.data[row][1] = '00:45';
+      await post('/__test/login', { email: 'sato@example.com' });
+      await page.reload();
+      await page.waitForSelector('#app:not([hidden])');
+      assert.equal(await page.locator('#otCardText').innerText(), '45分以上の残業を予定している場合は、事前に申請してください。');
+      await page.click('#btnOpenOvertime');
+      assert.match(await page.locator('#otFormLead').innerText(), /残業が45分以上になる予定の日は/);
+      await page.fill('#otDate', '2026-06-03');
+      await page.fill('#otEnd', '19:10');
+      assert.equal(await page.locator('#otPlannedNote').innerText(), '45分未満の残業は事前申請不要です。');
+      assert.equal(await page.locator('#btnSubmitOvertime').isDisabled(), true);
+      await page.fill('#otEnd', '19:15');
+      assert.equal(await page.locator('#otPlannedNote').isHidden(), true, '45分ちょうどは申請できる');
+      // 画面の判定をすり抜けても、サーバーが設定値で止める
+      await page.fill('#otEnd', '19:10');
+      await page.fill('#otReason', 'すり抜け');
+      const before = gas.main.rows('残業申請').length;
+      await page.evaluate(() => { const b = document.getElementById('btnSubmitOvertime'); b.disabled = false; document.getElementById('otPlannedNote').hidden = true; });
+      await page.evaluate(() => {
+        // 画面の事前チェックを通さず、サーバーの関数を直接呼ぶ
+        return new Promise((resolve) => google.script.run.withSuccessHandler(resolve)
+          .submitOvertimeRequest({ targetDate: '2026-06-03', plannedStart: '18:30', plannedEnd: '19:10', reason: 'すり抜け' }));
+      }).then((r) => {
+        assert.equal(r.success, false);
+        assert.match(r.message, /^45分未満の残業は事前申請不要です/);
+      });
+      assert.equal(gas.main.rows('残業申請').length, before, '保存されていない');
+      await page.click('#overtimeModal [data-close]');
+      settings.data[row][1] = '00:30';
+    });
+
     await t.test('管理者画面：申請が表示され、月の集計は「今月の」と表示', async () => {
       const admin = await open('yamada@example.com', base + '/?view=admin');
       await admin.waitForSelector('#adminContent:not([hidden])');

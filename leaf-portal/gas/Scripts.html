@@ -23,8 +23,6 @@
     'submitOvertimeRequest', 'getMyOvertimeRequests',
   ];
 
-  /** 事前残業申請が必要になる長さ（分）。最終的な判定はサーバー側（設定「残業_申請不要上限」）で行う */
-  var OVERTIME_REQUIRED_MINUTES = 30;
 
   var STATUS = { NOT_STARTED: '未出勤', WORKING: '勤務中', ON_BREAK: '中断中', FINISHED: '退勤済み' };
 
@@ -146,7 +144,7 @@
     if (!isBusy) {
       renderActions();
       renderReportLock();
-      if (!$('overtimeModal').hidden) updatePlannedOvertime(); // 30分未満などのときは申請ボタンを押せないままにする
+      if (!$('overtimeModal').hidden) updatePlannedOvertime(); // 申請不要の短さなどのときは申請ボタンを押せないままにする
     } else {
       setStyleButtonsEnabled(false);
     }
@@ -159,7 +157,7 @@
    * @param {string[]} [parts] 'user' 'today' 'month' 'staffStatus' 'flex'（省略するとすべて）
    */
   function refresh(parts) {
-    var list = parts || ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime'];
+    var list = parts || ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime', 'overtimeRule'];
     // 前後の月を表示中のときは、今月分の再取得でその表示を上書きしない
     var showingOtherMonth = !!state.currentMonth && state.viewMonth !== state.currentMonth;
     return callGas('getStaffDashboard', [list]).then(function (result) {
@@ -174,6 +172,7 @@
       if (d.month && !showingOtherMonth) applyMonth(d.month, true);
       if (d.staffStatus) applyStaffStatus(d.staffStatus);
       if (d.flex) applyFlex(d.flex);
+      if (d.overtimeRule) applyOvertimeRule(d.overtimeRule);
       if (d.overtime) applyOvertime(d.overtime);
       state.loadedAt = Date.now();
       renderActions();
@@ -390,7 +389,8 @@
       }
       if (r.needsCheck === '要確認') {
         body.appendChild(el('p', 'check-note',
-          '要確認：社内超過時間が30分以上ですが、承認済みの事前残業申請がありません（事前残業申請：' + (r.preOvertimeRequest || 'なし') + '）。管理者が確認します。'));
+          '要確認：社内超過時間が' + (state.overtimeRule ? state.overtimeRule.freeLimitLabel + '以上' : '事前申請が必要な長さ') +
+          'ですが、承認済みの事前残業申請がありません（事前残業申請：' + (r.preOvertimeRequest || 'なし') + '）。管理者が確認します。'));
       }
     }
     if (r.correctionStatus) body.appendChild(el('p', 'card-note', '打刻修正申請：' + r.correctionStatus));
@@ -611,6 +611,21 @@
 
   // ============================================================ 残業申請
 
+  /**
+   * 残業申請のルール（設定シート「残業_申請不要上限」の値）をサーバーから受け取り、説明文に反映する。
+   * 画面での判定は入力の手助けだけで、保存してよいかの最終判定はサーバー側で行う。
+   */
+  function applyOvertimeRule(res) {
+    state.overtimeRule = res.success && res.data ? res.data : null;
+    var label = state.overtimeRule ? state.overtimeRule.freeLimitLabel : '';
+    $('otCardText').textContent = label
+      ? label + '以上の残業を予定している場合は、事前に申請してください。'
+      : '事前申請が必要な残業を予定している場合は、事前に申請してください。';
+    $('otFormLead').textContent = '標準退勤以降の残業が' + (label ? label + '以上' : '一定時間以上') +
+      'になる予定の日は、事前に申請してください。管理者が承認すると「承認済み」になります。';
+    if (!$('overtimeModal').hidden) updatePlannedOvertime();
+  }
+
   function applyOvertime(res) {
     var mini = $('overtimeMiniList');
     mini.textContent = '';
@@ -687,7 +702,9 @@
     } else {
       var planned = end - start;
       $('otPlanned').textContent = pad2(Math.floor(planned / 60)) + ':' + pad2(planned % 60);
-      if (planned < OVERTIME_REQUIRED_MINUTES) problem = OVERTIME_REQUIRED_MINUTES + '分未満の残業は事前申請不要です。';
+      // 設定値を受け取れていないときは画面では止めず、サーバーの判定に任せる
+      var rule = state.overtimeRule;
+      if (rule && planned < rule.freeLimitMinutes) problem = rule.freeLimitLabel + '未満の残業は事前申請不要です。';
     }
     note.textContent = problem;
     note.hidden = !problem;
@@ -720,7 +737,7 @@
     if (!request.reason) return showToast('warn', '申請理由を入力してください');
     runAction({
       button: $('btnSubmitOvertime'), busyText: '申請中...', fn: 'submitOvertimeRequest', args: [request],
-      refresh: ['overtime', 'today'], refreshOnError: ['overtime'],
+      refresh: ['overtime', 'overtimeRule', 'today'], refreshOnError: ['overtime', 'overtimeRule'], // 設定が変わっていても最新の値にそろえる
     }).then(function (r) {
       if (r && r.success) closeModal('overtimeModal');
       else updatePlannedOvertime();
