@@ -166,6 +166,33 @@ function createLeafGas(opts = {}) {
     Utilities: { formatDate, parseDate, getUuid: () => crypto.randomUUID() },
     Logger: { log: () => {} },
   };
+  // HtmlService（doGet の画面表示用）。テンプレートは <?!= 式 ?> と <?= 式 ?> だけに対応
+  const htmlOutput = (content) => {
+    const out = {
+      content, title: '', metaTags: {},
+      getContent() { return this.content; },
+      setTitle(t) { this.title = t; return this; },
+      getTitle() { return this.title; },
+      addMetaTag(name, value) { this.metaTags[name] = value; return this; },
+      setXFrameOptionsMode() { return this; },
+    };
+    return out;
+  };
+  const readHtml = (name) => {
+    const file = path.join(GAS_DIR, name.endsWith('.html') ? name : name + '.html');
+    if (!fs.existsSync(file)) throw new Error('HTML ファイルがありません: ' + name);
+    return fs.readFileSync(file, 'utf8');
+  };
+  const escapeHtml = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  context.HtmlService = {
+    createHtmlOutputFromFile: (name) => htmlOutput(readHtml(name)),
+    createTemplateFromFile: (name) => ({
+      evaluate: () => htmlOutput(readHtml(name).replace(/<\?(!?)=([\s\S]*?)\?>/g, (m, raw, expr) => {
+        const value = vm.runInContext(expr, context);
+        return raw ? String(value) : escapeHtml(value);
+      })),
+    }),
+  };
   vm.createContext(context);
 
   const files = fs.readdirSync(GAS_DIR).filter((f) => f.endsWith('.gs'))

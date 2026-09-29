@@ -9,6 +9,8 @@
   "scripts": {
     "start": "node dev/server.js",
     "build": "node dev/build-gas-html.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:ui": "node --test test-ui/leaf-staff-screen.e2e.js",
+    "leaf:preview": "node dev/leaf-portal-server.js"
   }
 }

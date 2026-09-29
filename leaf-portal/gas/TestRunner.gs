@@ -68,6 +68,7 @@ const TEST_STAFF = {
  * 実行ログに ✅（成功）／❌（失敗）が表示されます。
  */
 function runAllScenarioTests() {
+  requireEditorExecution_('runAllScenarioTests');
   const saved = { now: APP_RUNTIME.now, email: APP_RUNTIME.email, spreadsheet: APP_RUNTIME.spreadsheet };
   const results = [];
   const check = function (title, ok, detail) {

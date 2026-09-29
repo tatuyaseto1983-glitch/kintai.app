@@ -431,3 +431,75 @@ test('clasp push 前の確認：設定の間違いを止める', () => {
   fs.rmSync(path.join(dir, 'gas', 'Config.gs'));
   assert.match(checkClaspProject(dir).errors[0], /Config\.gs/);
 });
+
+test('スタッフ画面：doGet() が画面を返し、Styles・Scripts が読み込まれる', () => {
+  const gas = createLeafGas();
+  const out = gas.g.doGet();
+  const html = out.getContent();
+  assert.equal(out.getTitle(), 'リーフ 社内ポータル｜勤怠管理');
+  assert.equal(out.metaTags.viewport, 'width=device-width, initial-scale=1');
+  assert.ok(html.includes('<style>') && html.includes('function callGas'));
+  assert.doesNotMatch(html, /<\?/, 'テンプレートの記号が残っていない');
+  // 画面から呼ぶ関数はすべてサーバーに存在し、管理者用の関数は許可リストに入っていない
+  const allowed = JSON.parse(html.match(/ALLOWED_FUNCTIONS = (\[[\s\S]*?\]);/)[1].replace(/'/g, '"').replace(/,\s*\]/, ']'));
+  for (const fn of allowed) assert.equal(typeof gas.g[fn], 'function', fn);
+  for (const fn of ['requireAdmin', 'getAllAttendance', 'getDailyAttendance', 'getMonthlyAttendance', 'approveCorrectionRequest', 'approveOvertimeRequest', 'exportAttendanceCsv', 'setupSystem']) {
+    assert.ok(!allowed.includes(fn), fn);
+  }
+});
+
+test('スタッフ画面：getStaffDashboard() は本人の情報だけをまとめて返す', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-01 09:30');
+  let r = gas.g.getStaffDashboard();
+  assert.equal(r.success, true);
+  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'staffStatus', 'today', 'user']);
+  assert.equal(r.data.user.data.employeeId, 'E002');
+  assert.equal(r.data.today.data.record, null, '未出勤');
+  assert.equal(r.data.flex.data, null, '固定勤務はフレックス集計なし');
+  gas.g.clockIn('出社');
+  r = gas.g.getStaffDashboard(['today', 'staffStatus']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['staffStatus', 'today']);
+  assert.equal(r.data.today.data.record.status, '勤務中');
+  for (const s of r.data.staffStatus.data.staff) assert.deepEqual(Object.keys(s).sort(), ['label', 'name', 'status', 'workStyle']);
+
+  // 画面から社員IDを渡しても無視され、他人の情報は取れない
+  gas.loginAs(FLEX);
+  r = gas.g.getStaffDashboard('E002');
+  assert.equal(r.data.user.data.employeeId, 'E003');
+  assert.equal(r.data.today.data.record, null);
+  assert.equal(r.data.flex.data.employeeId, 'E003');
+  assert.equal(r.data.month.data.records.length, 0);
+  r = gas.g.getStaffDashboard(['requireAdmin', 'today']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['today'], '決められた名前以外は無視');
+
+  // ログインユーザーを確認できないときは、各項目が失敗として返る（画面全体は落ちない）
+  gas.loginAs('');
+  r = gas.g.getStaffDashboard();
+  assert.equal(r.success, true);
+  for (const k of ['user', 'today', 'month', 'staffStatus']) assert.equal(r.data[k].success, false, k);
+  assert.match(r.data.user.message, /メールアドレスを取得できませんでした/);
+  assert.equal(gas.main.rows('勤怠記録').length, 1, '読み取りだけで何も書き込まない');
+});
+
+test('setupSystem などはWebアプリ経由（操作者≠所有者）では実行できない', () => {
+  const gas = ready();
+  gas.g.Session.getEffectiveUser = () => ({ getEmail: () => ADMIN }); // 「自分として実行」＝所有者
+  gas.loginAs(FIXED); // ブラウザで操作しているスタッフ
+  for (const fn of ['setupSystem', 'addSampleStaff', 'runAllScenarioTests']) {
+    assert.throws(() => gas.g[fn](), /Webアプリからは実行できません/, fn);
+  }
+  gas.loginAs('');
+  assert.throws(() => gas.g.setupSystem(), /Webアプリからは実行できません/);
+  gas.loginAs(ADMIN); // エディタで所有者が実行
+  assert.doesNotThrow(() => gas.g.setupSystem());
+  assert.equal(gas.g.runAllScenarioTests().failed, 0);
+});
+
+test('自動テスト（runAllScenarioTests）は Google 実機と同じ 43件', () => {
+  const gas = createLeafGas();
+  const r = gas.g.runAllScenarioTests();
+  assert.equal(r.results.length, 43);
+  assert.equal(r.failed, 0);
+});

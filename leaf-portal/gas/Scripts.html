@@ -1,0 +1,832 @@
+<script>
+/* ============================================================
+ * Scripts.html — スタッフ画面の動き（ブラウザ側）
+ *
+ * ・サーバー（GAS）の呼び出しは callGas() に集約しています（google.script.run）
+ * ・打刻などの操作は runAction() に集約しています
+ *     押した直後にボタンを無効化 →「処理中...」→ 結果を通知 → 必要な情報だけ再取得 → ボタンを戻す
+ *   処理中は他のボタンもすべて押せないので、連打しても同じ処理が2回送られることはありません
+ * ・画面から社員IDは送りません。本人の判定はすべてサーバー側（ログイン中のGoogleアカウント）で行います
+ * ・表示する文字は textContent で入れています（HTMLとして解釈しないので安全）
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var TIME_ZONE = 'Asia/Tokyo';
+  var LAST_STYLE_KEY = 'leafKintai.lastWorkStyle';
+  var AUTO_REFRESH_MS = 2 * 60 * 1000; // 画面に戻ってきたとき、これより古ければ状況を取り直す
+
+  /** スタッフ画面から呼んでよいサーバーの関数（管理者用の関数はここに入れない） */
+  var ALLOWED_FUNCTIONS = [
+    'getStaffDashboard', 'getMyAttendance', 'clockIn', 'startBreak', 'resumeWork', 'clockOut',
+    'submitCorrectionRequest', 'getMyCorrectionRequests', 'saveDailyReport', 'getMyDailyReports',
+  ];
+
+  var STATUS = { NOT_STARTED: '未出勤', WORKING: '勤務中', ON_BREAK: '中断中', FINISHED: '退勤済み' };
+
+  /** 画面の状態 */
+  var state = {
+    user: null,           // ログインユーザー（取得できなければ null）
+    userError: '',        // ログインユーザーを確認できなかった理由
+    today: null,          // 今日の勤怠（未出勤なら null）
+    todayLoaded: false,   // 今日の勤怠を取得できたか（取得できるまで打刻ボタンは押せない）
+    serverDate: '',       // サーバー側の今日の日付
+    month: null,          // 表示中の月の勤怠
+    viewMonth: '',        // 表示中の月 '2026-09'
+    currentMonth: '',     // 今月 '2026-09'（サーバーが決める。締め日の設定を反映）
+    busy: false,          // 処理中なら true（この間は操作できない）
+    workStyle: '',        // 選択中の勤務形態
+    loadedAt: 0,
+    clockDateKey: '',
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  // ============================================================ サーバー呼び出し（共通）
+
+  /**
+   * GAS の関数を呼ぶ。結果は必ず { success, message, data } の形で返す（通信エラーも含む）。
+   */
+  function callGas(fnName, args) {
+    return new Promise(function (resolve) {
+      if (ALLOWED_FUNCTIONS.indexOf(fnName) === -1) {
+        resolve({ success: false, message: 'この画面からは実行できない操作です（' + fnName + '）', data: null });
+        return;
+      }
+      if (!window.google || !google.script || !google.script.run) {
+        resolve({ success: false, message: 'この画面は Apps Script の Webアプリとして開いてください', data: null });
+        return;
+      }
+      var runner = google.script.run
+        .withSuccessHandler(function (result) { resolve(normalizeResult(result)); })
+        .withFailureHandler(function (error) {
+          resolve({
+            success: false,
+            message: 'サーバーとの通信に失敗しました。通信状況を確認して、もう一度お試しください。' +
+              (error && error.message ? '\n（' + error.message + '）' : ''),
+            data: null,
+          });
+        });
+      runner[fnName].apply(runner, args || []);
+    });
+  }
+
+  function normalizeResult(result) {
+    if (result && typeof result === 'object' && typeof result.success === 'boolean') {
+      return { success: result.success, message: String(result.message || ''), data: result.data === undefined ? null : result.data };
+    }
+    return { success: false, message: 'サーバーから想定外の応答がありました', data: null };
+  }
+
+  /**
+   * 打刻・申請などの操作を実行する共通処理。
+   *   options.button     押したボタン（「処理中...」を表示する）
+   *   options.fn / args  呼ぶ関数と引数
+   *   options.refresh    成功したときに取り直す情報（getStaffDashboard の parts）
+   *   options.refreshOnError 失敗したときに取り直す情報（他の端末で打刻済みなど、画面が古い場合に備える）
+   */
+  function runAction(options) {
+    if (state.busy) return Promise.resolve(null); // 処理中は受け付けない＝二重送信を防ぐ
+    setBusy(true, options.button);
+    return callGas(options.fn, options.args)
+      .then(function (result) {
+        showToast(result.success ? toastTypeFor(result.message) : 'error', result.message);
+        var parts = result.success ? options.refresh : options.refreshOnError;
+        return (parts ? refresh(parts) : Promise.resolve()).then(function () { return result; });
+      })
+      .then(function (result) {
+        setBusy(false);
+        return result;
+      }, function (error) {
+        setBusy(false);
+        showToast('error', '画面の処理でエラーが発生しました：' + (error && error.message ? error.message : error));
+        return null;
+      });
+  }
+
+  /** 成功でも「※」「要確認」などの注意書きがあればオレンジで表示する */
+  function toastTypeFor(message) {
+    return /※|要確認|記録されていません/.test(message || '') ? 'warn' : 'success';
+  }
+
+  /** 処理中の表示とボタンの無効化 */
+  function setBusy(isBusy, button) {
+    state.busy = isBusy;
+    document.body.classList.toggle('is-busy', isBusy);
+    var buttons = document.querySelectorAll('[data-label]');
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (isBusy) {
+        b.disabled = true;
+        if (b === button) {
+          b.classList.add('is-busy');
+          b.textContent = '';
+          var spin = document.createElement('span');
+          spin.className = 'spinner';
+          spin.setAttribute('aria-hidden', 'true');
+          b.appendChild(spin);
+          b.appendChild(document.createTextNode('処理中...'));
+        }
+      } else {
+        b.classList.remove('is-busy');
+        b.textContent = b.getAttribute('data-label');
+        b.disabled = false;
+      }
+    }
+    if (!isBusy) {
+      renderActions();
+      renderReportLock();
+    } else {
+      setStyleButtonsEnabled(false);
+    }
+  }
+
+  // ============================================================ 情報の取得と反映
+
+  /**
+   * 画面の情報を取り直す（ページ全体は再読み込みしない）。
+   * @param {string[]} [parts] 'user' 'today' 'month' 'staffStatus' 'flex'（省略するとすべて）
+   */
+  function refresh(parts) {
+    var list = parts || ['user', 'today', 'month', 'staffStatus', 'flex'];
+    // 前後の月を表示中のときは、今月分の再取得でその表示を上書きしない
+    var showingOtherMonth = !!state.currentMonth && state.viewMonth !== state.currentMonth;
+    return callGas('getStaffDashboard', [list]).then(function (result) {
+      if (!result.success) {
+        showToast('error', result.message);
+        if (!state.todayLoaded) renderTodayError(result.message);
+        return;
+      }
+      var d = result.data || {};
+      if (d.user) applyUser(d.user);
+      if (d.today) applyToday(d.today);
+      if (d.month && !showingOtherMonth) applyMonth(d.month, true);
+      if (d.staffStatus) applyStaffStatus(d.staffStatus);
+      if (d.flex) applyFlex(d.flex);
+      state.loadedAt = Date.now();
+      renderActions();
+    });
+  }
+
+  function applyUser(res) {
+    if (res.success && res.data) {
+      state.user = res.data;
+      state.userError = '';
+      $('userName').textContent = res.data.name;
+      $('userDept').textContent = res.data.department || '';
+      $('userWorkType').textContent = res.data.workType || '';
+      $('userBox').hidden = false;
+      $('loginError').hidden = true;
+      $('mainContent').hidden = false;
+      return;
+    }
+    state.user = null;
+    state.userError = res.message;
+    $('userBox').hidden = true;
+    var noEmail = /メールアドレスを取得できませんでした/.test(res.message);
+    $('loginErrorTitle').textContent = noEmail
+      ? 'ログインユーザーを確認できません。会社アカウントでログインしているか確認してください。'
+      : 'この画面を利用できません。';
+    $('loginErrorDetail').textContent = res.message;
+    $('loginError').hidden = false;
+    $('mainContent').hidden = true; // 誰なのか分からない状態では、打刻や一覧を表示しない
+  }
+
+  function applyToday(res) {
+    if (!res.success) {
+      renderTodayError(res.message);
+      return;
+    }
+    state.today = res.data ? res.data.record : null;
+    state.serverDate = res.data ? res.data.date : '';
+    state.todayLoaded = true;
+    renderStatus();
+    renderTodayRecord();
+  }
+
+  function renderTodayError(message) {
+    state.todayLoaded = false;
+    var body = $('todayBody');
+    body.textContent = '';
+    body.appendChild(el('p', 'error-text', '本日の勤怠を取得できませんでした：' + message));
+    $('statusLabel').textContent = '取得できません';
+    $('statusSub').textContent = '「更新」するか、しばらくしてから画面を開き直してください';
+    setStatusClass('notstarted');
+    renderActions();
+  }
+
+  function applyMonth(res, isCurrent) {
+    if (!res.success || !res.data) {
+      var rows = $('monthRows');
+      rows.textContent = '';
+      var tr = document.createElement('tr');
+      tr.appendChild(el('td', 'error-text', '今月の勤怠を取得できませんでした：' + res.message)).colSpan = 7;
+      rows.appendChild(tr);
+      return;
+    }
+    if (isCurrent) state.currentMonth = res.data.month;
+    state.month = res.data;
+    state.viewMonth = res.data.month;
+    renderMonth();
+  }
+
+  function applyStaffStatus(res) {
+    var list = $('staffList');
+    list.textContent = '';
+    if (!res.success || !res.data) {
+      list.appendChild(el('li', 'error-text', '取得できませんでした：' + res.message));
+      return;
+    }
+    var staff = res.data.staff || [];
+    if (!staff.length) {
+      list.appendChild(el('li', 'empty', '在籍中のスタッフがいません'));
+      return;
+    }
+    staff.forEach(function (s) {
+      // 他のスタッフについて表示するのは「氏名・勤務形態・状態」だけ
+      var li = document.createElement('li');
+      var name = el('span', 'staff-name', s.name);
+      if (state.user && s.name === state.user.name) name.appendChild(el('span', 'me', '（あなた）'));
+      li.appendChild(name);
+      li.appendChild(el('span', 'badge badge-' + statusClassOf(s.status), s.label || s.status));
+      list.appendChild(li);
+    });
+  }
+
+  function applyFlex(res) {
+    var card = $('flexCard');
+    var isFlex = state.user && state.user.workType === 'フレックス';
+    if (!isFlex) { card.hidden = true; return; } // 固定勤務の人には表示しない
+    card.hidden = false;
+    var body = $('flexBody');
+    body.textContent = '';
+    if (!res.success || !res.data) {
+      body.appendChild(el('p', 'error-text', 'フレックス累計を取得できませんでした：' + res.message));
+      return;
+    }
+    var grid = el('div', 'flex-grid');
+    grid.appendChild(flexBox('今週', res.data.week, res.data.week.restDayCheck));
+    grid.appendChild(flexBox('今月', res.data.month));
+    body.appendChild(grid);
+    if (res.data.todayInProgress) {
+      body.appendChild(el('p', 'card-note', '※ 勤務中の本日分は、退勤すると実働に加算されます'));
+    }
+  }
+
+  function flexBox(title, p, restCheck) {
+    var box = el('div', 'flex-box');
+    box.appendChild(el('h3', '', title));
+    box.appendChild(el('p', 'flex-range', formatDateShort(p.from) + ' 〜 ' + formatDateShort(p.to) + '（' + p.workDays + '日勤務）'));
+    var nums = el('div', 'flex-numbers');
+    [['所定', p.scheduled, ''], ['実働', p.worked, ''], ['残り', p.remaining, ''], ['超過', p.excess, p.excessMinutes > 0 ? 'is-excess' : '']]
+      .forEach(function (n) {
+        var cell = el('div', n[2]);
+        cell.appendChild(el('span', '', n[0]));
+        cell.appendChild(el('strong', '', trimHour(n[1])));
+        nums.appendChild(cell);
+      });
+    box.appendChild(nums);
+    var ratio = p.scheduledMinutes ? Math.min(100, Math.round(p.workedMinutes / p.scheduledMinutes * 100)) : 0;
+    var bar = el('div', 'progress');
+    var fill = el('div', 'progress-bar' + (p.excessMinutes > 0 ? ' over' : ''));
+    fill.style.width = ratio + '%';
+    bar.appendChild(fill);
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuenow', String(ratio));
+    bar.setAttribute('aria-label', title + 'の所定時間に対する実働の割合');
+    box.appendChild(bar);
+    if (restCheck) {
+      var cls = restCheck.status === '確保済み' ? 'badge-ok' : restCheck.status === '不足' ? 'badge-ng' : 'badge-warn';
+      var note = el('p', 'flex-note');
+      note.appendChild(el('span', 'badge ' + cls, '週の完全休日：' + restCheck.status));
+      note.appendChild(document.createTextNode(' ' + restCheck.message));
+      box.appendChild(note);
+    }
+    return box;
+  }
+
+  // ============================================================ 表示
+
+  function currentStatus() {
+    if (!state.today) return STATUS.NOT_STARTED;
+    return state.today.status || STATUS.NOT_STARTED;
+  }
+
+  function statusClassOf(status) {
+    if (status === STATUS.WORKING) return 'working';
+    if (status === STATUS.ON_BREAK) return 'break';
+    if (status === STATUS.FINISHED) return 'finished';
+    return 'notstarted';
+  }
+
+  /** 「出社勤務中」「在宅勤務中」「中断中」など、画面に出す状態の名前 */
+  function statusDisplayName(record) {
+    var status = record ? record.status : STATUS.NOT_STARTED;
+    if (status === STATUS.WORKING) return (record.workStyle === '在宅' ? '在宅' : '出社') + '勤務中';
+    return status || STATUS.NOT_STARTED;
+  }
+
+  function setStatusClass(cls) {
+    $('statusCard').className = 'card status-card status-' + cls;
+  }
+
+  function renderStatus() {
+    var r = state.today;
+    $('statusLabel').textContent = statusDisplayName(r);
+    setStatusClass(statusClassOf(currentStatus()));
+    var sub = [];
+    if (r) {
+      if (r.date && state.serverDate && r.date !== state.serverDate) sub.push('（' + formatDateShort(r.date) + ' からの勤務）');
+      sub.push('出勤 ' + (r.clockIn || '--:--') + (r.clockOut ? '　退勤 ' + r.clockOut : ''));
+      if (r.status === STATUS.ON_BREAK) sub.push('業務に戻ったら「再開」を押してください');
+    } else {
+      sub.push('まだ出勤の記録がありません');
+    }
+    $('statusSub').textContent = sub.join('\n');
+  }
+
+  function renderTodayRecord() {
+    var body = $('todayBody');
+    body.textContent = '';
+    var r = state.today;
+    if (!r) {
+      body.appendChild(el('p', 'empty', '本日はまだ出勤していません。'));
+      return;
+    }
+    var finished = r.status === STATUS.FINISHED;
+    var dl = el('dl', 'record-list');
+    addRow(dl, '勤務形態', r.workStyle);
+    addRow(dl, '出勤', r.clockIn);
+    addRow(dl, '退勤', r.clockOut, '未退勤');
+    addRow(dl, '自動休憩', r.autoBreak, finished ? '' : '退勤時に計算');
+    addRow(dl, '中断合計', r.breakTotal || '00:00');
+    addRow(dl, '実働時間', r.workTime, '退勤時に計算', true);
+    addRow(dl, '状態', statusDisplayName(r));
+    body.appendChild(dl);
+
+    // 固定勤務の人には、値があるものだけ表示する（空欄の項目は出さない）
+    if (r.workType === '固定勤務') {
+      var extra = [['遅刻', r.late], ['早退', r.earlyLeave], ['社内超過時間', r.internalExcess && r.internalExcess !== '00:00' ? r.internalExcess : '']]
+        .filter(function (x) { return x[1]; });
+      if (extra.length) {
+        body.appendChild(el('p', 'subhead', '固定勤務の記録'));
+        var dl2 = el('dl', 'record-list');
+        extra.forEach(function (x) { addRow(dl2, x[0], x[1]); });
+        body.appendChild(dl2);
+      }
+      if (r.needsCheck === '要確認') {
+        body.appendChild(el('p', 'check-note',
+          '要確認：社内超過時間が30分以上ですが、承認済みの事前残業申請がありません（事前残業申請：' + (r.preOvertimeRequest || 'なし') + '）。管理者が確認します。'));
+      }
+    }
+    if (r.correctionStatus) body.appendChild(el('p', 'card-note', '打刻修正申請：' + r.correctionStatus));
+  }
+
+  function addRow(dl, label, value, placeholder, big) {
+    dl.appendChild(el('dt', '', label));
+    var dd = el('dd', big && value ? 'big' : '', value || '');
+    if (!value) {
+      dd.textContent = '';
+      dd.appendChild(el('span', 'muted', placeholder || '—'));
+    }
+    dl.appendChild(dd);
+  }
+
+  function renderMonth() {
+    var m = state.month;
+    $('monthLabel').textContent = formatMonth(m.month);
+    $('btnNextMonth').disabled = state.busy || m.month >= state.currentMonth;
+    $('btnPrevMonth').disabled = state.busy;
+    var title = document.querySelector('#monthCard .card-title');
+    title.textContent = m.month === state.currentMonth ? '今月の勤怠' : formatMonth(m.month) + 'の勤怠';
+
+    var rows = $('monthRows');
+    rows.textContent = '';
+    if (!m.records.length) {
+      var tr = document.createElement('tr');
+      tr.appendChild(el('td', 'empty', 'この月の勤怠はまだありません')).colSpan = 7;
+      rows.appendChild(tr);
+    }
+    m.records.forEach(function (r) {
+      var tr = document.createElement('tr');
+      if (r.date === state.serverDate) tr.className = 'is-today';
+      var wd = weekdayOf(r.date);
+      tr.appendChild(el('td', wd === 0 ? 'sun' : wd === 6 ? 'sat' : '', formatDateShort(r.date)));
+      tr.appendChild(el('td', '', r.workStyle || '—'));
+      tr.appendChild(el('td', '', r.clockIn || '—'));
+      tr.appendChild(el('td', '', r.clockOut || (r.status === STATUS.FINISHED ? '—' : '勤務中')));
+      tr.appendChild(el('td', '', r.breakTotal || '—'));
+      tr.appendChild(el('td', '', r.workTime || '—'));
+      var cor = el('td');
+      if (r.correctionStatus) cor.appendChild(el('span', 'badge ' + (r.correctionStatus === '申請中' ? 'badge-warn' : r.correctionStatus === '却下' ? 'badge-ng' : 'badge-ok'), r.correctionStatus));
+      else cor.textContent = '—';
+      tr.appendChild(cor);
+      rows.appendChild(tr);
+    });
+    $('monthTotals').textContent = formatDateShort(m.from) + '〜' + formatDateShort(m.to) + '　出勤 ' + m.totals.workDays + '日　実働合計 ' + trimHour(m.totals.workTime);
+  }
+
+  /** 状態に応じてボタンの有効・無効を切り替える */
+  function renderActions() {
+    if (state.busy) return;
+    var s = currentStatus();
+    var ready = !!state.user && state.todayLoaded;
+    var notStarted = ready && s === STATUS.NOT_STARTED;
+    setStyleButtonsEnabled(notStarted);
+    $('btnClockIn').disabled = !(notStarted && state.workStyle);
+    $('btnBreak').disabled = !(ready && s === STATUS.WORKING);
+    $('btnResume').disabled = !(ready && s === STATUS.ON_BREAK);
+    $('btnClockOut').disabled = !(ready && s === STATUS.WORKING);
+    $('breakReason').disabled = !(ready && s === STATUS.WORKING);
+    $('btnClockIn').textContent = state.workStyle && notStarted ? state.workStyle + 'で出勤する' : '出勤する';
+    $('btnClockIn').setAttribute('data-label', $('btnClockIn').textContent);
+
+    var hint = '';
+    if (!ready) hint = '勤怠の状況を確認できないため、打刻できません。';
+    else if (s === STATUS.NOT_STARTED) hint = state.workStyle ? '「' + state.workStyle + 'で出勤する」を押すと出勤を記録します。' : 'まず「出社」か「在宅」を選んでください。';
+    else if (s === STATUS.WORKING) hint = '業務から離れるときは「中断」、業務を終えるときは「退勤」を押してください。';
+    else if (s === STATUS.ON_BREAK) hint = '中断中は退勤できません。業務に戻ったら「再開」を押してください。';
+    else if (s === STATUS.FINISHED) hint = '本日の打刻は完了しています。誤りがある場合は「打刻修正申請」から申請してください。';
+    $('actionHint').textContent = hint;
+    if (state.month) {
+      $('btnNextMonth').disabled = state.month.month >= state.currentMonth;
+      $('btnPrevMonth').disabled = false;
+    }
+  }
+
+  function setStyleButtonsEnabled(enabled) {
+    var opts = document.querySelectorAll('.style-option');
+    for (var i = 0; i < opts.length; i++) {
+      opts[i].disabled = !enabled;
+      opts[i].setAttribute('aria-checked', opts[i].getAttribute('data-style') === state.workStyle ? 'true' : 'false');
+    }
+  }
+
+  // ============================================================ 打刻の操作
+
+  function selectWorkStyle(style) {
+    if (state.busy) return;
+    state.workStyle = style;
+    try { localStorage.setItem(LAST_STYLE_KEY, style); } catch (e) { /* 保存できなくても動作には影響しない */ }
+    renderActions();
+  }
+
+  function onClockIn() {
+    if (!state.workStyle) { showToast('warn', '「出社」か「在宅」を選んでください'); return; }
+    runAction({
+      button: $('btnClockIn'), fn: 'clockIn', args: [state.workStyle],
+      refresh: ['today', 'month', 'staffStatus', 'flex'], refreshOnError: ['today', 'staffStatus'],
+    });
+  }
+
+  function onStartBreak() {
+    var reason = $('breakReason').value.trim();
+    runAction({ button: $('btnBreak'), fn: 'startBreak', args: [reason], refresh: ['today', 'staffStatus'], refreshOnError: ['today'] })
+      .then(function (r) { if (r && r.success) $('breakReason').value = ''; });
+  }
+
+  function onResume() {
+    runAction({ button: $('btnResume'), fn: 'resumeWork', args: [], refresh: ['today', 'month', 'staffStatus'], refreshOnError: ['today'] });
+  }
+
+  function onClockOut() {
+    if (state.busy || currentStatus() !== STATUS.WORKING) return;
+    openModal('confirmModal');
+    $('btnConfirmOk').focus();
+  }
+
+  function onConfirmClockOut() {
+    closeModal('confirmModal');
+    runAction({
+      button: $('btnClockOut'), fn: 'clockOut', args: [],
+      refresh: ['today', 'month', 'staffStatus', 'flex'], refreshOnError: ['today', 'staffStatus'],
+    });
+  }
+
+  function changeMonth(diff) {
+    if (state.busy || !state.viewMonth) return;
+    var target = shiftMonth(state.viewMonth, diff);
+    if (target > state.currentMonth) return;
+    $('monthRows').textContent = '';
+    var tr = document.createElement('tr');
+    tr.appendChild(el('td', 'empty', '読み込み中...')).colSpan = 7;
+    $('monthRows').appendChild(tr);
+    callGas('getMyAttendance', [target]).then(function (res) {
+      if (target === state.currentMonth) applyMonth(res, true);
+      else applyMonth(res, false);
+      if (!res.success) showToast('error', res.message);
+    });
+  }
+
+  // ============================================================ 打刻修正申請
+
+  function openCorrection() {
+    var form = $('correctionForm');
+    form.reset();
+    var today = state.serverDate || jstDateKey(new Date());
+    $('corDate').value = today;
+    $('corDate').max = today;
+    updateCorrectionFields();
+    openModal('correctionModal');
+    $('corDate').focus();
+    loadRecentCorrections();
+  }
+
+  function updateCorrectionFields() {
+    var item = $('corItem').value;
+    var isStyle = item === '勤務形態';
+    var isBreak = item === '中断' || item === '再開';
+    $('corAfterTime').hidden = isStyle;
+    $('corAfterStyle').hidden = !isStyle;
+    $('corBefore').hidden = !isBreak;
+    var current = findMonthRecord($('corDate').value);
+    var help = '';
+    if (item === '中断') help = '直したい中断の開始時刻を入れてください。中断の打刻を忘れた場合は空欄のまま（新しく追加されます）。';
+    else if (item === '再開') help = '直したい再開の時刻を入れてください。再開を押し忘れた場合は空欄のまま。';
+    else {
+      var value = current ? (item === '出勤' ? current.clockIn : item === '退勤' ? current.clockOut : current.workStyle) : '';
+      help = '現在の記録：' + (value || '記録なし') + '（申請時に自動で記録されます）';
+    }
+    $('corBeforeHelp').textContent = help;
+  }
+
+  function findMonthRecord(dateKey) {
+    if (!state.month || !state.month.records) return null;
+    return state.month.records.filter(function (r) { return r.date === dateKey; })[0] || null;
+  }
+
+  function loadRecentCorrections() {
+    var list = $('correctionList');
+    list.textContent = '';
+    list.appendChild(el('li', 'empty', '読み込み中...'));
+    callGas('getMyCorrectionRequests', []).then(function (res) {
+      list.textContent = '';
+      if (!res.success) { list.appendChild(el('li', 'error-text', res.message)); return; }
+      var items = (res.data || []).slice(0, 5);
+      if (!items.length) { list.appendChild(el('li', 'empty', 'まだ申請はありません')); return; }
+      items.forEach(function (r) {
+        var li = document.createElement('li');
+        li.appendChild(el('span', '', formatDateShort(r.targetDate) + '　' + r.item + '　' + (r.before || '（空欄）') + ' → ' + r.after));
+        li.appendChild(el('span', 'badge ' + (r.status === '承認待ち' ? 'badge-warn' : r.status === '却下' ? 'badge-ng' : 'badge-ok'), r.status));
+        list.appendChild(li);
+      });
+    });
+  }
+
+  function onSubmitCorrection(event) {
+    event.preventDefault();
+    var item = $('corItem').value;
+    var request = {
+      targetDate: $('corDate').value,
+      item: item,
+      before: (item === '中断' || item === '再開') ? $('corBefore').value : '',
+      after: item === '勤務形態' ? $('corAfterStyle').value : $('corAfterTime').value,
+      reason: $('corReason').value.trim(),
+    };
+    // 入力漏れは送る前に知らせる（最終的なチェックはサーバー側でも行う）
+    if (!request.targetDate) return showToast('warn', '対象日を入力してください');
+    if (!request.after) return showToast('warn', '修正後の時刻を入力してください');
+    if (!request.reason) return showToast('warn', '理由を入力してください');
+    runAction({ button: $('btnSubmitCorrection'), fn: 'submitCorrectionRequest', args: [request], refresh: ['today', 'month'] })
+      .then(function (r) {
+        if (!r || !r.success) return;
+        closeModal('correctionModal');
+        if (state.viewMonth !== state.currentMonth) changeMonth(0);
+      });
+  }
+
+  // ============================================================ 日報
+
+  var reportCache = { month: '', reports: [] };
+  var currentReport = null;
+
+  function openReport() {
+    var today = state.serverDate || jstDateKey(new Date());
+    $('repDate').value = today;
+    $('repDate').max = today;
+    openModal('reportModal');
+    loadReportFor(today);
+  }
+
+  function loadReportFor(dateKey) {
+    fillReport(null);
+    $('reportStatus').textContent = '読み込み中...';
+    var month = dateKey.slice(0, 7);
+    callGas('getMyDailyReports', [month]).then(function (res) {
+      if (!res.success) {
+        $('reportStatus').textContent = '';
+        showToast('error', res.message);
+        return;
+      }
+      reportCache = { month: month, reports: (res.data && res.data.reports) || [] };
+      var found = reportCache.reports.filter(function (r) { return r.date === dateKey; })[0] || null;
+      fillReport(found);
+    });
+  }
+
+  function fillReport(report) {
+    currentReport = report;
+    $('repWork').value = report ? report.workContent : '';
+    $('repProgress').value = report ? report.progress : '';
+    $('repIssues').value = report ? report.issues : '';
+    $('repTomorrow').value = report ? report.tomorrowPlan : '';
+    $('repShared').value = report ? report.sharedNotes : '';
+    var status = $('reportStatus');
+    status.textContent = '';
+    if (report) {
+      var cls = report.status === '確認済み' ? 'badge-ok' : report.status === '提出済み' ? 'badge-working' : 'badge-warn';
+      status.appendChild(el('span', 'badge ' + cls, report.status));
+      if (report.submittedAt) status.appendChild(document.createTextNode(' ' + report.submittedAt.slice(5, 16)));
+    } else {
+      status.appendChild(el('span', 'badge badge-notstarted', '未作成'));
+    }
+    renderReportLock();
+  }
+
+  /** 管理者が確認済みの日報は変更できない（サーバー側でも拒否される） */
+  function renderReportLock() {
+    var locked = !!(currentReport && currentReport.status === '確認済み');
+    ['repWork', 'repProgress', 'repIssues', 'repTomorrow', 'repShared'].forEach(function (id) { $(id).disabled = locked; });
+    if (!state.busy) {
+      $('btnSaveDraft').disabled = locked;
+      $('btnSubmitReport').disabled = locked;
+    }
+  }
+
+  function saveReport(status, button) {
+    var report = {
+      date: $('repDate').value,
+      workContent: $('repWork').value,
+      progress: $('repProgress').value,
+      issues: $('repIssues').value,
+      tomorrowPlan: $('repTomorrow').value,
+      sharedNotes: $('repShared').value,
+      status: status,
+    };
+    if (!report.date) return showToast('warn', '日付を入力してください');
+    if (status === '提出済み' && !report.workContent.trim()) return showToast('warn', '提出するときは「本日の業務内容」を入力してください');
+    runAction({ button: button, fn: 'saveDailyReport', args: [report] }).then(function (r) {
+      if (r && r.success) closeModal('reportModal');
+    });
+  }
+
+  // ============================================================ モーダル・通知
+
+  var lastFocus = null;
+  function openModal(id) {
+    lastFocus = document.activeElement;
+    $(id).hidden = false;
+  }
+  function closeModal(id) {
+    $(id).hidden = true;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
+  function showToast(type, message) {
+    if (!message) return;
+    var box = el('div', 'toast toast-' + type);
+    box.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    box.appendChild(el('div', 'toast-text', message));
+    var close = el('button', 'toast-close', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', '通知を閉じる');
+    close.addEventListener('click', function () { box.remove(); });
+    box.appendChild(close);
+    var container = $('toasts');
+    container.appendChild(box);
+    while (container.children.length > 3) container.removeChild(container.firstChild);
+    setTimeout(function () { if (box.parentNode) box.remove(); }, type === 'success' ? 5000 : 9000);
+  }
+
+  // ============================================================ 日付・時刻（日本時間）
+
+  var dateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+
+  function jstParts(date) {
+    var parts = {};
+    dateFormatter.formatToParts(date).forEach(function (p) { parts[p.type] = p.value; });
+    return parts;
+  }
+
+  function jstDateKey(date) {
+    var p = jstParts(date);
+    return p.year + '-' + pad2(p.month) + '-' + pad2(p.day);
+  }
+
+  function tickClock() {
+    var now = new Date();
+    var p = jstParts(now);
+    var dateText = p.year + '年' + Number(p.month) + '月' + Number(p.day) + '日（' + p.weekday + '）';
+    var timeText = pad2(p.hour) + ':' + pad2(p.minute);
+    if ($('clockDate').textContent !== dateText) $('clockDate').textContent = dateText;
+    if ($('clockTime').textContent !== timeText) $('clockTime').textContent = timeText;
+    // 画面を開いたまま日付が変わったら、勤怠の状況を取り直す
+    var key = jstDateKey(now);
+    if (state.clockDateKey && state.clockDateKey !== key && !state.busy) refresh();
+    state.clockDateKey = key;
+  }
+
+  var WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+  function weekdayOf(dateKey) {
+    var p = String(dateKey).split('-');
+    return new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]))).getUTCDay();
+  }
+  function formatDateShort(dateKey) {
+    if (!dateKey) return '';
+    var p = dateKey.split('-');
+    return Number(p[1]) + '/' + Number(p[2]) + '（' + WEEKDAYS[weekdayOf(dateKey)] + '）';
+  }
+  function formatMonth(monthKey) {
+    return monthKey ? monthKey.slice(0, 4) + '年' + Number(monthKey.slice(5, 7)) + '月' : '';
+  }
+  function shiftMonth(monthKey, n) {
+    var y = Number(monthKey.slice(0, 4));
+    var m = Number(monthKey.slice(5, 7)) - 1 + n;
+    y += Math.floor(m / 12);
+    m = ((m % 12) + 12) % 12;
+    return y + '-' + pad2(m + 1);
+  }
+  /** '08:10' → '8:10'（時間の長さの先頭の0を省いて読みやすくする） */
+  function trimHour(text) {
+    return text ? String(text).replace(/^0(\d:)/, '$1') : '—';
+  }
+  function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+
+  /** 要素を作る（文字は textContent で入れる） */
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  // ============================================================ 起動
+
+  function bindEvents() {
+    var opts = document.querySelectorAll('.style-option');
+    for (var i = 0; i < opts.length; i++) {
+      opts[i].addEventListener('click', function (e) { selectWorkStyle(e.currentTarget.getAttribute('data-style')); });
+    }
+    $('btnClockIn').addEventListener('click', onClockIn);
+    $('btnBreak').addEventListener('click', onStartBreak);
+    $('btnResume').addEventListener('click', onResume);
+    $('btnClockOut').addEventListener('click', onClockOut);
+    $('btnConfirmOk').addEventListener('click', onConfirmClockOut);
+    $('btnConfirmCancel').addEventListener('click', function () { closeModal('confirmModal'); });
+    $('btnPrevMonth').addEventListener('click', function () { changeMonth(-1); });
+    $('btnNextMonth').addEventListener('click', function () { changeMonth(1); });
+    $('btnRefreshStaff').addEventListener('click', function () {
+      if (state.busy) return;
+      refresh(['today', 'staffStatus']);
+    });
+    $('btnRetryLogin').addEventListener('click', function () { refresh(); });
+    $('btnOpenCorrection').addEventListener('click', openCorrection);
+    $('btnOpenReport').addEventListener('click', openReport);
+    $('corItem').addEventListener('change', updateCorrectionFields);
+    $('corDate').addEventListener('change', updateCorrectionFields);
+    $('correctionForm').addEventListener('submit', onSubmitCorrection);
+    $('repDate').addEventListener('change', function () { if ($('repDate').value) loadReportFor($('repDate').value); });
+    $('reportForm').addEventListener('submit', function (e) { e.preventDefault(); saveReport('提出済み', $('btnSubmitReport')); });
+    $('btnSaveDraft').addEventListener('click', function () { saveReport('下書き', $('btnSaveDraft')); });
+
+    var closers = document.querySelectorAll('[data-close]');
+    for (var j = 0; j < closers.length; j++) {
+      closers[j].addEventListener('click', function (e) {
+        if (!state.busy) closeModal(e.currentTarget.closest('.modal').id);
+      });
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || state.busy) return;
+      var open = document.querySelector('.modal:not([hidden])');
+      if (open) closeModal(open.id);
+    });
+    // 別のタブから戻ってきたとき、しばらく経っていれば状況を取り直す（他の端末で打刻した場合など）
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && !state.busy && Date.now() - state.loadedAt > AUTO_REFRESH_MS) {
+        refresh(['today', 'staffStatus']);
+      }
+    });
+  }
+
+  function start() {
+    try { state.workStyle = localStorage.getItem(LAST_STYLE_KEY) || ''; } catch (e) { state.workStyle = ''; }
+    if (state.workStyle !== '出社' && state.workStyle !== '在宅') state.workStyle = '';
+    bindEvents();
+    tickClock();
+    setInterval(tickClock, 1000);
+    refresh().then(function () {
+      $('loadingScreen').hidden = true;
+      $('app').hidden = false;
+    }, function (error) {
+      $('loadingScreen').hidden = true;
+      $('app').hidden = false;
+      showToast('error', '画面の表示中にエラーが発生しました：' + (error && error.message ? error.message : error));
+    });
+  }
+
+  start();
+})();
+</script>

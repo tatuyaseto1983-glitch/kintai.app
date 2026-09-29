@@ -15,6 +15,7 @@
  * Apps Script の画面で関数「setupSystem」を選んで「実行」を押してください。
  */
 function setupSystem() {
+  requireEditorExecution_('setupSystem');
   const ss = getSpreadsheet_();
   const lines = [];
 
@@ -132,6 +133,7 @@ function ensureDefaultSettings_() {
  * 追加後、メールアドレスをご自身の Google アカウントに書き換えてテストしてください。
  */
 function addSampleStaff() {
+  requireEditorExecution_('addSampleStaff');
   return withLock_(function () {
     const samples = [
       ['E001', '山田 太郎', 'yamada.test@example.com', ROLES.ADMIN, '正社員', WORK_TYPES.FIXED, '09:30', '18:30', '08:00', '', '', EMPLOYMENT_STATUS.ACTIVE, '2020-04-01', '管理部', 'テスト用（管理者・固定勤務）'],
@@ -157,6 +159,22 @@ function addSampleStaff() {
     console.log(message);
     return message;
   });
+}
+
+/**
+ * エディタ・スプレッドシートのメニューから「本人として」実行されているかを確認する。
+ * Webアプリ（「自分として実行」）経由だと、操作している人（getActiveUser）と
+ * 実行権限の持ち主（getEffectiveUser＝所有者）が別人になるので、そのときは止める。
+ * → スタッフがブラウザの開発者ツールから setupSystem などを呼んでも実行されません。
+ */
+function requireEditorExecution_(functionName) {
+  let active = '';
+  let effective = '';
+  try { active = String(Session.getActiveUser().getEmail() || '').toLowerCase(); } catch (e) { active = ''; }
+  try { effective = String(Session.getEffectiveUser().getEmail() || '').toLowerCase(); } catch (e) { effective = ''; }
+  if (!active || active !== effective) {
+    fail_(functionName + ' は Apps Script のエディタ、またはスプレッドシートのメニューから実行してください（Webアプリからは実行できません）');
+  }
 }
 
 /** 右下に小さな通知を出す（エディタから実行したときなど、出せない場合は何もしない） */

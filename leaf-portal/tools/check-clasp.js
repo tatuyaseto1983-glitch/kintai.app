@@ -18,6 +18,8 @@ const REQUIRED_FILES = [
   'appsscript.json', 'Config.gs', 'Utils.gs', 'SheetService.gs', 'SettingsService.gs', 'Setup.gs', 'UserService.gs',
   'AttendanceService.gs', 'BreakService.gs', 'OvertimeService.gs', 'FlexService.gs', 'CorrectionService.gs',
   'DailyReportService.gs', 'AdminService.gs', 'TestRunner.gs',
+  // スタッフ画面（Webアプリ）
+  'WebApp.gs', 'Index.html', 'Styles.html', 'Scripts.html',
 ];
 
 function checkClaspProject(projectDir) {

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= includeHtml_('Styles') ?>
+</head>
+<body>
+  <!-- 初回の読み込み中の表示 -->
+  <div id="loadingScreen" class="loading-screen" role="status">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>読み込み中...</p>
+  </div>
+
+  <!-- 画面の右上（スマホは下）に出る通知 -->
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <div id="app" class="app" hidden>
+    <!-- ================= ヘッダー ================= -->
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M27 5C15 5 6 11 6 21c0 2 .4 3.7 1 5 1.5-6 6-11 13-14-6 4-10 9-11.5 15 1.3.6 2.8 1 4.5 1C23 28 27 18 27 5z" />
+          </svg>
+          <div class="brand-text">
+            <span class="brand-name">リーフ 社内ポータル</span>
+            <span class="brand-sub">勤怠管理</span>
+          </div>
+        </div>
+        <div class="user-box" id="userBox" hidden>
+          <div class="user-name" id="userName"></div>
+          <div class="user-meta">
+            <span id="userDept"></span>
+            <span class="chip" id="userWorkType"></span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <!-- ログインユーザーを確認できないときの表示 -->
+      <div id="loginError" class="notice notice-error" role="alert" hidden>
+        <p class="notice-title" id="loginErrorTitle"></p>
+        <p class="notice-detail" id="loginErrorDetail"></p>
+        <button type="button" class="btn btn-outline btn-sm" id="btnRetryLogin">もう一度読み込む</button>
+      </div>
+
+      <div id="mainContent">
+        <!-- ============ 現在日時 ／ 今日の勤務状況 ============ -->
+        <section class="grid grid-2">
+          <div class="card clock-card">
+            <h2 class="card-title">現在日時</h2>
+            <p class="clock-date" id="clockDate">&nbsp;</p>
+            <p class="clock-time" id="clockTime">--:--</p>
+            <p class="card-note">日本時間（Asia/Tokyo）</p>
+          </div>
+
+          <div class="card status-card status-notstarted" id="statusCard">
+            <h2 class="card-title">今日の勤務状況</h2>
+            <p class="status-label" id="statusLabel">未出勤</p>
+            <p class="status-sub" id="statusSub"></p>
+          </div>
+        </section>
+
+        <!-- ============ 打刻 ============ -->
+        <section class="card actions-card" aria-labelledby="actionsTitle">
+          <h2 class="card-title" id="actionsTitle">打刻</h2>
+
+          <div class="style-select" role="radiogroup" aria-label="勤務形態">
+            <span class="style-select-label">勤務形態</span>
+            <button type="button" class="style-option" data-style="出社" role="radio" aria-checked="false">出社</button>
+            <button type="button" class="style-option" data-style="在宅" role="radio" aria-checked="false">在宅</button>
+          </div>
+
+          <div class="action-grid">
+            <button type="button" class="btn btn-primary btn-lg" id="btnClockIn" data-label="出勤する" disabled>出勤する</button>
+            <button type="button" class="btn btn-warn btn-lg" id="btnBreak" data-label="中断" disabled>中断</button>
+            <button type="button" class="btn btn-resume btn-lg" id="btnResume" data-label="再開" disabled>再開</button>
+            <button type="button" class="btn btn-dark btn-lg" id="btnClockOut" data-label="退勤" disabled>退勤</button>
+          </div>
+
+          <div class="break-reason" id="breakReasonBox">
+            <label for="breakReason">中断の理由（任意）</label>
+            <input type="text" id="breakReason" maxlength="200" placeholder="例：私用外出、通院">
+          </div>
+          <p class="action-hint" id="actionHint"></p>
+        </section>
+
+        <!-- ============ 本日の記録 ／ 今月の勤怠 ============ -->
+        <section class="grid grid-2 grid-records">
+          <div class="card" id="todayCard">
+            <h2 class="card-title">本日の記録</h2>
+            <div id="todayBody"><p class="empty">読み込み中...</p></div>
+          </div>
+
+          <div class="card" id="monthCard">
+            <div class="card-head">
+              <h2 class="card-title">今月の勤怠</h2>
+              <div class="month-nav">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnPrevMonth" aria-label="前の月">‹</button>
+                <span class="month-label" id="monthLabel"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnNextMonth" aria-label="次の月">›</button>
+              </div>
+            </div>
+            <div class="table-wrap" id="monthTableWrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>日付</th><th>勤務形態</th><th>出勤</th><th>退勤</th><th>中断合計</th><th>実働</th><th>修正申請</th>
+                  </tr>
+                </thead>
+                <tbody id="monthRows"><tr><td colspan="7" class="empty">読み込み中...</td></tr></tbody>
+              </table>
+            </div>
+            <p class="card-note" id="monthTotals"></p>
+          </div>
+        </section>
+
+        <!-- ============ フレックス累計（フレックスの人だけ） ============ -->
+        <section class="card flex-card" id="flexCard" hidden>
+          <h2 class="card-title">フレックス累計</h2>
+          <div id="flexBody"></div>
+        </section>
+
+        <!-- ============ 打刻修正申請 ／ 日報 ／ 全スタッフ ============ -->
+        <section class="grid grid-3">
+          <div class="card link-card">
+            <h2 class="card-title">打刻修正申請</h2>
+            <p>打刻内容に誤りがある場合はこちらから申請できます。</p>
+            <button type="button" class="btn btn-outline" id="btnOpenCorrection">申請する</button>
+          </div>
+
+          <div class="card link-card">
+            <h2 class="card-title">日報</h2>
+            <p>本日の日報を入力できます。</p>
+            <button type="button" class="btn btn-outline" id="btnOpenReport">入力する</button>
+          </div>
+
+          <div class="card staff-card">
+            <div class="card-head">
+              <h2 class="card-title">全スタッフの勤務状況</h2>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshStaff">更新</button>
+            </div>
+            <ul class="staff-list" id="staffList"><li class="empty">読み込み中...</li></ul>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="site-footer">株式会社リーフ 社内ポータル</footer>
+  </div>
+
+  <!-- ================= 打刻修正申請のフォーム ================= -->
+  <div class="modal" id="correctionModal" role="dialog" aria-modal="true" aria-labelledby="correctionTitle" hidden>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h2 id="correctionTitle">打刻修正申請</h2>
+        <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
+      </div>
+      <form id="correctionForm" novalidate>
+        <p class="form-lead">申請は管理者が承認すると勤怠に反映されます（ご自身で勤怠を直接変更することはできません）。</p>
+        <div class="form-row">
+          <label for="corDate">対象日</label>
+          <input type="date" id="corDate" required>
+        </div>
+        <div class="form-row">
+          <label for="corItem">修正項目</label>
+          <select id="corItem" required>
+            <option value="出勤">出勤</option>
+            <option value="退勤">退勤</option>
+            <option value="中断">中断</option>
+            <option value="再開">再開</option>
+            <option value="勤務形態">勤務形態</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="corBefore">修正前</label>
+          <input type="time" id="corBefore">
+          <p class="form-help" id="corBeforeHelp"></p>
+        </div>
+        <div class="form-row">
+          <label for="corAfterTime">修正後</label>
+          <input type="time" id="corAfterTime">
+          <select id="corAfterStyle" hidden>
+            <option value="出社">出社</option>
+            <option value="在宅">在宅</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="corReason">理由</label>
+          <textarea id="corReason" rows="3" maxlength="2000" required placeholder="例：退勤ボタンを押し忘れました"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" data-close>キャンセル</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitCorrection" data-label="申請する">申請する</button>
+        </div>
+      </form>
+      <div class="recent">
+        <h3>最近の申請</h3>
+        <ul class="recent-list" id="correctionList"><li class="empty">読み込み中...</li></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 日報のフォーム ================= -->
+  <div class="modal" id="reportModal" role="dialog" aria-modal="true" aria-labelledby="reportTitle" hidden>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h2 id="reportTitle">日報</h2>
+        <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
+      </div>
+      <form id="reportForm" novalidate>
+        <div class="form-row form-row-inline">
+          <div>
+            <label for="repDate">日付</label>
+            <input type="date" id="repDate" required>
+          </div>
+          <p class="report-status" id="reportStatus"></p>
+        </div>
+        <div class="form-row">
+          <label for="repWork">本日の業務内容 <span class="req">提出時は必須</span></label>
+          <textarea id="repWork" rows="3" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repProgress">成果・進捗</label>
+          <textarea id="repProgress" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repIssues">課題・困りごと</label>
+          <textarea id="repIssues" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repTomorrow">明日の予定</label>
+          <textarea id="repTomorrow" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repShared">共有事項</label>
+          <textarea id="repShared" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="btnSaveDraft" data-label="下書き保存">下書き保存</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitReport" data-label="提出する">提出する</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= 確認（退勤） ================= -->
+  <div class="modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" hidden>
+    <div class="modal-panel modal-small">
+      <h2 id="confirmTitle">退勤しますか？</h2>
+      <p id="confirmText">退勤を記録します。退勤後に誤りがあった場合は、打刻修正申請をしてください。</p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="btnConfirmCancel">キャンセル</button>
+        <button type="button" class="btn btn-dark" id="btnConfirmOk">退勤する</button>
+      </div>
+    </div>
+  </div>
+
+  <?!= includeHtml_('Scripts') ?>
+</body>
+</html>
