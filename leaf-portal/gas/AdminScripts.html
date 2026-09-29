@@ -108,8 +108,9 @@
       ['中断中', s.onBreak, '名', s.onBreak ? 'orange' : 'gray', ''],
       ['退勤済み', s.finished, '名', 'gray', ''],
       ['未出勤', s.notStarted, '名', 'gray', ''],
-      ['打刻漏れ', s.missingPunchStaff, '名', s.missingPunchStaff ? 'red' : 'gray', '今月・' + s.missingPunchRecords + '件'],
-      ['残業要確認', s.overtimeNeedsCheck, '件', s.overtimeNeedsCheck ? 'red' : 'gray', '今月'],
+      // この2つは「今日」ではなく今月（月初〜今日）の集計
+      ['今月の打刻漏れ', s.missingPunchStaff, '名', s.missingPunchStaff ? 'red' : 'gray', s.missingPunchRecords + '件の記録'],
+      ['今月の残業要確認', s.overtimeNeedsCheck, '件', s.overtimeNeedsCheck ? 'red' : 'gray', App.formatDateShort(s.monthFrom) + '〜今日'],
       ['修正申請待ち', s.pendingCorrections, '件', s.pendingCorrections ? 'orange' : 'gray', ''],
       ['残業申請待ち', s.pendingOvertime, '件', s.pendingOvertime ? 'orange' : 'gray', ''],
     ];
@@ -415,20 +416,28 @@
     $('admRestRange').textContent = '対象週：' + App.formatDateShort(r.from) + '〜' + App.formatDateShort(r.to) + '（必要 ' + r.required + '日）';
     var list = $('admRestList');
     list.textContent = '';
-    if (!r.rows.length) {
-      list.appendChild(el('li', 'empty', 'この週に問題のあるスタッフはいません'));
-      return;
-    }
-    r.rows.forEach(function (x) {
+    // 警告として出すのは「不足が確定した人」だけ（選んだ週＋、選んだ週が途中なら前の週）
+    var warnings = r.rows.slice();
+    if (r.previous) warnings = r.previous.rows.concat(warnings);
+    if (!warnings.length) list.appendChild(el('li', 'empty', '完全休日の不足が確定したスタッフはいません'));
+    warnings.forEach(function (x) {
       var li = document.createElement('li');
       var row = el('div', 'row');
       row.appendChild(el('strong', '', x.name));
-      row.appendChild(el('span', 'badge ' + (x.status === '不足' ? 'badge-ng' : 'badge-pending'), x.status === '不足' ? '要確認（不足）' : '未確定'));
+      row.appendChild(el('span', 'badge badge-ng', '要確認（不足）'));
       li.appendChild(row);
-      li.appendChild(el('div', 'sub', '対象週：' + App.formatDateShort(r.from) + '〜' + App.formatDateShort(r.to) + '　完全休日：' + x.restDays + '日（必要 ' + x.required + '日）'));
-      li.appendChild(el('div', 'sub', x.message));
+      li.appendChild(el('div', 'sub', '対象週：' + App.formatDateShort(x.weekFrom) + '〜' + App.formatDateShort(x.weekTo) + '　完全休日：' + x.restDays + '日（必要 ' + x.required + '日）'));
       list.appendChild(li);
     });
+    // 週の途中で、まだ休みを取っていない人は警告にしない（軽い表示だけ）
+    if (r.pending && r.pending.length) {
+      var li = el('li', 'rest-pending');
+      var d = document.createElement('details');
+      d.appendChild(el('summary', '', '週の途中でまだ完全休日がない人：' + r.pending.length + '名（未確定・警告ではありません）'));
+      d.appendChild(el('p', 'sub', r.pending.map(function (x) { return x.name; }).join('、')));
+      li.appendChild(d);
+      list.appendChild(li);
+    }
   }
 
   function renderReports() {

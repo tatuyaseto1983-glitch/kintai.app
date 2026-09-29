@@ -56,9 +56,11 @@ function submitOvertimeRequest_(request) {
   const now = getNowInfo_();
   const targetDate = requireDateKey_(request.targetDate, '対象日');
   if (targetDate < now.date) fail_('事前の申請のため、過去の日付は申請できません。管理者に相談してください');
+  // フレックス社員には、固定勤務の「18:30以降・30分以上は事前申請」のルールを適用しない
+  if (staff.workType === WORK_TYPES.FLEX) fail_('フレックス勤務の方は、残業申請の対象外です');
   const start = requireClockMinutes_(request.plannedStart, '予定開始');
   const end = requireClockMinutes_(request.plannedEnd, '予定終了');
-  if (start === end) fail_('予定開始と予定終了が同じ時刻です');
+  checkOvertimePlan_(start, end, getSettings_());
   const reason = requireText_(request.reason, '申請理由', { max: TEXT_LIMITS.LONG });
 
   const duplicate = findRecords_(SHEET_NAMES.OVERTIME, function (r) {
@@ -81,6 +83,21 @@ function submitOvertimeRequest_(request) {
   });
   refreshAttendanceAfterOvertimeChange_(staff.employeeId, targetDate);
   return { message: '残業申請を提出しました（' + targetDate + '）。管理者の承認をお待ちください', data: toOvertimeView_(record) };
+}
+
+/**
+ * 予定時間のチェック（同じ日の中で、開始より後に終わること・申請が必要な長さであること）。
+ *   終了が開始以前   → エラー（日付をまたぐ残業は、この画面からは申請できません）
+ *   30分未満        → エラー「30分未満の残業は事前申請不要です」（設定「残業_申請不要上限」）
+ *   30分ちょうど以上 → OK（社内超過30分以上は事前申請が必要なため）
+ */
+function checkOvertimePlan_(startMinutes, endMinutes, settings) {
+  if (endMinutes <= startMinutes) fail_('予定終了は予定開始より後の時刻にしてください（日付をまたぐ残業は管理者に相談してください）');
+  const planned = endMinutes - startMinutes;
+  if (planned < settings.overtimeFreeLimitMinutes) {
+    fail_(formatMinutes_(settings.overtimeFreeLimitMinutes).replace(/^00:/, '') + '分未満の残業は事前申請不要です（予定残業時間：' + formatMinutes_(planned) + '）');
+  }
+  return planned;
 }
 
 function decideOvertimeRequest_(requestId, newStatus, reason) {

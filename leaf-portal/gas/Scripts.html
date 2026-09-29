@@ -20,7 +20,11 @@
   var ALLOWED_FUNCTIONS = [
     'getStaffDashboard', 'getMyAttendance', 'clockIn', 'startBreak', 'resumeWork', 'clockOut',
     'submitCorrectionRequest', 'getMyCorrectionRequests', 'saveDailyReport', 'getMyDailyReports',
+    'submitOvertimeRequest', 'getMyOvertimeRequests',
   ];
+
+  /** 事前残業申請が必要になる長さ（分）。最終的な判定はサーバー側（設定「残業_申請不要上限」）で行う */
+  var OVERTIME_REQUIRED_MINUTES = 30;
 
   var STATUS = { NOT_STARTED: '未出勤', WORKING: '勤務中', ON_BREAK: '中断中', FINISHED: '退勤済み' };
 
@@ -93,7 +97,7 @@
    */
   function runAction(options) {
     if (state.busy) return Promise.resolve(null); // 処理中は受け付けない＝二重送信を防ぐ
-    setBusy(true, options.button);
+    setBusy(true, options.button, options.busyText);
     return callGas(options.fn, options.args)
       .then(function (result) {
         showToast(result.success ? toastTypeFor(result.message) : 'error', result.message);
@@ -116,7 +120,7 @@
   }
 
   /** 処理中の表示とボタンの無効化 */
-  function setBusy(isBusy, button) {
+  function setBusy(isBusy, button, busyText) {
     state.busy = isBusy;
     document.body.classList.toggle('is-busy', isBusy);
     var buttons = document.querySelectorAll('[data-label]');
@@ -131,7 +135,7 @@
           spin.className = 'spinner';
           spin.setAttribute('aria-hidden', 'true');
           b.appendChild(spin);
-          b.appendChild(document.createTextNode('処理中...'));
+          b.appendChild(document.createTextNode(busyText || '処理中...'));
         }
       } else {
         b.classList.remove('is-busy');
@@ -142,6 +146,7 @@
     if (!isBusy) {
       renderActions();
       renderReportLock();
+      if (!$('overtimeModal').hidden) updatePlannedOvertime(); // 30分未満などのときは申請ボタンを押せないままにする
     } else {
       setStyleButtonsEnabled(false);
     }
@@ -154,7 +159,7 @@
    * @param {string[]} [parts] 'user' 'today' 'month' 'staffStatus' 'flex'（省略するとすべて）
    */
   function refresh(parts) {
-    var list = parts || ['user', 'today', 'month', 'staffStatus', 'flex'];
+    var list = parts || ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime'];
     // 前後の月を表示中のときは、今月分の再取得でその表示を上書きしない
     var showingOtherMonth = !!state.currentMonth && state.viewMonth !== state.currentMonth;
     return callGas('getStaffDashboard', [list]).then(function (result) {
@@ -169,6 +174,7 @@
       if (d.month && !showingOtherMonth) applyMonth(d.month, true);
       if (d.staffStatus) applyStaffStatus(d.staffStatus);
       if (d.flex) applyFlex(d.flex);
+      if (d.overtime) applyOvertime(d.overtime);
       state.loadedAt = Date.now();
       renderActions();
     });
@@ -507,7 +513,7 @@
     closeModal('confirmModal');
     runAction({
       button: $('btnClockOut'), fn: 'clockOut', args: [],
-      refresh: ['today', 'month', 'staffStatus', 'flex'], refreshOnError: ['today', 'staffStatus'],
+      refresh: ['today', 'month', 'staffStatus', 'flex', 'overtime'], refreshOnError: ['today', 'staffStatus'],
     });
   }
 
@@ -601,6 +607,124 @@
         closeModal('correctionModal');
         if (state.viewMonth !== state.currentMonth) changeMonth(0);
       });
+  }
+
+  // ============================================================ 残業申請
+
+  function applyOvertime(res) {
+    var mini = $('overtimeMiniList');
+    mini.textContent = '';
+    if (!res.success) {
+      state.overtimeRequests = null;
+      mini.appendChild(el('li', 'error-text', '申請状況を取得できませんでした：' + res.message));
+      return;
+    }
+    state.overtimeRequests = res.data || [];
+    state.overtimeRequests.slice(0, 3).forEach(function (r) {
+      var li = document.createElement('li');
+      li.appendChild(el('span', '', formatDateShort(r.targetDate) + '　' + r.plannedStart + '〜' + r.plannedEnd));
+      li.appendChild(overtimeBadge(r.status));
+      mini.appendChild(li);
+    });
+    renderOvertimeList();
+  }
+
+  function overtimeBadge(status) {
+    var cls = status === '承認待ち' ? 'badge-warn' : status === '承認済み' ? 'badge-ok' : status === '却下' ? 'badge-ng' : 'badge-notstarted';
+    return el('span', 'badge ' + cls, status);
+  }
+
+  /** フォームの下の「自分の最近の残業申請」 */
+  function renderOvertimeList() {
+    var list = $('overtimeList');
+    list.textContent = '';
+    var items = (state.overtimeRequests || []).slice(0, 10);
+    if (!state.overtimeRequests) { list.appendChild(el('li', 'empty', '読み込み中...')); return; }
+    if (!items.length) { list.appendChild(el('li', 'empty', 'まだ申請はありません')); return; }
+    items.forEach(function (r) {
+      var li = document.createElement('li');
+      var line = el('div', 'ot-line');
+      line.appendChild(el('strong', '', formatDateShort(r.targetDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '（' + trimHour(r.plannedOvertime) + '）'));
+      line.appendChild(overtimeBadge(r.status));
+      li.appendChild(line);
+      var sub = '理由：' + r.reason;
+      if (r.actualOvertime) sub += '\n実績（社内超過）：' + trimHour(r.actualOvertime);
+      li.appendChild(el('div', 'ot-sub', sub));
+      // 却下のときは、管理者が入力した却下理由を本人に表示する（既存の却下処理は「備考」に保存）
+      if (r.status === '却下' && r.note) li.appendChild(el('div', 'ot-reject', r.note));
+      list.appendChild(li);
+    });
+  }
+
+  function openOvertime() {
+    if (!state.user || state.user.workType !== '固定勤務') return;
+    var today = state.serverDate || jstDateKey(new Date());
+    $('otDate').value = today;
+    $('otDate').min = today; // 事前申請なので過去日は選べない（サーバー側でも拒否）
+    $('otStart').value = (state.today && state.today.scheduledEnd) || '18:30';
+    $('otEnd').value = '';
+    $('otReason').value = '';
+    updatePlannedOvertime();
+    renderOvertimeList();
+    openModal('overtimeModal');
+    $('otEnd').focus();
+  }
+
+  /** 予定終了を入れると予定残業時間を自動計算する。申請できない場合は理由を表示し、申請ボタンを押せなくする */
+  function updatePlannedOvertime() {
+    var start = timeToMinutes($('otStart').value);
+    var end = timeToMinutes($('otEnd').value);
+    var note = $('otPlannedNote');
+    var problem = '';
+    var isError = false;
+    if (start === null || end === null) {
+      $('otPlanned').textContent = '--:--';
+      problem = '';
+    } else if (end <= start) {
+      $('otPlanned').textContent = '--:--';
+      problem = '予定終了時刻は、予定開始時刻より後にしてください。';
+      isError = true;
+    } else {
+      var planned = end - start;
+      $('otPlanned').textContent = pad2(Math.floor(planned / 60)) + ':' + pad2(planned % 60);
+      if (planned < OVERTIME_REQUIRED_MINUTES) problem = OVERTIME_REQUIRED_MINUTES + '分未満の残業は事前申請不要です。';
+    }
+    note.textContent = problem;
+    note.hidden = !problem;
+    note.classList.toggle('is-error', isError);
+    state.overtimeBlocked = !!problem || start === null || end === null;
+    if (!state.busy) $('btnSubmitOvertime').disabled = !!problem;
+  }
+
+  function timeToMinutes(text) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(text || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+
+  function onSubmitOvertime(event) {
+    event.preventDefault();
+    var request = {
+      targetDate: $('otDate').value,
+      plannedStart: $('otStart').value,
+      plannedEnd: $('otEnd').value,
+      reason: $('otReason').value.trim(),
+    };
+    var today = state.serverDate || jstDateKey(new Date());
+    // 送る前の確認（最終的なチェックはサーバー側で必ず行う）
+    if (!request.targetDate) return showToast('warn', '対象日を入力してください');
+    if (request.targetDate < today) return showToast('warn', '事前の申請のため、過去の日付は申請できません');
+    if (!request.plannedStart) return showToast('warn', '予定開始時刻を入力してください');
+    if (!request.plannedEnd) return showToast('warn', '予定終了時刻を入力してください');
+    updatePlannedOvertime();
+    if (!$('otPlannedNote').hidden) return showToast('warn', $('otPlannedNote').textContent);
+    if (!request.reason) return showToast('warn', '申請理由を入力してください');
+    runAction({
+      button: $('btnSubmitOvertime'), busyText: '申請中...', fn: 'submitOvertimeRequest', args: [request],
+      refresh: ['overtime', 'today'], refreshOnError: ['overtime'],
+    }).then(function (r) {
+      if (r && r.success) closeModal('overtimeModal');
+      else updatePlannedOvertime();
+    });
   }
 
   // ============================================================ 日報
@@ -796,7 +920,13 @@
   }
 
   /** 管理者画面ボタンは admin の人だけに表示する（表示は目安。権限の確認は必ずサーバーで行う） */
+  function renderOvertimeCard() {
+    // 残業申請は固定勤務の人だけ（フレックスは対象外。サーバー側でも申請を受け付けない）
+    $('overtimeCard').hidden = !(state.user && state.user.workType === '固定勤務');
+  }
+
   function renderViewSwitch() {
+    renderOvertimeCard();
     var isAdmin = !!(state.user && state.user.isAdmin === true);
     $('btnToAdmin').hidden = !(isAdmin && state.view !== 'admin');
     $('btnToStaff').hidden = state.view !== 'admin';
@@ -845,6 +975,12 @@
     for (var k = 0; k < goStaff.length; k++) goStaff[k].addEventListener('click', function () { showView('staff'); });
     $('btnOpenCorrection').addEventListener('click', openCorrection);
     $('btnOpenReport').addEventListener('click', openReport);
+    $('btnOpenOvertime').addEventListener('click', openOvertime);
+    $('otStart').addEventListener('input', updatePlannedOvertime);
+    $('otEnd').addEventListener('input', updatePlannedOvertime);
+    $('otStart').addEventListener('change', updatePlannedOvertime);
+    $('otEnd').addEventListener('change', updatePlannedOvertime);
+    $('overtimeForm').addEventListener('submit', onSubmitOvertime);
     $('corItem').addEventListener('change', updateCorrectionFields);
     $('corDate').addEventListener('change', updateCorrectionFields);
     $('correctionForm').addEventListener('submit', onSubmitCorrection);

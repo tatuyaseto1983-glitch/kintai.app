@@ -331,21 +331,46 @@ function buildAdminFlex_(ctx, date, month) {
   return { weekFrom: week.from, weekTo: week.to, month: month, monthFrom: monthRange.from, monthTo: monthRange.to, rows: rows };
 }
 
-/** 週1日完全休日：date を含む週で、問題がある人（不足・未確定）だけ */
+/**
+ * 週1日完全休日。判定そのものは既存の checkWeeklyRest_ をそのまま使い、表示の分け方だけをここで決める。
+ *   rows     … date を含む週で「不足」が確定した人（警告として表示）
+ *   pending  … date を含む週がまだ途中で、完全休日が「未確定」の人（警告ではなく軽い表示）
+ *   previous … date を含む週がまだ途中のときは、その前の週（確定済み）の「不足」の人も警告に出す
+ */
 function buildAdminRestDays_(ctx, date) {
   const settings = ctx.settings;
   const week = getWeekRange_(date, settings.weekStartDay);
+  const current = checkRestDaysForWeek_(ctx, week);
+  const result = {
+    from: week.from, to: week.to, required: settings.weeklyFullRestDays, weekFinished: week.to < ctx.today,
+    rows: current.filter(function (x) { return x.status === '不足'; }),
+    pending: current.filter(function (x) { return x.status === '未確定'; }),
+    previous: null,
+  };
+  if (!result.weekFinished) {
+    const prevWeek = getWeekRange_(addDays_(week.from, -1), settings.weekStartDay);
+    result.previous = {
+      from: prevWeek.from, to: prevWeek.to,
+      rows: checkRestDaysForWeek_(ctx, prevWeek).filter(function (x) { return x.status === '不足'; }),
+    };
+  }
+  return result;
+}
+
+/** 1週間分の判定（在籍スタッフ全員。確保済みの人は除く） */
+function checkRestDaysForWeek_(ctx, week) {
   const judgeDate = week.to < ctx.today ? addDays_(week.to, 1) : ctx.today; // 既存の checkWeeklyRestDays と同じ判定
   const rows = [];
   ctx.staffList.filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; }).forEach(function (s) {
-    const check = checkWeeklyRest_(ctx.attendanceByEmployee[s.employeeId] || [], week.from, judgeDate, settings.weeklyFullRestDays);
+    const check = checkWeeklyRest_(ctx.attendanceByEmployee[s.employeeId] || [], week.from, judgeDate, ctx.settings.weeklyFullRestDays);
     if (check.status === '確保済み') return;
     rows.push({
       employeeId: s.employeeId, name: s.name, department: s.department, workType: s.workType,
       status: check.status, restDays: check.confirmedRestDays, required: check.required, message: check.message,
+      weekFrom: week.from, weekTo: week.to,
     });
   });
-  return { from: week.from, to: week.to, required: settings.weeklyFullRestDays, rows: rows };
+  return rows;
 }
 
 /** 日報：その日の全スタッフ（未提出の人も含む） */

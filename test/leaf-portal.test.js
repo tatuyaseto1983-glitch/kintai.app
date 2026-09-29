@@ -454,7 +454,8 @@ test('スタッフ画面：getStaffDashboard() は本人の情報だけをまと
   gas.setNow('2026-06-01 09:30');
   let r = gas.g.getStaffDashboard();
   assert.equal(r.success, true);
-  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'staffStatus', 'today', 'user']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'overtime', 'staffStatus', 'today', 'user']);
+  assert.deepEqual(r.data.overtime.data, [], '固定勤務は自分の残業申請（まだ0件）');
   assert.equal(r.data.user.data.employeeId, 'E002');
   assert.equal(r.data.today.data.record, null, '未出勤');
   assert.equal(r.data.flex.data, null, '固定勤務はフレックス集計なし');
@@ -701,8 +702,12 @@ test('管理者画面 11：週1日完全休日の警告（問題のある人だ�
   const r = gas.g.getAdminDashboard({ date: '2026-09-23', parts: ['restDays'] }).data.restDays;
   assert.deepEqual([r.from, r.to], ['2026-09-21', '2026-09-27']);
   assert.deepEqual(r.rows.map((x) => x.name + ':' + x.status + ':' + x.restDays), ['佐藤:不足:0'], '休みを取れた人は出さない');
-  const now = gas.g.getAdminDashboard({ date: '2026-09-29', parts: ['restDays'] }).data.restDays;
-  assert.ok(now.rows.every((x) => x.status === '未確定'), '今週はまだ確定しない');
+  gas.setNow('2026-09-28 09:00'); // 週の初日（月曜）：まだ誰も今週の完全休日が確定していない
+  const now = gas.g.getAdminDashboard({ date: '2026-09-28', parts: ['restDays'] }).data.restDays;
+  assert.deepEqual(now.rows, [], '今週の途中は「不足」の警告にしない');
+  assert.deepEqual(now.pending.map((x) => x.name).sort(), ['佐藤', '山田', '鈴木'].sort(), '未確定は別枠');
+  assert.deepEqual([now.previous.from, now.previous.to], ['2026-09-21', '2026-09-27']);
+  assert.deepEqual(now.previous.rows.map((x) => x.name + ':' + x.status), ['佐藤:不足'], '前の週の確定した不足は警告に出す');
 });
 
 test('管理者画面 12：日報（提出済み・下書き・未提出）と確認済みにする', () => {
@@ -741,4 +746,112 @@ test('管理者画面：フレックス管理（週・月）と画面の許可�
     assert.equal(r.success, false, fn);
     assert.match(r.message, /管理者権限がありません/, fn);
   }
+});
+
+// ============================================================ 残業申請フォーム（スタッフ画面）
+
+test('残業申請 1〜9：申請できる条件とエラー', () => {
+  const gas = ready();
+  gas.setNow('2026-06-01 10:00');
+  const req = (over) => ({ targetDate: '2026-06-01', plannedStart: '18:30', plannedEnd: '19:15', reason: '図面の修正', ...over });
+
+  gas.loginAs(FIXED);
+  // 1. 固定勤務は申請できる（社員ID・氏名はサーバー側でログインユーザーから入る）
+  let r = gas.g.submitOvertimeRequest(req({ employeeId: 'E003', name: 'なりすまし' }));
+  assert.equal(r.success, true, r.message);
+  assert.equal(r.data.plannedOvertime, '00:45');
+  const row = gas.main.rows('残業申請')[0];
+  assert.deepEqual([row['社員ID'], row['氏名'], row['ステータス'], row['予定開始'], row['予定終了'], row['予定残業時間']], ['E002', '佐藤', '承認待ち', '18:30', '19:15', '00:45']);
+  // 9. 同じ日の二重申請（承認待ち・承認済みがある）
+  assert.match(gas.g.submitOvertimeRequest(req({ plannedEnd: '20:00' })).message, /すでに提出されています（ステータス：承認待ち）/);
+
+  const day = (d) => '2026-06-0' + d;
+  // 3. 30分未満は申請不要（保存しない）
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(2), plannedEnd: '18:59' })).message, /30分未満の残業は事前申請不要です/);
+  // 4. 30分ちょうどは申請できる / 5. 31分も申請できる
+  assert.equal(gas.g.submitOvertimeRequest(req({ targetDate: day(3), plannedEnd: '19:00' })).data.plannedOvertime, '00:30');
+  assert.equal(gas.g.submitOvertimeRequest(req({ targetDate: day(4), plannedEnd: '19:01' })).data.plannedOvertime, '00:31');
+  // 6. 過去日は拒否
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: '2026-05-31' })).message, /過去の日付は申請できません/);
+  // 7. 終了時刻が開始以前
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(5), plannedEnd: '18:30' })).message, /予定終了は予定開始より後/);
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(5), plannedEnd: '17:00' })).message, /予定終了は予定開始より後/);
+  // 8. 理由なし・未入力
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(5), reason: '  ' })).message, /申請理由を入力してください/);
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: '' })).message, /対象日/);
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(5), plannedStart: '' })).message, /予定開始/);
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(5), plannedEnd: '' })).message, /予定終了/);
+
+  // 2. フレックス社員は対象外（申請できない・画面用データも出さない）
+  gas.loginAs(FLEX);
+  assert.match(gas.g.submitOvertimeRequest(req({ targetDate: day(5) })).message, /フレックス勤務の方は、残業申請の対象外です/);
+  assert.equal(gas.g.getStaffDashboard(['overtime']).data.overtime.data, null);
+  assert.equal(gas.main.rows('残業申請').length, 3, 'エラーのときは保存しない');
+});
+
+test('残業申請 10〜12：自分の申請だけ取得・管理者の承認/却下が本人に反映', () => {
+  const gas = ready();
+  gas.g.appendRecords_('スタッフマスタ', [{ '社員ID': 'E004', '氏名': '田中', 'メールアドレス': 'tanaka@example.com', '権限': 'staff', '勤務区分': '固定勤務', '在籍状況': '在籍' }]);
+  gas.setNow('2026-06-01 10:00');
+  gas.loginAs(FIXED);
+  const a = gas.g.submitOvertimeRequest({ targetDate: '2026-06-01', plannedStart: '18:30', plannedEnd: '19:30', reason: 'A' }).data.requestId;
+  const b = gas.g.submitOvertimeRequest({ targetDate: '2026-06-02', plannedStart: '18:30', plannedEnd: '19:30', reason: 'B' }).data.requestId;
+  gas.loginAs('tanaka@example.com');
+  gas.g.submitOvertimeRequest({ targetDate: '2026-06-01', plannedStart: '18:30', plannedEnd: '20:00', reason: '田中の申請' });
+
+  // 10. 自分の申請だけ
+  gas.loginAs(FIXED);
+  let mine = gas.g.getStaffDashboard(['overtime']).data.overtime.data;
+  assert.deepEqual(mine.map((x) => x.reason).sort(), ['A', 'B']);
+  assert.deepEqual(gas.g.getMyOvertimeRequests().data.map((x) => x.employeeId), ['E002', 'E002']);
+  assert.match(gas.g.approveOvertimeRequest(a).message, /管理者権限がありません/, '一般スタッフは承認できない');
+
+  // 11・12. 管理者が承認・却下 → 本人の画面に反映（却下理由も見える）
+  gas.loginAs(ADMIN);
+  assert.equal(gas.g.getAdminDashboard({ parts: ['overtime'] }).data.overtime.pendingCount, 3, '管理者画面に自動で表示');
+  assert.equal(gas.g.approveOvertimeRequest(a).success, true);
+  assert.equal(gas.g.rejectOvertimeRequest(b, '別の日に調整してください').success, true);
+  gas.loginAs(FIXED);
+  mine = gas.g.getStaffDashboard(['overtime']).data.overtime.data;
+  const byReason = Object.fromEntries(mine.map((x) => [x.reason, x]));
+  assert.equal(byReason.A.status, '承認済み');
+  assert.equal(byReason.B.status, '却下');
+  assert.match(byReason.B.note, /却下理由：別の日に調整してください/);
+  // 却下された日は、もう一度申請できる
+  assert.equal(gas.g.submitOvertimeRequest({ targetDate: '2026-06-02', plannedStart: '18:30', plannedEnd: '19:00', reason: '再申請' }).success, true);
+});
+
+test('残業申請 13・14：承認済みなら要確認なし、承認待ちのままなら要確認（実績は丸めない）', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-01 10:00');
+  const approved = gas.g.submitOvertimeRequest({ targetDate: '2026-06-01', plannedStart: '18:30', plannedEnd: '19:15', reason: '承認される' }).data.requestId;
+  gas.g.submitOvertimeRequest({ targetDate: '2026-06-02', plannedStart: '18:30', plannedEnd: '19:15', reason: '承認待ちのまま' });
+  gas.loginAs(ADMIN);
+  gas.g.approveOvertimeRequest(approved);
+  gas.loginAs(FIXED);
+  for (const d of ['2026-06-01', '2026-06-02']) {
+    gas.setNow(d + ' 09:30'); gas.g.clockIn('出社');
+    gas.setNow(d + ' 19:12'); gas.g.clockOut();
+  }
+  const rows = gas.main.rows('勤怠記録');
+  // 13. 予定 18:30〜19:15（承認済み）・実績 19:12 → 社内超過 00:42、要確認なし
+  assert.deepEqual([rows[0]['社内超過時間'], rows[0]['事前残業申請'], rows[0]['要確認'], rows[0]['退勤']], ['00:42', '承認済み', '', '19:12']);
+  // 14. 承認待ちは承認済み扱いにしない → 要確認
+  assert.deepEqual([rows[1]['社内超過時間'], rows[1]['事前残業申請'], rows[1]['要確認']], ['00:42', '承認待ち', '要確認']);
+  // 実績残業は予定（00:45）と別に保存し、予定に丸めない
+  const ot = gas.main.rows('残業申請');
+  assert.deepEqual([ot[0]['予定残業時間'], ot[0]['実績残業']], ['00:45', '00:42']);
+  assert.deepEqual([ot[1]['予定残業時間'], ot[1]['実績残業']], ['00:45', '00:42']);
+});
+
+test('残業申請 15：同じ申請を続けて送っても1件だけ（ロック＋二重申請チェック）', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-01 10:00');
+  const req = { targetDate: '2026-06-01', plannedStart: '18:30', plannedEnd: '19:30', reason: '連打' };
+  const results = [1, 2, 3, 4, 5].map(() => gas.g.submitOvertimeRequest(req));
+  assert.equal(results.filter((r) => r.success).length, 1);
+  assert.equal(gas.main.rows('残業申請').length, 1);
+  assert.ok(results.slice(1).every((r) => /すでに提出されています/.test(r.message)));
 });

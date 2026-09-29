@@ -17,7 +17,7 @@
 const WEB_APP_TITLE = 'リーフ 社内ポータル｜勤怠管理';
 
 /** getStaffDashboard() で取得できる情報の種類 */
-const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex'];
+const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime'];
 
 /**
  * WebアプリのURLを開いたときに呼ばれ、画面を返します。
@@ -51,6 +51,7 @@ function includeHtml_(fileName) {
  *   'month'       自分の今月の勤怠一覧          … getMyAttendance()
  *   'staffStatus' 全スタッフの今の状況          … getTodayStaffStatus()（氏名・勤務形態・状態だけ）
  *   'flex'        フレックス集計（フレックスの人だけ） … getFlexSummary()
+ *   'overtime'    自分の残業申請（固定勤務の人だけ）   … getMyOvertimeRequests()
  *
  * 戻り値：{ success, message, data: { user: {...}, today: {...}, ... } }
  *   data の中の各項目も { success, message, data } の形です。
@@ -75,6 +76,14 @@ function getStaffDashboard(parts) {
         result.flex = getFlexSummary(); // 社員IDは渡さない＝必ず本人の集計
       } else {
         result.flex = { success: true, message: 'フレックス勤務ではないため表示しません', data: null };
+      }
+    }
+
+    if (wanted.indexOf('overtime') !== -1) {
+      if (user && user.workType === WORK_TYPES.FIXED) {
+        result.overtime = getMyOvertimeRequests(); // 本人の申請だけ（社員IDは渡さない）
+      } else {
+        result.overtime = { success: true, message: '残業申請の対象外です', data: null };
       }
     }
 
