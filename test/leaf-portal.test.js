@@ -462,7 +462,13 @@ test('スタッフ画面：getStaffDashboard() は本人の情報だけをまと
   r = gas.g.getStaffDashboard(['today', 'staffStatus']);
   assert.deepEqual(Object.keys(r.data).sort(), ['staffStatus', 'today']);
   assert.equal(r.data.today.data.record.status, '勤務中');
-  for (const s of r.data.staffStatus.data.staff) assert.deepEqual(Object.keys(s).sort(), ['label', 'name', 'status', 'workStyle']);
+  for (const s of r.data.staffStatus.data.staff) assert.deepEqual(Object.keys(s).sort(), ['isSelf', 'label', 'name', 'status', 'workStyle']);
+  assert.deepEqual(r.data.staffStatus.data.staff.filter((s) => s.isSelf).map((s) => s.name), ['佐藤'], '自分の行だけ isSelf');
+
+  // 同姓同名がいても、「自分」は社員IDで判定されるので1人だけ
+  gas.g.appendRecords_('スタッフマスタ', [{ '社員ID': 'E099', '氏名': '佐藤', 'メールアドレス': 'sato2@example.com', '権限': 'staff', '勤務区分': '固定勤務', '在籍状況': '在籍' }]);
+  const same = gas.g.getTodayStaffStatus().data.staff.filter((s) => s.name === '佐藤');
+  assert.deepEqual(same.map((s) => s.isSelf), [true, false]);
 
   // 画面から社員IDを渡しても無視され、他人の情報は取れない
   gas.loginAs(FLEX);

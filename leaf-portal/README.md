@@ -299,7 +299,7 @@ Apps Script 画面の左の **＋ → スクリプト** でファイルを作り
 | `clockIn('出社' または '在宅')` | 全員 | 勤怠1件（下の「勤怠の項目」） |
 | `startBreak(理由)` / `resumeWork()` / `clockOut()` | 全員 | 勤怠1件 |
 | `getMyAttendance('2026-09')` | 全員（本人分のみ） | month, from, to, records[], totals |
-| `getTodayStaffStatus()` | 全員 | date, staff[{ name, workStyle, status, label }]（**時間・遅刻・残業は返さない**） |
+| `getTodayStaffStatus()` | 全員 | date, staff[{ name, workStyle, status, label, isSelf }]（isSelf＝自分の行なら true。**時間・遅刻・残業は返さない**） |
 | `getFlexSummary(社員ID)` | フレックス本人／管理者 | week・month の scheduled, worked, remaining, excess、week.restDayCheck |
 | `submitOvertimeRequest({ targetDate, plannedStart, plannedEnd, reason })` | 全員 | 申請1件 |
 | `submitCorrectionRequest({ targetDate, item, before, after, reason })` | 全員 | 申請1件 |
@@ -475,13 +475,16 @@ GAS のまね（モック）は `dev/leaf-gas-mock.js` です。
 
 ### K-2. 既存のバックエンドへの変更（理由と内容）
 
-既存の関数の動き・戻り値は変えていません。変更は次の1点だけです。
+既存の関数の動き・既存の戻り値の項目は変えていません。変更は次の2点です。
 
 - **`setupSystem()` `addSampleStaff()` `runAllScenarioTests()` の先頭に、「エディタ・メニューから本人として実行されているか」の確認を追加**（`Setup.gs` の `requireEditorExecution_`）
   - 理由：Webアプリとして公開すると、Apps Script の仕組み上、名前の最後に `_` が付いていない関数は、スタッフがブラウザの開発者ツールから呼び出せてしまいます。
     「自分として実行」で公開すると、これらが**所有者の権限で**動き、テスト用スタッフが本番シートに追加されたり、所有者のドライブにテスト用ファイルが作られたりするおそれがあるためです。
   - 動き：Webアプリ経由（操作している人 ≠ 所有者）のときは「Webアプリからは実行できません」で止まります。
     エディタから実行する場合は今までどおり動きます（自動テスト 43件もそのまま成功します）。
+- **`getTodayStaffStatus()` の各行に `isSelf`（自分の行なら true）を追加**（`AttendanceService.gs`）
+  - 理由：全スタッフ一覧の「（あなた）」を氏名で判定すると、同姓同名のときに2人とも「あなた」になるため。サーバー側で社員IDを比べて判定します
+  - 既存の項目（name, workStyle, status, label）は変えていません。社員IDやメールアドレスは返しません
 - 追加（変更ではない）：`WebApp.gs` の `doGet()` と `getStaffDashboard()`。
 
 ### K-3. 状態ごとのボタン

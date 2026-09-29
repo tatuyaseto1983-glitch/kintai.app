@@ -64,11 +64,11 @@ function getMyAttendance(month) {
 
 /**
  * 【画面から呼ぶ】今日の全スタッフの勤務状況（スタッフ向け）。
- * 他の人の勤務時間・遅刻・残業などは返しません。返すのは「氏名・勤務形態・状態」だけです。
+ * 他の人の勤務時間・遅刻・残業などは返しません。返すのは「氏名・勤務形態・状態」と、自分の行かどうか（isSelf）だけです。
  */
 function getTodayStaffStatus() {
   return runApi_(function () {
-    getCurrentStaff_(); // 登録済みのスタッフだけが見られる
+    const me = getCurrentStaff_(); // 登録済みのスタッフだけが見られる
     const now = getNowInfo_();
     const list = getAllStaff_()
       .filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; })
@@ -81,6 +81,7 @@ function getTodayStaffStatus() {
           workStyle: workStyle,
           status: status,
           label: status === ATTENDANCE_STATUS.WORKING && workStyle ? workStyle + '・' + status : status,
+          isSelf: s.employeeId === me.employeeId, // 自分の行か（画面の「（あなた）」表示用。社員IDそのものは返さない）
         };
       });
     return { message: '本日の勤務状況を取得しました', data: { date: now.date, staff: list } };

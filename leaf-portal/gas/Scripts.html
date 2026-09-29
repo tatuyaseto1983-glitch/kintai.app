@@ -246,7 +246,7 @@
       // 他のスタッフについて表示するのは「氏名・勤務形態・状態」だけ
       var li = document.createElement('li');
       var name = el('span', 'staff-name', s.name);
-      if (state.user && s.name === state.user.name) name.appendChild(el('span', 'me', '（あなた）'));
+      if (s.isSelf === true) name.appendChild(el('span', 'me', '（あなた）')); // 自分かどうかはサーバーが判定（同姓同名でも正しい）
       li.appendChild(name);
       li.appendChild(el('span', 'badge badge-' + statusClassOf(s.status), s.label || s.status));
       list.appendChild(li);
