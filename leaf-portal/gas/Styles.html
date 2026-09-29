@@ -1,26 +1,67 @@
 <style>
 /* ============================================================
- * Styles.html — スタッフ画面の見た目
- * 色は最初の :root にまとめています。色を変えたいときはここだけ直してください。
+ * Styles.html — スタッフ画面・管理者画面の見た目
+ *
+ * 【色・フォントを変えるときは、下の :root の「ブランド」の値だけを直してください】
+ *   --brand-*  … 会社の色・文字・背景・フォント・角丸・影（画面全体の雰囲気）
+ *   --state-*  … 意味のある色（勤務中・中断中・承認待ち・却下・エラーなど）。ブランドを変えても変えない
+ * その下の --green などは、昔からの名前をそのまま使えるようにするための「別名」です。
  * ============================================================ */
 :root {
-  --green: #2E8B57;        /* メイングリーン */
-  --green-dark: #1F6E45;   /* 濃いグリーン */
-  --green-light: #EAF7EF;  /* 薄いグリーン */
-  --green-line: #CFE6D8;
-  --bg: #F5F9F6;
-  --card: #FFFFFF;
-  --text: #22302A;
-  --text-sub: #5E6D66;
-  --line: #E2ECE6;
-  --orange: #C26A00;
-  --orange-light: #FFF3E0;
-  --gray: #5F6B66;
-  --gray-light: #EEF1EF;
-  --red: #C62828;
-  --red-light: #FDECEC;
-  --radius: 16px;
-  --shadow: 0 1px 2px rgba(31, 110, 69, .06), 0 4px 16px rgba(31, 110, 69, .06);
+  /* ---------- ブランド（ここを変えると画面全体の雰囲気が変わる） ---------- */
+  --brand-primary: #2E8B57;        /* 主要ボタン・強調の色 */
+  --brand-primary-strong: #1F6E45; /* 見出し・ボタンを押したときの色 */
+  --brand-accent: #EAF7EF;         /* 選択中・表の見出しなどの薄い色 */
+  --brand-accent-line: #CFE6D8;    /* 選択肢の枠など */
+  --brand-bg: #F5F9F6;             /* 画面の背景 */
+  --brand-surface: #FFFFFF;        /* カードの背景 */
+  --brand-surface-soft: #FCFEFD;   /* カードの中の区切り（フレックス・申請など） */
+  --brand-surface-highlight: #F3FBF6; /* 表の「今日」の行 */
+  --brand-text: #22302A;           /* 本文 */
+  --brand-muted: #5E6D66;          /* 補足の文字 */
+  --brand-border: #E2ECE6;         /* 線・カードの枠 */
+  --brand-input-border: #CBDCD2;   /* 入力欄の枠 */
+  --brand-focus: #CDEBDA;          /* 入力欄を選んだときの枠 */
+  --brand-focus-ring: #9FD3B4;     /* ボタンを選んだときの枠 */
+  --brand-dark: #3F4B45;           /* 退勤・再計算などの濃いボタン */
+  --brand-dark-hover: #2C3631;
+  --brand-font-body: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  --brand-font-heading: var(--brand-font-body);
+  --brand-heading-weight: 700;
+  --brand-heading-spacing: .02em;
+  --brand-radius: 16px;            /* カードの角丸 */
+  --brand-radius-control: 12px;    /* ボタン・入力欄の角丸 */
+  --brand-shadow: 0 1px 2px rgba(31, 110, 69, .06), 0 4px 16px rgba(31, 110, 69, .06);
+
+  /* ---------- 意味のある色（ブランドを変えても維持する） ---------- */
+  --state-ok: #1F6E45;         /* 勤務中・承認済み */
+  --state-ok-bg: #EAF7EF;
+  --state-warn: #C26A00;       /* 中断中・承認待ち・注意 */
+  --state-warn-bg: #FFF3E0;
+  --state-warn-strong: #F29B30; /* 中断ボタン */
+  --state-neutral: #5F6B66;    /* 退勤済み */
+  --state-neutral-bg: #EEF1EF;
+  --state-error: #C62828;      /* エラー・却下・要確認 */
+  --state-error-bg: #FDECEC;
+
+  /* ---------- 以前からの名前（別名。新しく書くときは --brand-* / --state-* を使う） ---------- */
+  --green: var(--brand-primary);
+  --green-dark: var(--brand-primary-strong);
+  --green-light: var(--brand-accent);
+  --green-line: var(--brand-accent-line);
+  --bg: var(--brand-bg);
+  --card: var(--brand-surface);
+  --text: var(--brand-text);
+  --text-sub: var(--brand-muted);
+  --line: var(--brand-border);
+  --orange: var(--state-warn);
+  --orange-light: var(--state-warn-bg);
+  --gray: var(--state-neutral);
+  --gray-light: var(--state-neutral-bg);
+  --red: var(--state-error);
+  --red-light: var(--state-error-bg);
+  --radius: var(--brand-radius);
+  --shadow: var(--brand-shadow);
 }
 
 * { box-sizing: border-box; }
@@ -29,7 +70,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  font-family: var(--brand-font-body);
   font-size: 16px;
   line-height: 1.6;
 }
@@ -58,7 +99,7 @@ h2, h3, p { margin: 0; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-logo { display: block; height: 56px; width: auto; max-width: 160px; object-fit: contain; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.3; }
-.brand-name { font-weight: 700; font-size: 18px; color: var(--green-dark); letter-spacing: .02em; }
+.brand-name { font-family: var(--brand-font-heading); font-weight: var(--brand-heading-weight); font-size: 18px; color: var(--green-dark); letter-spacing: var(--brand-heading-spacing); }
 .brand-sub { font-size: 13px; color: var(--text-sub); }
 .user-box { text-align: right; }
 .user-name { font-weight: 700; font-size: 17px; }
@@ -88,7 +129,7 @@ h2, h3, p { margin: 0; }
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 20px; min-width: 0;
 }
-.card-title { font-size: 15px; font-weight: 700; color: var(--green-dark); margin-bottom: 12px; }
+.card-title { font-family: var(--brand-font-heading); font-size: 15px; font-weight: var(--brand-heading-weight); color: var(--green-dark); margin-bottom: 12px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .card-head .card-title { margin-bottom: 0; }
 .card-note { font-size: 13px; color: var(--text-sub); margin-top: 10px; }
@@ -119,18 +160,18 @@ h2, h3, p { margin: 0; }
   font-weight: 700; cursor: pointer; transition: background .15s, box-shadow .15s, opacity .15s;
   -webkit-tap-highlight-color: transparent;
 }
-.btn:focus-visible, .style-option:focus-visible { outline: 3px solid #9FD3B4; outline-offset: 2px; }
+.btn:focus-visible, .style-option:focus-visible { outline: 3px solid var(--brand-focus-ring); outline-offset: 2px; }
 .btn:disabled { cursor: not-allowed; opacity: .38; box-shadow: none; }
 .btn-lg { min-height: 64px; font-size: 18px; border-radius: 14px; }
 .btn-sm { min-height: 34px; padding: 4px 12px; font-size: 14px; }
 .btn-primary { background: var(--green); color: #fff; }
 .btn-primary:not(:disabled):hover { background: var(--green-dark); }
-.btn-warn { background: #F29B30; color: #fff; }
+.btn-warn { background: var(--state-warn-strong); color: #fff; }
 .btn-warn:not(:disabled):hover { background: #DB8520; }
 .btn-resume { background: #fff; color: var(--green-dark); border-color: var(--green); }
 .btn-resume:not(:disabled):hover { background: var(--green-light); }
-.btn-dark { background: #3F4B45; color: #fff; }
-.btn-dark:not(:disabled):hover { background: #2C3631; }
+.btn-dark { background: var(--brand-dark); color: #fff; }
+.btn-dark:not(:disabled):hover { background: var(--brand-dark-hover); }
 .btn-outline { background: #fff; color: var(--green-dark); border-color: var(--green); }
 .btn-outline:not(:disabled):hover { background: var(--green-light); }
 .btn-ghost { background: transparent; color: var(--green-dark); border-color: var(--line); }
@@ -184,14 +225,14 @@ h2, h3, p { margin: 0; }
 .table th, .table td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
 .table th { position: sticky; top: 0; background: var(--green-light); color: var(--green-dark); font-weight: 700; z-index: 1; }
 .table tbody tr:last-child td { border-bottom: none; }
-.table tr.is-today td { background: #F3FBF6; font-weight: 700; }
+.table tr.is-today td { background: var(--brand-surface-highlight); font-weight: 700; }
 .table td.sun { color: #C0392B; }
 .table td.sat { color: #2463B5; }
 
 /* フレックス累計 */
 .flex-grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
 @media (min-width: 860px) { .flex-grid { grid-template-columns: 1fr 1fr; } }
-.flex-box { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #FCFEFD; }
+.flex-box { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: var(--brand-surface-soft); }
 .flex-box h3 { font-size: 15px; margin-bottom: 2px; }
 .flex-range { font-size: 13px; color: var(--text-sub); margin-bottom: 10px; }
 .flex-numbers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; }
@@ -234,10 +275,10 @@ h2, h3, p { margin: 0; }
 
 /* ---------- フォーム・モーダル ---------- */
 input[type="text"], input[type="date"], input[type="time"], select, textarea {
-  width: 100%; padding: 10px 12px; border: 1px solid #CBDCD2; border-radius: 10px; background: #fff; min-height: 44px;
+  width: 100%; padding: 10px 12px; border: 1px solid var(--brand-input-border); border-radius: 10px; background: #fff; min-height: 44px;
 }
 textarea { resize: vertical; }
-input:focus, select:focus, textarea:focus { outline: 3px solid #CDEBDA; border-color: var(--green); }
+input:focus, select:focus, textarea:focus { outline: 3px solid var(--brand-focus); border-color: var(--green); }
 .modal { position: fixed; inset: 0; background: rgba(20, 40, 30, .45); z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; overflow-y: auto; }
 .modal-panel { background: #fff; border-radius: var(--radius); width: 100%; max-width: 560px; padding: 22px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
 .modal-small { max-width: 420px; margin-top: 12vh; }

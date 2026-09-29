@@ -8,11 +8,11 @@
 .admin-loading { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 0; color: var(--green-dark); font-weight: 600; }
 
 .admin-titlebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
-.admin-title { font-size: 24px; margin: 0; color: var(--green-dark); }
+.admin-title { font-family: var(--brand-font-heading); font-weight: var(--brand-heading-weight); font-size: 24px; margin: 0; color: var(--green-dark); }
 .admin-who { font-size: 14px; color: var(--text-sub); }
 .admin-who span { margin-left: 8px; }
 .admin-titlebar-actions { display: flex; align-items: center; gap: 10px; }
-.section-title { font-size: 16px; color: var(--green-dark); margin: 0 0 10px; }
+.section-title { font-family: var(--brand-font-heading); font-weight: var(--brand-heading-weight); font-size: 16px; color: var(--green-dark); margin: 0 0 10px; }
 .section-sub { font-size: 13px; font-weight: 400; color: var(--text-sub); }
 
 /* サマリーカード */
@@ -58,7 +58,7 @@
 
 /* 申請一覧 */
 .request-list { display: flex; flex-direction: column; gap: 10px; max-height: 620px; overflow: auto; }
-.request { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: #FCFEFD; }
+.request { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--brand-surface-soft); }
 .request.is-pending { border-color: #F5D9AE; background: #FFFCF6; }
 .request-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .request-name { font-weight: 700; }
