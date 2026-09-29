@@ -27,6 +27,25 @@ function testMyAttendance() { return logApiResult_('自分の勤怠一覧', getM
 function testTodayStaffStatus() { return logApiResult_('全スタッフの勤務状況', getTodayStaffStatus()); }
 function testFlexSummary() { return logApiResult_('フレックス集計', getFlexSummary()); }
 
+/**
+ * ログインユーザー判定の確認。実行ログに次の3つを表示します（データは変更しません）。
+ *   ・Session.getActiveUser()   … このシステムが利用者の判定に使うメールアドレス
+ *   ・Session.getEffectiveUser()… スクリプトを実行している権限の持ち主（参考。判定には使いません）
+ *   ・スタッフマスタに登録されているか
+ */
+function testLoginCheck() {
+  let active = '';
+  let effective = '';
+  try { active = Session.getActiveUser().getEmail(); } catch (e) { active = '（取得時にエラー：' + e.message + '）'; }
+  try { effective = Session.getEffectiveUser().getEmail(); } catch (e) { effective = '（取得時にエラー：' + e.message + '）'; }
+  const result = getCurrentUser();
+  console.log('【ログイン判定の確認】\n' +
+    '・利用者のメールアドレス（getActiveUser）：' + (active || '（空＝取得できません）') + '\n' +
+    '・実行権限の持ち主（getEffectiveUser・参考）：' + (effective || '（空）') + '\n' +
+    '・判定結果：' + (result.success ? '成功 ' + result.data.name + '（' + result.data.employeeId + '・' + result.data.role + '）' : '失敗 ' + result.message));
+  return result;
+}
+
 function logApiResult_(title, result) {
   console.log('【' + title + '】' + (result.success ? '成功' : '失敗') + '：' + result.message +
     (result.data ? '\n' + JSON.stringify(result.data, null, 2) : ''));
@@ -68,6 +87,7 @@ function runAllScenarioTests() {
     runFlexScenarios_(check);
     runPermissionScenarios_(check);
     runCorrectionScenarios_(check);
+    runAutoBreakSettingScenarios_(check);
 
     const passed = results.filter(function (r) { return r.ok; }).length;
     const lines = results.map(function (r) { return (r.ok ? '✅ ' : '❌ ') + r.title + (r.detail ? '（' + r.detail + '）' : ''); });
@@ -372,4 +392,43 @@ function runCorrectionScenarios_(check) {
   check('   日報を提出できる', r.success && r.data.status === REPORT_STATUS.SUBMITTED, r.message);
   r = saveDailyReport({ status: REPORT_STATUS.SUBMITTED });
   check('   日報：業務内容が空のまま提出するとエラーになる', !r.success, r.message);
+}
+
+/** 自動休憩_適用開始 の設定変更だけで、短時間勤務の自動休憩を引かないようにできるか */
+function runAutoBreakSettingScenarios_(check) {
+  const S = TEST_STAFF.FIXED;
+  const workDay = function (date, inTime, outTime, breakStart, breakEnd) {
+    actAs_(S, date + ' ' + inTime);
+    clockIn(WORK_STYLES.OFFICE);
+    if (breakStart) {
+      actAs_(S, date + ' ' + breakStart);
+      startBreak('テスト');
+      actAs_(S, date + ' ' + breakEnd);
+      resumeWork();
+    }
+    actAs_(S, date + ' ' + outTime);
+    return clockOut().data || {};
+  };
+
+  let rec = workDay('2026-06-09', '09:30', '13:30');
+  check('   自動休憩_適用開始＝00:00（初期値）：4時間勤務でも自動休憩 01:00 を引く', rec.autoBreak === '01:00' && rec.workTime === '03:00',
+    '自動休憩 ' + rec.autoBreak + '／実働 ' + rec.workTime);
+
+  // テスト用ファイルの設定シートだけを書き換える
+  clearTableCache_();
+  const setting = findRecords_(SHEET_NAMES.SETTINGS, function (r) { return r['項目'] === SETTING_KEYS.AUTO_BREAK_THRESHOLD; })[0];
+  updateRecord_(SHEET_NAMES.SETTINGS, setting, { '値': '06:00' });
+
+  rec = workDay('2026-06-10', '09:30', '15:30');
+  check('   自動休憩_適用開始＝06:00：ちょうど6時間の勤務では自動休憩を引かない', rec.autoBreak === '00:00' && rec.workTime === '06:00',
+    '自動休憩 ' + rec.autoBreak + '／実働 ' + rec.workTime);
+  rec = workDay('2026-06-11', '09:30', '15:31');
+  check('   自動休憩_適用開始＝06:00：6時間を超えたら自動休憩を引く', rec.autoBreak === '01:00' && rec.workTime === '05:01',
+    '自動休憩 ' + rec.autoBreak + '／実働 ' + rec.workTime);
+  rec = workDay('2026-06-12', '09:30', '16:30', '12:00', '13:30');
+  check('   自動休憩_適用開始＝06:00：中断を除いて6時間以下なら引かない（7時間−中断1:30）', rec.autoBreak === '00:00' && rec.workTime === '05:30',
+    '自動休憩 ' + rec.autoBreak + '／実働 ' + rec.workTime);
+
+  clearTableCache_();
+  updateRecord_(SHEET_NAMES.SETTINGS, findRecords_(SHEET_NAMES.SETTINGS, function (r) { return r['項目'] === SETTING_KEYS.AUTO_BREAK_THRESHOLD; })[0], { '値': '00:00' });
 }

@@ -18,7 +18,9 @@ function getCurrentUser() {
 
 /**
  * ログイン中のメールアドレス（小文字）。
- * 注意：Webアプリとして公開したとき、設定や利用者のアカウントの種類によっては空になることがあります（README 参照）。
+ * 注意：Webアプリとして公開したとき、設定や利用者のアカウントの種類によっては空になることがあります（README「F」参照）。
+ *   - 空のときは必ずエラーにします。Session.getEffectiveUser()（＝スクリプトの所有者）で代用すると、
+ *     全員が所有者として打刻されてしまうため、使いません。
  */
 function getActiveUserEmail_() {
   if (APP_RUNTIME.email) return String(APP_RUNTIME.email).trim().toLowerCase();
@@ -28,10 +30,17 @@ function getActiveUserEmail_() {
   } catch (e) {
     email = '';
   }
+  email = String(email || '').trim().toLowerCase();
+  // 取得できないときに、別の人（スクリプトの所有者など）として扱うことは絶対にしない。必ずエラーで止める
   if (!email) {
-    fail_('Googleアカウントのメールアドレスを取得できませんでした。会社のGoogleアカウントでログインしているか確認してください');
+    fail_('Googleアカウントのメールアドレスを取得できませんでした。打刻などの処理は行っていません。' +
+      '個人のGmailアカウントでWebアプリを開いている場合や、会社のGoogle Workspaceアカウントでログインしていない場合に起こります。' +
+      '管理者に連絡してください（README「F. ログインユーザー判定」参照）');
   }
-  return String(email).trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+$/.test(email)) {
+    fail_('Googleアカウントのメールアドレスの形式が正しくありません（' + email + '）。処理は行っていません。管理者に連絡してください');
+  }
+  return email;
 }
 
 /** ログイン中のスタッフ（見つからなければエラー） */

@@ -369,3 +369,65 @@ test('戻り値はすべて { success, message, data } の形で、画面に渡�
     assert.doesNotThrow(() => JSON.stringify(r));
   }
 });
+
+test('メールアドレスが取得できないときは、所有者などで代用せず明確なエラーで止まる', () => {
+  const gas = ready();
+  gas.loginAs(''); // 個人Gmail同士のWebアプリ「自分として実行」などで起きる状態
+  gas.g.Session.getEffectiveUser = () => ({ getEmail: () => ADMIN }); // 実行権限の持ち主は登録済みの管理者
+  gas.setNow('2026-06-01 09:30');
+  for (const r of [gas.g.getCurrentUser(), gas.g.clockIn('出社'), gas.g.getTodayStaffStatus(), gas.g.getAllAttendance('2026-06-01', '2026-06-30')]) {
+    assert.equal(r.success, false);
+    assert.match(r.message, /メールアドレスを取得できませんでした。打刻などの処理は行っていません/);
+  }
+  assert.equal(gas.main.rows('勤怠記録').length, 0, '何も記録されない');
+
+  gas.g.Session.getActiveUser = () => { throw new Error('権限がありません'); };
+  assert.match(gas.g.clockIn('出社').message, /メールアドレスを取得できませんでした/);
+  gas.g.Session.getActiveUser = () => ({ getEmail: () => 'not-an-email' });
+  assert.match(gas.g.clockIn('出社').message, /形式が正しくありません/);
+});
+
+test('自動休憩_適用開始：設定シートの値を変えるだけで短時間勤務の自動休憩を引かなくなる', () => {
+  const gas = ready();
+  const { g } = gas;
+  const base = { isFixed: false, standardStartMinutes: 570, standardEndMinutes: 1110, autoBreakMinutes: 60, overtimeFreeLimitMinutes: 30, overtimeUnitMinutes: 1 };
+  const auto = (hours, interruption, threshold) => g.calculateWorkTime_({ ...base, clockInMinutes: 540, clockOutMinutes: 540 + hours * 60, interruptionMinutes: interruption, autoBreakThresholdMinutes: threshold }).autoBreakMinutes;
+  assert.equal(auto(3, 0, 0), 60, '00:00 は常に引く');
+  assert.equal(auto(6, 0, 360), 0, '6時間ちょうどは引かない');
+  assert.equal(auto(6.5, 0, 360), 60);
+  assert.equal(auto(7, 90, 360), 0, '中断を除いて6時間以下なら引かない');
+
+  const settings = gas.main.getSheetByName('設定');
+  settings.data[settings.data.findIndex((r) => r[0] === '自動休憩_適用開始')][1] = '06:00';
+  gas.loginAs(FLEX);
+  gas.setNow('2026-06-01 10:00');
+  gas.g.clockIn('在宅');
+  gas.setNow('2026-06-01 14:00');
+  const r = gas.g.clockOut();
+  assert.equal(r.data.autoBreak, '00:00');
+  assert.equal(r.data.workTime, '04:00');
+});
+
+test('clasp push 前の確認：設定の間違いを止める', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { checkClaspProject, REQUIRED_FILES } = require('../leaf-portal/tools/check-clasp');
+  const real = checkClaspProject(path.join(__dirname, '..', 'leaf-portal'));
+  assert.deepEqual(real.files, [...REQUIRED_FILES].sort(), 'gas/ のファイルがそろっている');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clasp-'));
+  fs.cpSync(path.join(__dirname, '..', 'leaf-portal', 'gas'), path.join(dir, 'gas'), { recursive: true });
+  const write = (obj) => fs.writeFileSync(path.join(dir, '.clasp.json'), typeof obj === 'string' ? obj : JSON.stringify(obj));
+  assert.match(checkClaspProject(dir).errors[0], /\.clasp\.json がありません/);
+  write('{ "scriptId": "abc", }');
+  assert.match(checkClaspProject(dir).errors[0], /書き方が正しくありません/);
+  write({ scriptId: 'AKfycbxDEPLOY', rootDir: 'gas' });
+  assert.match(checkClaspProject(dir).errors[0], /デプロイID/);
+  write({ scriptId: '1' + 'a'.repeat(56), rootDir: '.' });
+  assert.match(checkClaspProject(dir).errors[0], /rootDir は "gas"/);
+  write({ scriptId: '1' + 'a'.repeat(56), rootDir: 'gas' });
+  assert.equal(checkClaspProject(dir).ok, true);
+  fs.rmSync(path.join(dir, 'gas', 'Config.gs'));
+  assert.match(checkClaspProject(dir).errors[0], /Config\.gs/);
+});

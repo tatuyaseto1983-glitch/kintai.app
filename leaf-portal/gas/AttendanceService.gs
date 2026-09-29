@@ -198,13 +198,17 @@ function findCurrentAttendance_(employeeId, todayKey) {
  *   isFixed                             固定勤務なら true
  *   standardStartMinutes, standardEndMinutes  標準出勤・標準退勤
  *   autoBreakMinutes, autoBreakThresholdMinutes 自動休憩と、それを差し引き始める長さ
+ *                                       （中断を除いた勤務時間が threshold を「超えた」日だけ差し引く。0 なら常に差し引く）
  *   overtimeFreeLimitMinutes            事前申請が不要な社内超過時間の上限（これ以上で申請必須）
  *   overtimeUnitMinutes                 社内超過時間の記録単位（端数は切り捨て）
  */
 function calculateWorkTime_(p) {
   const grossMinutes = durationBetween_(p.clockInMinutes, p.clockOutMinutes);
   const clockOutAbsolute = p.clockInMinutes + grossMinutes; // 日付をまたいだ場合は 1440 以上になる
-  const autoBreakMinutes = grossMinutes > p.autoBreakThresholdMinutes ? p.autoBreakMinutes : 0;
+  // 自動休憩：中断を除いた勤務時間が「自動休憩_適用開始」を超えた日だけ差し引く
+  // （例：適用開始 06:00 なら、6時間ちょうどまでの短時間勤務では引かない）
+  const minutesBeforeAutoBreak = Math.max(0, grossMinutes - p.interruptionMinutes);
+  const autoBreakMinutes = minutesBeforeAutoBreak > p.autoBreakThresholdMinutes ? p.autoBreakMinutes : 0;
   const result = {
     grossMinutes: grossMinutes,
     autoBreakMinutes: autoBreakMinutes,

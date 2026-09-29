@@ -1,0 +1,20 @@
+{
+  "name": "leaf-portal-kintai-gas",
+  "version": "1.0.0",
+  "description": "株式会社リーフ 社内ポータル 勤怠管理（GASバックエンド）を clasp で Apps Script へ反映するための設定",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "login": "clasp login",
+    "whoami": "clasp show-authorized-user",
+    "check": "node tools/check-clasp.js",
+    "status": "node tools/check-clasp.js && clasp status",
+    "push": "node tools/check-clasp.js && clasp push",
+    "open": "clasp open-script"
+  },
+  "devDependencies": {
+    "@google/clasp": "3.4.1"
+  }
+}

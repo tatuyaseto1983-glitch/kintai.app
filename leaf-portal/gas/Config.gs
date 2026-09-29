@@ -109,7 +109,7 @@ const DEFAULT_SETTINGS = [
   { key: SETTING_KEYS.HOLIDAY_CATEGORY, value: 'なし', note: '土日祝の特別区分。現在は「なし」（曜日に関係なく勤務できるシフト制）' },
   { key: SETTING_KEYS.WEEK_START_DAY, value: '月', note: '週の集計を始める曜日（日・月・火・水・木・金・土）。就業規則に合わせてください' },
   { key: SETTING_KEYS.MONTH_CLOSING_DAY, value: '末日', note: '月の締め日。「末日」または 1〜27 の数字（例：20＝21日〜翌月20日を1か月として集計）' },
-  { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD, value: '00:00', note: '出勤〜退勤の長さがこの時間を超えた日だけ自動休憩を差し引きます（00:00＝常に差し引く）' },
+  { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD, value: '00:00', note: '中断を除いた勤務時間（退勤−出勤−中断合計）がこの時間を超えた日だけ自動休憩を差し引きます。00:00＝常に差し引く／06:00＝6時間以下の日は引かない' },
 ];
 
 /**
