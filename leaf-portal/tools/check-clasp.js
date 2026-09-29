@@ -20,6 +20,8 @@ const REQUIRED_FILES = [
   'DailyReportService.gs', 'AdminService.gs', 'TestRunner.gs',
   // スタッフ画面（Webアプリ）
   'WebApp.gs', 'Index.html', 'Styles.html', 'Scripts.html',
+  // 管理者画面
+  'AdminDashboardService.gs', 'AdminView.html', 'AdminStyles.html', 'AdminScripts.html',
 ];
 
 function checkClaspProject(projectDir) {

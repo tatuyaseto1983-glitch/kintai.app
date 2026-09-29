@@ -4,8 +4,9 @@
   <base target="_top">
   <meta charset="utf-8">
   <?!= includeHtml_('Styles') ?>
+  <?!= includeHtml_('AdminStyles') ?>
 </head>
-<body>
+<body data-initial-view="<?= initialView ?>">
   <!-- 初回の読み込み中の表示 -->
   <div id="loadingScreen" class="loading-screen" role="status">
     <div class="spinner" aria-hidden="true"></div>
@@ -25,7 +26,7 @@
           </svg>
           <div class="brand-text">
             <span class="brand-name">リーフ 社内ポータル</span>
-            <span class="brand-sub">勤怠管理</span>
+            <span class="brand-sub" id="brandSub">勤怠管理</span>
           </div>
         </div>
         <div class="user-box" id="userBox" hidden>
@@ -34,11 +35,16 @@
             <span id="userDept"></span>
             <span class="chip" id="userWorkType"></span>
           </div>
+          <div class="view-switch">
+            <!-- 管理者（admin）のときだけ表示。表示するかどうかに関係なく、管理者データはサーバー側で権限を確認してから返す -->
+            <button type="button" class="btn btn-outline btn-sm" id="btnToAdmin" hidden>管理者画面</button>
+            <button type="button" class="btn btn-outline btn-sm" id="btnToStaff" hidden>スタッフ画面へ戻る</button>
+          </div>
         </div>
       </div>
     </header>
 
-    <main class="container">
+    <main class="container" id="staffView">
       <!-- ログインユーザーを確認できないときの表示 -->
       <div id="loginError" class="notice notice-error" role="alert" hidden>
         <p class="notice-title" id="loginErrorTitle"></p>
@@ -147,6 +153,9 @@
         </section>
       </div>
     </main>
+
+    <!-- ================= 管理者画面（AdminView.html） ================= -->
+    <?!= includeHtml_('AdminView') ?>
 
     <footer class="site-footer">株式会社リーフ 社内ポータル</footer>
   </div>
@@ -259,5 +268,6 @@
   </div>
 
   <?!= includeHtml_('Scripts') ?>
+  <?!= includeHtml_('AdminScripts') ?>
 </body>
 </html>

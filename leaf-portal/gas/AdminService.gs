@@ -21,7 +21,7 @@
  */
 function requireAdmin() {
   const staff = getCurrentStaff_();
-  if (staff.role !== ROLES.ADMIN) fail_('この操作は管理者のみ実行できます');
+  if (staff.role !== ROLES.ADMIN) fail_('管理者権限がありません（この操作は管理者のみ実行できます）');
   return staff;
 }
 

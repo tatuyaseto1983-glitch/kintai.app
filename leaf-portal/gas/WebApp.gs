@@ -20,11 +20,16 @@ const WEB_APP_TITLE = 'リーフ 社内ポータル｜勤怠管理';
 const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex'];
 
 /**
- * WebアプリのURLを開いたときに呼ばれ、スタッフ画面を返します。
+ * WebアプリのURLを開いたときに呼ばれ、画面を返します。
+ * URLの最後に ?view=admin を付けると、最初に管理者画面を開きます。
+ * ※ここでは「どちらの画面を先に開くか」だけを決めます。管理者のデータは、画面が
+ *   getAdminDashboard() を呼んだときにサーバー側で requireAdmin() を通った場合だけ返します。
  */
-function doGet() {
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
+function doGet(e) {
+  const template = HtmlService.createTemplateFromFile('Index');
+  const requested = e && e.parameter ? String(e.parameter.view || '') : '';
+  template.initialView = requested === 'admin' ? 'admin' : 'staff';
+  return template.evaluate()
     .setTitle(WEB_APP_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }

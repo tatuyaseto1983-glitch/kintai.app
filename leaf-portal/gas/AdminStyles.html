@@ -1,0 +1,101 @@
+<style>
+/* ============================================================
+ * AdminStyles.html — 管理者画面の見た目（色は Styles.html の :root を使います）
+ * ============================================================ */
+.view-switch { margin-top: 6px; display: flex; justify-content: flex-end; gap: 8px; }
+.container-wide { max-width: 1440px; }
+.admin-content { display: flex; flex-direction: column; gap: 20px; }
+.admin-loading { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 0; color: var(--green-dark); font-weight: 600; }
+
+.admin-titlebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.admin-title { font-size: 24px; margin: 0; color: var(--green-dark); }
+.admin-who { font-size: 14px; color: var(--text-sub); }
+.admin-who span { margin-left: 8px; }
+.admin-titlebar-actions { display: flex; align-items: center; gap: 10px; }
+.section-title { font-size: 16px; color: var(--green-dark); margin: 0 0 10px; }
+.section-sub { font-size: 13px; font-weight: 400; color: var(--text-sub); }
+
+/* サマリーカード */
+.summary-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.summary-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+.summary-card .label { font-size: 13px; color: var(--text-sub); font-weight: 600; }
+.summary-card .value { font-size: 30px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.summary-card .unit { font-size: 14px; font-weight: 600; margin-left: 2px; color: var(--text-sub); }
+.summary-card .note { font-size: 12px; color: var(--text-sub); }
+.summary-card.tone-green .value { color: var(--green-dark); }
+.summary-card.tone-orange { background: var(--orange-light); border-color: #F5D9AE; }
+.summary-card.tone-orange .value { color: var(--orange); }
+.summary-card.tone-red { background: var(--red-light); border-color: #F3C4C4; }
+.summary-card.tone-red .value { color: var(--red); }
+.summary-card.tone-gray .value { color: var(--gray); }
+
+/* 切り替え・絞り込み */
+.tabs { display: inline-flex; background: var(--green-light); border-radius: 12px; padding: 4px; margin-bottom: 14px; }
+.tab { border: none; background: transparent; padding: 8px 22px; border-radius: 9px; font-weight: 700; color: var(--green-dark); cursor: pointer; min-height: 40px; }
+.tab[aria-selected="true"] { background: #fff; box-shadow: 0 1px 4px rgba(31, 110, 69, .15); }
+.control-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.control { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-sub); font-weight: 600; min-width: 130px; }
+.control-grow { flex: 1; min-width: 200px; }
+.control-check { display: flex; flex-direction: row; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; color: var(--text); font-weight: 600; cursor: pointer; }
+.control-check input { width: 18px; height: 18px; accent-color: var(--green); }
+.control-check.small { min-height: 0; font-size: 13px; font-weight: 400; color: var(--text-sub); }
+.select-sm { width: auto; min-height: 36px; padding: 4px 10px; }
+
+/* 一覧表（氏名の列は横スクロールしても固定） */
+.admin-table-wrap { max-height: 560px; }
+.admin-table { min-width: 1280px; font-size: 13px; }
+.admin-table th, .admin-table td { padding: 8px 10px; }
+.admin-table .sticky-col { position: sticky; left: 0; background: #fff; z-index: 2; text-align: left; box-shadow: 1px 0 0 var(--line); }
+.admin-table th.sticky-col { background: var(--green-light); z-index: 3; }
+.admin-table td.left { text-align: left; }
+.admin-table tr.row-alert td { background: #FFF6F6; }
+.admin-table tr.row-alert td.sticky-col { background: #FFF6F6; }
+.admin-table .cell-alert { color: var(--red); font-weight: 700; }
+.admin-table .cell-sub { display: block; font-size: 11px; font-weight: 600; color: var(--red); white-space: nowrap; }
+.admin-table .badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.admin-table .name-dept { display: block; font-size: 11px; color: var(--text-sub); font-weight: 400; }
+.badge-pending { background: var(--orange-light); color: var(--orange); }
+
+/* 申請一覧 */
+.request-list { display: flex; flex-direction: column; gap: 10px; max-height: 620px; overflow: auto; }
+.request { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: #FCFEFD; }
+.request.is-pending { border-color: #F5D9AE; background: #FFFCF6; }
+.request-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.request-name { font-weight: 700; }
+.request-main { margin-top: 6px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.request-meta { font-size: 13px; color: var(--text-sub); margin-top: 4px; white-space: pre-line; overflow-wrap: anywhere; }
+.request-actions { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+.request-actions .btn { min-width: 96px; }
+.btn-danger { background: #fff; color: var(--red); border-color: #E7A5A5; }
+.btn-danger:not(:disabled):hover { background: var(--red-light); }
+
+/* 完全休日・日報 */
+.plain-list { list-style: none; margin: 0; padding: 0; }
+.plain-list li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.plain-list li:last-child { border-bottom: none; }
+.plain-list .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.plain-list .sub { font-size: 13px; color: var(--text-sub); margin-top: 2px; }
+.report-list { display: flex; flex-direction: column; gap: 8px; max-height: 620px; overflow: auto; margin-top: 8px; }
+.report { border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.report summary { list-style: none; cursor: pointer; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.report summary::-webkit-details-marker { display: none; }
+.report summary::after { content: "▾"; color: var(--text-sub); margin-left: 6px; }
+.report[open] summary::after { content: "▴"; }
+.report-body { padding: 0 14px 12px; font-size: 14px; }
+.report-body dt { font-size: 12px; color: var(--text-sub); font-weight: 700; margin-top: 8px; }
+.report-body dd { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report.not-submitted summary { color: var(--text-sub); }
+.tool-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 4px; }
+.confirm-text { white-space: pre-line; margin-bottom: 12px; }
+
+@media (max-width: 859px) {
+  .view-switch { justify-content: flex-start; }
+  .admin-title { font-size: 20px; }
+  .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .summary-card .value { font-size: 26px; }
+  .control { min-width: calc(50% - 6px); flex: 1; }
+  .control-grow { min-width: 100%; }
+  .tool-row .btn { flex: 1; min-width: 100%; }
+  .admin-table-wrap { max-height: 70vh; }
+}
+</style>

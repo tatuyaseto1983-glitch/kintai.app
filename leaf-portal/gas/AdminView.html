@@ -1,0 +1,197 @@
+<!--
+  AdminView.html — 管理者画面の骨組み（Index.html の中に読み込まれます）
+  ここにはデータは入っていません。データは AdminScripts.html が getAdminDashboard() で取得し、
+  サーバー側で管理者と確認できた場合だけ表示されます。
+-->
+<main class="container container-wide" id="adminView" hidden>
+  <!-- 管理者でない人が開いたとき -->
+  <div id="adminDenied" class="notice notice-error" role="alert" hidden>
+    <p class="notice-title" id="adminDeniedTitle">管理者権限がありません</p>
+    <p class="notice-detail" id="adminDeniedDetail"></p>
+    <button type="button" class="btn btn-outline btn-sm" data-go-staff>スタッフ画面へ戻る</button>
+  </div>
+
+  <div id="adminLoading" class="admin-loading" hidden>
+    <div class="spinner" aria-hidden="true"></div>
+    <p>管理者画面を読み込み中...</p>
+  </div>
+
+  <div id="adminContent" class="admin-content" hidden>
+    <!-- ============ タイトル ============ -->
+    <div class="admin-titlebar">
+      <div>
+        <h1 class="admin-title">管理者画面</h1>
+        <p class="admin-who">管理者：<strong id="adminName"></strong><span id="adminDept"></span></p>
+      </div>
+      <div class="admin-titlebar-actions">
+        <span class="card-note" id="adminUpdatedAt"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnAdminReload" data-admin-label="最新に更新">最新に更新</button>
+      </div>
+    </div>
+
+    <!-- ============ サマリー（今日） ============ -->
+    <section aria-labelledby="summaryTitle">
+      <h2 class="section-title" id="summaryTitle">本日の状況 <span class="section-sub" id="summaryDate"></span></h2>
+      <div class="summary-grid" id="summaryCards"></div>
+    </section>
+
+    <!-- ============ 表示の切り替え・絞り込み ============ -->
+    <section class="card admin-controls" aria-label="表示の切り替えと絞り込み">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-mode="daily" aria-selected="true">日別</button>
+        <button type="button" class="tab" role="tab" data-mode="monthly" aria-selected="false">月別</button>
+      </div>
+      <div class="control-row">
+        <label class="control" data-for-mode="daily">
+          <span>日付</span>
+          <input type="date" id="admDate">
+        </label>
+        <label class="control" data-for-mode="monthly" hidden>
+          <span>月</span>
+          <input type="month" id="admMonth">
+        </label>
+        <label class="control control-grow">
+          <span>氏名・部署で検索</span>
+          <input type="text" id="admSearch" placeholder="例：山田、設計部">
+        </label>
+        <label class="control">
+          <span>勤務区分</span>
+          <select id="admWorkType">
+            <option value="">すべて</option>
+            <option value="固定勤務">固定勤務</option>
+            <option value="フレックス">フレックス</option>
+          </select>
+        </label>
+        <label class="control" data-for-mode="daily">
+          <span>勤務形態</span>
+          <select id="admWorkStyle">
+            <option value="">すべて</option>
+            <option value="出社">出社</option>
+            <option value="在宅">在宅</option>
+          </select>
+        </label>
+        <label class="control" data-for-mode="daily">
+          <span>状態</span>
+          <select id="admStatus">
+            <option value="">すべて</option>
+            <option value="未出勤">未出勤</option>
+            <option value="勤務中">勤務中</option>
+            <option value="中断中">中断中</option>
+            <option value="退勤済み">退勤済み</option>
+          </select>
+        </label>
+        <label class="control control-check">
+          <input type="checkbox" id="admNeedsCheck">
+          <span>要確認・打刻漏れのみ</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ============ 全スタッフ勤怠一覧 ============ -->
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title" id="admTableTitle">全スタッフ勤怠（日別）</h2>
+        <span class="card-note" id="admTableCount"></span>
+      </div>
+      <div class="table-wrap admin-table-wrap">
+        <table class="table admin-table">
+          <thead id="admTableHead"></thead>
+          <tbody id="admTableBody"></tbody>
+        </table>
+      </div>
+      <p class="card-note">
+        <span class="badge badge-ng">打刻漏れ</span> 退勤・再開の押し忘れや、状態と記録の食い違い
+        <span class="badge badge-ng">要確認</span> 社内超過30分以上で、承認済みの事前残業申請なし（勤務時間はそのまま記録しています）
+      </p>
+    </section>
+
+    <!-- ============ 申請 ============ -->
+    <section class="grid grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">打刻修正申請 <span class="badge badge-warn" id="corPendingBadge" hidden></span></h2>
+          <label class="control-check small"><input type="checkbox" id="corShowDone"> 処理済みも表示</label>
+        </div>
+        <div class="request-list" id="admCorrections"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">残業申請 <span class="badge badge-warn" id="otPendingBadge" hidden></span></h2>
+          <label class="control-check small"><input type="checkbox" id="otShowDone"> 処理済みも表示</label>
+        </div>
+        <div class="request-list" id="admOvertime"></div>
+      </div>
+    </section>
+
+    <!-- ============ フレックス ============ -->
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">フレックス管理</h2>
+        <span class="card-note" id="admFlexRange"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="table admin-table">
+          <thead>
+            <tr>
+              <th class="sticky-col">氏名</th><th>部署</th>
+              <th>週 所定</th><th>週 実働</th><th>週 残り</th><th>週 超過</th>
+              <th>月 所定</th><th>月 実働</th><th>月 残り</th><th>月 超過</th>
+            </tr>
+          </thead>
+          <tbody id="admFlexBody"></tbody>
+        </table>
+      </div>
+      <p class="card-note">フレックス社員には、固定勤務の遅刻・早退・18:30以降の社内超過の判定は適用していません。</p>
+    </section>
+
+    <!-- ============ 完全休日・日報 ============ -->
+    <section class="grid grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">週1日完全休日</h2>
+          <span class="card-note" id="admRestRange"></span>
+        </div>
+        <ul class="plain-list" id="admRestList"></ul>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">日報確認 <span class="section-sub" id="admReportDate"></span></h2>
+          <select id="admReportFilter" class="select-sm" aria-label="日報の絞り込み">
+            <option value="">すべて</option>
+            <option value="submitted">提出済み</option>
+            <option value="notSubmitted">未提出</option>
+          </select>
+        </div>
+        <p class="card-note" id="admReportCount"></p>
+        <div class="report-list" id="admReports"></div>
+      </div>
+    </section>
+
+    <!-- ============ CSV・再計算 ============ -->
+    <section class="card">
+      <h2 class="card-title">CSV出力・再計算</h2>
+      <div class="tool-row">
+        <button type="button" class="btn btn-outline" id="btnCsvDaily" data-admin-label="日別CSV（選択中の日）">日別CSV（選択中の日）</button>
+        <button type="button" class="btn btn-outline" id="btnCsvMonthly" data-admin-label="月別CSV（選択中の月）">月別CSV（選択中の月）</button>
+        <button type="button" class="btn btn-dark" id="btnRecalc" data-admin-label="今月の勤怠を再計算">今月の勤怠を再計算</button>
+      </div>
+      <p class="card-note">CSVは Excel で開いても文字化けしない形式（UTF-8・BOM付き）です。再計算は、スプレッドシートを直接直したときに、実働・社内超過・要確認などを計算し直します（出勤・退勤の時刻は変わりません）。</p>
+    </section>
+  </div>
+</main>
+
+<!-- ================= 管理者用の確認（承認・却下・再計算） ================= -->
+<div class="modal" id="adminConfirmModal" role="dialog" aria-modal="true" aria-labelledby="adminConfirmTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="adminConfirmTitle"></h2>
+    <p id="adminConfirmText" class="confirm-text"></p>
+    <div class="form-row" id="adminConfirmReasonRow" hidden>
+      <label for="adminConfirmReason">却下理由（申請者に伝わります）</label>
+      <textarea id="adminConfirmReason" rows="3" maxlength="2000" placeholder="例：退勤時刻は記録どおりのため"></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnAdminConfirmCancel">キャンセル</button>
+      <button type="button" class="btn btn-primary" id="btnAdminConfirmOk" data-admin-label="実行する">実行する</button>
+    </div>
+  </div>
+</div>

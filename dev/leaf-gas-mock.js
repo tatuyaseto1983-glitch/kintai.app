@@ -186,12 +186,17 @@ function createLeafGas(opts = {}) {
   const escapeHtml = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   context.HtmlService = {
     createHtmlOutputFromFile: (name) => htmlOutput(readHtml(name)),
-    createTemplateFromFile: (name) => ({
-      evaluate: () => htmlOutput(readHtml(name).replace(/<\?(!?)=([\s\S]*?)\?>/g, (m, raw, expr) => {
-        const value = vm.runInContext(expr, context);
-        return raw ? String(value) : escapeHtml(value);
-      })),
-    }),
+    // テンプレートに付けた値（template.initialView など）も、式の中で使えるようにする
+    createTemplateFromFile: (name) => {
+      const template = {
+        evaluate: () => htmlOutput(readHtml(name).replace(/<\?(!?)=([\s\S]*?)\?>/g, (m, raw, expr) => {
+          const run = vm.runInContext('(function (__t) { with (__t) { return (' + expr + '); } })', context);
+          const value = run(template);
+          return raw ? String(value) : escapeHtml(value);
+        })),
+      };
+      return template;
+    },
   };
   vm.createContext(context);
 

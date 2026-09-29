@@ -1,0 +1,622 @@
+<script>
+/* ============================================================
+ * AdminScripts.html — 管理者画面の動き（ブラウザ側）
+ *
+ * ・データは getAdminDashboard() で取得します。サーバーが requireAdmin() で管理者と確認した場合だけ
+ *   データが返り、それ以外は「管理者権限がありません」を表示します（画面側の表示だけに頼らない）
+ * ・承認・却下・日報確認・CSV・再計算は、既存のサーバー関数をそのまま呼びます（どれもサーバー側で権限確認あり）
+ * ・操作中は管理者画面のボタンをすべて無効化し、「処理中...」を表示します（連打しても1回だけ）
+ * ・検索・絞り込みはブラウザの中だけで行います（サーバーへの問い合わせなし）
+ * ・表示する文字は textContent で入れています（HTMLとして解釈しないので安全）
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var App = window.LeafApp;
+  var el = App.el;
+
+  /** 管理者画面から呼んでよいサーバーの関数 */
+  var ADMIN_FUNCTIONS = [
+    'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
+    'rejectOvertimeRequest', 'confirmDailyReport', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
+  ];
+  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'flex', 'restDays', 'reports'];
+
+  var S = {
+    loaded: false,  // 一度でも管理者データを表示できたか
+    busy: false,    // 承認・却下などの処理中
+    mode: 'daily',  // 'daily' または 'monthly'
+    date: '',
+    month: '',
+    data: {},
+    seq: 0,         // 取得の順番（古い結果が後から届いても上書きしない）
+    confirmAction: null,
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function call(fn, args) { return App.callAllowed(ADMIN_FUNCTIONS, fn, args); }
+
+  // ============================================================ 取得
+
+  function open() {
+    if (!S.loaded) {
+      $('adminLoading').hidden = false;
+      $('adminContent').hidden = true;
+      $('adminDenied').hidden = true;
+    }
+    return load(ALL_PARTS);
+  }
+
+  function load(parts) {
+    var seq = ++S.seq;
+    return call('getAdminDashboard', [{ date: S.date, month: S.month, parts: parts }]).then(function (res) {
+      if (seq !== S.seq) return res; // もっと新しい取得がある
+      $('adminLoading').hidden = true;
+      if (!res.success) {
+        if (/管理者権限がありません|管理者のみ/.test(res.message) || !S.loaded) showDenied(res.message);
+        App.showToast('error', /管理者/.test(res.message) ? '管理者権限がありません' : 'データ取得に失敗しました：' + res.message);
+        return res;
+      }
+      apply(res.data || {});
+      return res;
+    });
+  }
+
+  /** 管理者と確認できなかったときは、表示中のデータもすべて消す */
+  function showDenied(message) {
+    S.loaded = false;
+    S.data = {};
+    ['admTableBody', 'admCorrections', 'admOvertime', 'admFlexBody', 'admRestList', 'admReports', 'summaryCards'].forEach(function (id) { $(id).textContent = ''; });
+    $('adminContent').hidden = true;
+    $('adminDenied').hidden = false;
+    var denied = /管理者権限がありません|管理者のみ/.test(message);
+    $('adminDeniedTitle').textContent = denied ? '管理者権限がありません' : 'データ取得に失敗しました';
+    $('adminDeniedDetail').textContent = message;
+  }
+
+  function apply(d) {
+    S.loaded = true;
+    $('adminDenied').hidden = true;
+    $('adminContent').hidden = false;
+    if (d.date) { S.date = d.date; $('admDate').value = d.date; }
+    if (d.month) { S.month = d.month; $('admMonth').value = d.month; }
+    Object.keys(d).forEach(function (k) { S.data[k] = d[k]; });
+    if (d.admin) {
+      $('adminName').textContent = d.admin.name;
+      $('adminDept').textContent = d.admin.department ? '（' + d.admin.department + '）' : '';
+    }
+    if (d.summary) renderSummary();
+    if (d.daily || d.monthly) renderTable();
+    if (d.corrections) renderCorrections();
+    if (d.overtime) renderOvertime();
+    if (d.flex) renderFlex();
+    if (d.restDays) renderRestDays();
+    if (d.reports) renderReports();
+    var now = new Date();
+    $('adminUpdatedAt').textContent = '更新 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  }
+
+  // ============================================================ サマリー
+
+  function renderSummary() {
+    var s = S.data.summary;
+    $('summaryDate').textContent = App.formatDateShort(s.date) + ' 時点';
+    var cards = [
+      ['本日出勤', s.present, '名', 'green', ''],
+      ['在宅', s.remote, '名', 'green', ''],
+      ['勤務中', s.working, '名', 'green', ''],
+      ['中断中', s.onBreak, '名', s.onBreak ? 'orange' : 'gray', ''],
+      ['退勤済み', s.finished, '名', 'gray', ''],
+      ['未出勤', s.notStarted, '名', 'gray', ''],
+      ['打刻漏れ', s.missingPunchStaff, '名', s.missingPunchStaff ? 'red' : 'gray', '今月・' + s.missingPunchRecords + '件'],
+      ['残業要確認', s.overtimeNeedsCheck, '件', s.overtimeNeedsCheck ? 'red' : 'gray', '今月'],
+      ['修正申請待ち', s.pendingCorrections, '件', s.pendingCorrections ? 'orange' : 'gray', ''],
+      ['残業申請待ち', s.pendingOvertime, '件', s.pendingOvertime ? 'orange' : 'gray', ''],
+    ];
+    var box = $('summaryCards');
+    box.textContent = '';
+    cards.forEach(function (c) {
+      var card = el('div', 'summary-card tone-' + c[3]);
+      card.appendChild(el('div', 'label', c[0]));
+      var v = el('div', 'value', c[1]);
+      v.appendChild(el('span', 'unit', c[2]));
+      card.appendChild(v);
+      if (c[4]) card.appendChild(el('div', 'note', c[4]));
+      box.appendChild(card);
+    });
+  }
+
+  // ============================================================ 一覧（日別・月別）
+
+  function filters() {
+    return {
+      q: $('admSearch').value.trim().toLowerCase(),
+      workType: $('admWorkType').value,
+      workStyle: $('admWorkStyle').value,
+      status: $('admStatus').value,
+      alertOnly: $('admNeedsCheck').checked,
+    };
+  }
+
+  function matchesCommon(row, f) {
+    if (f.q && (row.name + ' ' + (row.department || '')).toLowerCase().indexOf(f.q) === -1) return false;
+    if (f.workType && row.workType !== f.workType) return false;
+    return true;
+  }
+
+  function statusBadge(status) {
+    var cls = status === '勤務中' ? 'badge-working' : status === '中断中' ? 'badge-break' : status === '退勤済み' ? 'badge-finished' : 'badge-notstarted';
+    return el('span', 'badge ' + cls, status || '—');
+  }
+
+  function requestBadge(status) {
+    var cls = status === '承認待ち' ? 'badge-pending' : status === '承認済み' ? 'badge-ok' : status === '却下' ? 'badge-ng' : 'badge-notstarted';
+    return el('span', 'badge ' + cls, status);
+  }
+
+  function setHead(columns) {
+    var head = $('admTableHead');
+    head.textContent = '';
+    var tr = document.createElement('tr');
+    columns.forEach(function (c, i) { tr.appendChild(el('th', i === 0 ? 'sticky-col' : '', c)); });
+    head.appendChild(tr);
+  }
+
+  function td(text, className) { return el('td', className || '', text === '' || text === null || text === undefined ? '—' : text); }
+
+  function renderTable() {
+    var f = filters();
+    var body = $('admTableBody');
+    body.textContent = '';
+    var shown = 0;
+    var total = 0;
+    if (S.mode === 'daily') {
+      var daily = S.data.daily;
+      $('admTableTitle').textContent = '全スタッフ勤怠（日別：' + (daily ? App.formatDateShort(daily.date) : '') + '）';
+      setHead(['氏名', '部署', '勤務区分', '勤務形態', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
+      var rows = daily ? daily.rows : [];
+      total = rows.length;
+      rows.forEach(function (r) {
+        var alert = r.needsCheck === '要確認' || (r.issues && r.issues.length);
+        if (!matchesCommon(r, f)) return;
+        if (f.workStyle && r.workStyle !== f.workStyle) return;
+        if (f.status && r.status !== f.status) return;
+        if (f.alertOnly && !alert) return;
+        shown += 1;
+        var tr = document.createElement('tr');
+        if (alert) tr.className = 'row-alert';
+        tr.appendChild(td(r.name, 'sticky-col'));
+        tr.appendChild(td(r.department, 'left'));
+        tr.appendChild(td(r.workType));
+        tr.appendChild(td(r.workStyle));
+        tr.appendChild(td(r.clockIn));
+        tr.appendChild(td(r.clockOut));
+        tr.appendChild(td(r.breakTotal));
+        tr.appendChild(td(r.autoBreak));
+        tr.appendChild(td(r.workTime));
+        tr.appendChild(td(r.late));
+        tr.appendChild(td(r.earlyLeave));
+        var excess = td(r.internalExcess, r.needsCheck === '要確認' ? 'cell-alert' : '');
+        if (r.needsCheck === '要確認') excess.appendChild(el('span', 'cell-sub', '30分以上・' + (r.preOvertimeRequest === '承認待ち' ? '申請は承認待ち' : r.preOvertimeRequest === '却下' ? '申請は却下' : '事前申請なし')));
+        tr.appendChild(excess);
+        var req = el('td');
+        if (r.preOvertimeRequest && r.preOvertimeRequest !== '不要' && r.preOvertimeRequest !== 'なし') req.appendChild(requestBadge(r.preOvertimeRequest));
+        else req.textContent = r.preOvertimeRequest || '—';
+        tr.appendChild(req);
+        var check = el('td');
+        if (r.needsCheck === '要確認') check.appendChild(el('span', 'badge badge-ng', '要確認'));
+        else check.textContent = '—';
+        tr.appendChild(check);
+        var cor = el('td');
+        if (r.correctionStatus) cor.appendChild(el('span', 'badge ' + (r.correctionStatus === '申請中' ? 'badge-pending' : r.correctionStatus === '却下' ? 'badge-ng' : 'badge-ok'), r.correctionStatus));
+        else cor.textContent = '—';
+        tr.appendChild(cor);
+        var st = el('td');
+        var badges = el('div', 'badges');
+        badges.appendChild(statusBadge(r.status));
+        (r.issues || []).forEach(function (issue) {
+          var b = el('span', 'badge badge-ng', '打刻漏れ：' + issue);
+          badges.appendChild(b);
+        });
+        st.appendChild(badges);
+        tr.appendChild(st);
+        body.appendChild(tr);
+      });
+    } else {
+      var monthly = S.data.monthly;
+      $('admTableTitle').textContent = '全スタッフ勤怠（月別：' + (monthly ? App.formatMonth(monthly.month) + '　' + App.formatDateShort(monthly.from) + '〜' + App.formatDateShort(monthly.to) : '') + '）';
+      setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過']);
+      var mrows = monthly ? monthly.rows : [];
+      total = mrows.length;
+      mrows.forEach(function (r) {
+        var alert = r.missingPunchCount > 0 || r.needsCheckCount > 0;
+        if (!matchesCommon(r, f)) return;
+        if (f.alertOnly && !alert) return;
+        shown += 1;
+        var tr = document.createElement('tr');
+        if (alert) tr.className = 'row-alert';
+        tr.appendChild(td(r.name, 'sticky-col'));
+        tr.appendChild(td(r.department, 'left'));
+        tr.appendChild(td(r.workType));
+        tr.appendChild(td(r.workDays + '日'));
+        tr.appendChild(td(App.trimHour(r.workTime)));
+        tr.appendChild(td(r.lateCount ? App.trimHour(r.lateTotal) + '（' + r.lateCount + '回）' : '—'));
+        tr.appendChild(td(r.earlyLeaveTotal === '00:00' ? '—' : App.trimHour(r.earlyLeaveTotal)));
+        tr.appendChild(td(r.workType === 'フレックス' ? '対象外' : App.trimHour(r.internalExcessTotal)));
+        tr.appendChild(td(r.missingPunchCount ? r.missingPunchCount + '件' : '—', r.missingPunchCount ? 'cell-alert' : ''));
+        tr.appendChild(td(r.correctionCount ? r.correctionCount + '件' : '—'));
+        tr.appendChild(td(r.needsCheckCount ? r.needsCheckCount + '件' : '—', r.needsCheckCount ? 'cell-alert' : ''));
+        tr.appendChild(td(r.flex ? r.flex.scheduled : '—'));
+        tr.appendChild(td(r.flex ? r.flex.worked : '—'));
+        tr.appendChild(td(r.flex ? r.flex.remaining : '—'));
+        tr.appendChild(td(r.flex ? r.flex.excess : '—', r.flex && r.flex.excess !== '00:00' ? 'cell-alert' : ''));
+        body.appendChild(tr);
+      });
+    }
+    if (!shown) {
+      var empty = document.createElement('tr');
+      var cell = el('td', 'empty', total ? '条件に合うスタッフはいません' : 'データがありません');
+      cell.colSpan = 16;
+      empty.appendChild(cell);
+      body.appendChild(empty);
+    }
+    $('admTableCount').textContent = shown + '名 / ' + total + '名';
+  }
+
+  function setMode(mode) {
+    S.mode = mode === 'monthly' ? 'monthly' : 'daily';
+    var tabs = document.querySelectorAll('#adminView .tab');
+    for (var i = 0; i < tabs.length; i++) tabs[i].setAttribute('aria-selected', tabs[i].getAttribute('data-mode') === S.mode ? 'true' : 'false');
+    var controls = document.querySelectorAll('#adminView [data-for-mode]');
+    for (var j = 0; j < controls.length; j++) controls[j].hidden = controls[j].getAttribute('data-for-mode') !== S.mode;
+    renderTable();
+  }
+
+  // ============================================================ 申請
+
+  function renderCorrections() {
+    var list = S.data.corrections;
+    renderPendingBadge('corPendingBadge', list.pendingCount);
+    renderRequestList($('admCorrections'), list, $('corShowDone').checked, function (r) {
+      var box = requestBox(r);
+      box.appendChild(el('div', 'request-main', App.formatDateShort(r.targetDate) + '　' + r.item + '　' + (r.before || '（空欄）') + ' → ' + r.after));
+      var meta = '申請日時：' + r.requestedAt + '\n申請理由：' + r.reason;
+      if (r.status !== '承認待ち') meta += '\n処理：' + (r.approver || '—') + '（' + (r.approvedAt || '—') + '）';
+      if (r.rejectReason) meta += '\n却下理由：' + r.rejectReason;
+      box.appendChild(el('div', 'request-meta', meta));
+      if (r.status === '承認待ち') {
+        box.appendChild(requestActions(
+          function () {
+            confirmAction({
+              title: '打刻修正を承認しますか？',
+              text: r.name + 'さん　' + App.formatDateShort(r.targetDate) + '\n' + r.item + '：' + (r.before || '（空欄）') + ' → ' + r.after +
+                '\n\n承認すると勤怠記録が修正され、実働・遅刻・早退・社内超過・要確認が再計算されます。',
+              okLabel: '承認する', okClass: 'btn-primary',
+              run: function (btn) { return adminAction(btn, 'approveCorrectionRequest', [r.requestId]); },
+            });
+          },
+          function () {
+            confirmAction({
+              title: '打刻修正を却下しますか？',
+              text: r.name + 'さん　' + App.formatDateShort(r.targetDate) + '　' + r.item + '：' + (r.before || '（空欄）') + ' → ' + r.after + '\n勤怠記録は変わりません。',
+              okLabel: '却下する', okClass: 'btn-danger', needReason: true,
+              run: function (btn, reason) { return adminAction(btn, 'rejectCorrectionRequest', [r.requestId, reason]); },
+            });
+          }));
+      }
+      return box;
+    });
+  }
+
+  function renderOvertime() {
+    var list = S.data.overtime;
+    renderPendingBadge('otPendingBadge', list.pendingCount);
+    renderRequestList($('admOvertime'), list, $('otShowDone').checked, function (r) {
+      var box = requestBox(r);
+      box.appendChild(el('div', 'request-main', App.formatDateShort(r.targetDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '（予定 ' + App.trimHour(r.plannedOvertime) + '）'));
+      var meta = '理由：' + r.reason + '\n実績残業（社内超過）：' + (r.actualOvertime ? App.trimHour(r.actualOvertime) : 'まだ退勤していません') + '\n申請日時：' + r.requestedAt;
+      if (r.status !== '承認待ち') meta += '\n処理：' + (r.approver || '—') + '（' + (r.approvedAt || '—') + '）';
+      if (r.note) meta += '\n' + r.note;
+      box.appendChild(el('div', 'request-meta', meta));
+      if (r.status === '承認待ち') {
+        box.appendChild(requestActions(
+          function () {
+            confirmAction({
+              title: '残業申請を承認しますか？',
+              text: r.name + 'さん　' + App.formatDateShort(r.targetDate) + '　' + r.plannedStart + '〜' + r.plannedEnd +
+                '\n\nその日の勤怠がすでにあれば「事前残業申請」「要確認」を再評価します（勤務時間は変わりません）。',
+              okLabel: '承認する', okClass: 'btn-primary',
+              run: function (btn) { return adminAction(btn, 'approveOvertimeRequest', [r.requestId]); },
+            });
+          },
+          function () {
+            confirmAction({
+              title: '残業申請を却下しますか？',
+              text: r.name + 'さん　' + App.formatDateShort(r.targetDate) + '　' + r.plannedStart + '〜' + r.plannedEnd,
+              okLabel: '却下する', okClass: 'btn-danger', needReason: true,
+              run: function (btn, reason) { return adminAction(btn, 'rejectOvertimeRequest', [r.requestId, reason]); },
+            });
+          }));
+      }
+      return box;
+    });
+  }
+
+  function renderPendingBadge(id, count) {
+    $(id).hidden = !count;
+    $(id).textContent = '承認待ち ' + count + '件';
+  }
+
+  function renderRequestList(container, list, showDone, build) {
+    container.textContent = '';
+    var items = list.pending.concat(showDone ? list.processed : []);
+    if (!items.length) {
+      container.appendChild(el('p', 'empty', showDone ? '申請はありません' : '承認待ちの申請はありません'));
+      return;
+    }
+    items.forEach(function (r) { container.appendChild(build(r)); });
+  }
+
+  function requestBox(r) {
+    var box = el('div', 'request' + (r.status === '承認待ち' ? ' is-pending' : ''));
+    var head = el('div', 'request-head');
+    var name = el('span', 'request-name', r.name);
+    if (r.department) name.appendChild(el('span', 'section-sub', '　' + r.department));
+    head.appendChild(name);
+    head.appendChild(requestBadge(r.status));
+    box.appendChild(head);
+    return box;
+  }
+
+  function requestActions(onApprove, onReject) {
+    var row = el('div', 'request-actions');
+    var reject = el('button', 'btn btn-danger btn-sm js-admin-action', '却下');
+    reject.type = 'button';
+    reject.addEventListener('click', onReject);
+    var approve = el('button', 'btn btn-primary btn-sm js-admin-action', '承認');
+    approve.type = 'button';
+    approve.addEventListener('click', onApprove);
+    row.appendChild(reject);
+    row.appendChild(approve);
+    return row;
+  }
+
+  // ============================================================ フレックス・完全休日・日報
+
+  function renderFlex() {
+    var f = S.data.flex;
+    $('admFlexRange').textContent = '週：' + App.formatDateShort(f.weekFrom) + '〜' + App.formatDateShort(f.weekTo) + '　月：' + App.formatMonth(f.month);
+    var body = $('admFlexBody');
+    body.textContent = '';
+    if (!f.rows.length) {
+      var tr0 = document.createElement('tr');
+      var c = el('td', 'empty', 'フレックス勤務のスタッフはいません');
+      c.colSpan = 10;
+      tr0.appendChild(c);
+      body.appendChild(tr0);
+      return;
+    }
+    f.rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      tr.appendChild(td(r.name, 'sticky-col'));
+      tr.appendChild(td(r.department, 'left'));
+      [r.week, r.month].forEach(function (p) {
+        tr.appendChild(td(p.scheduled));
+        tr.appendChild(td(App.trimHour(p.worked)));
+        tr.appendChild(td(App.trimHour(p.remaining)));
+        tr.appendChild(td(App.trimHour(p.excess), p.excessMinutes > 0 ? 'cell-alert' : ''));
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  function renderRestDays() {
+    var r = S.data.restDays;
+    $('admRestRange').textContent = '対象週：' + App.formatDateShort(r.from) + '〜' + App.formatDateShort(r.to) + '（必要 ' + r.required + '日）';
+    var list = $('admRestList');
+    list.textContent = '';
+    if (!r.rows.length) {
+      list.appendChild(el('li', 'empty', 'この週に問題のあるスタッフはいません'));
+      return;
+    }
+    r.rows.forEach(function (x) {
+      var li = document.createElement('li');
+      var row = el('div', 'row');
+      row.appendChild(el('strong', '', x.name));
+      row.appendChild(el('span', 'badge ' + (x.status === '不足' ? 'badge-ng' : 'badge-pending'), x.status === '不足' ? '要確認（不足）' : '未確定'));
+      li.appendChild(row);
+      li.appendChild(el('div', 'sub', '対象週：' + App.formatDateShort(r.from) + '〜' + App.formatDateShort(r.to) + '　完全休日：' + x.restDays + '日（必要 ' + x.required + '日）'));
+      li.appendChild(el('div', 'sub', x.message));
+      list.appendChild(li);
+    });
+  }
+
+  function renderReports() {
+    var rep = S.data.reports;
+    $('admReportDate').textContent = App.formatDateShort(rep.date);
+    $('admReportCount').textContent = '提出済み ' + rep.submittedCount + '名／未提出 ' + rep.notSubmittedCount + '名';
+    var filter = $('admReportFilter').value;
+    var box = $('admReports');
+    box.textContent = '';
+    var rows = rep.rows.filter(function (r) {
+      if (filter === 'submitted') return r.submitted;
+      if (filter === 'notSubmitted') return !r.submitted;
+      return true;
+    });
+    if (!rows.length) { box.appendChild(el('p', 'empty', '該当する日報はありません')); return; }
+    rows.forEach(function (r) {
+      var d = el('details', 'report' + (r.submitted ? '' : ' not-submitted'));
+      var sum = document.createElement('summary');
+      var left = el('span', '', r.name);
+      left.appendChild(el('span', 'section-sub', '　' + [r.department, r.workStyle].filter(Boolean).join('・')));
+      sum.appendChild(left);
+      var cls = r.status === '確認済み' ? 'badge-ok' : r.status === '提出済み' ? 'badge-working' : r.status === '下書き' ? 'badge-pending' : 'badge-ng';
+      sum.appendChild(el('span', 'badge ' + cls, r.status));
+      d.appendChild(sum);
+      var bodyBox = el('div', 'report-body');
+      if (r.reportId) {
+        var dl = document.createElement('dl');
+        [['本日の業務内容', r.workContent], ['成果・進捗', r.progress], ['課題・困りごと', r.issues], ['明日の予定', r.tomorrowPlan], ['共有事項', r.sharedNotes]]
+          .forEach(function (x) { dl.appendChild(el('dt', '', x[0])); dl.appendChild(el('dd', '', x[1] || '—')); });
+        bodyBox.appendChild(dl);
+        if (r.submittedAt) bodyBox.appendChild(el('p', 'card-note', '提出日時：' + r.submittedAt));
+        if (r.status === '提出済み') {
+          var btn = el('button', 'btn btn-outline btn-sm js-admin-action', '確認済みにする');
+          btn.type = 'button';
+          btn.addEventListener('click', function () { adminAction(btn, 'confirmDailyReport', [r.reportId]); });
+          var actions = el('div', 'request-actions');
+          actions.appendChild(btn);
+          bodyBox.appendChild(actions);
+        }
+      } else {
+        bodyBox.appendChild(el('p', 'empty', 'この日の日報はまだ提出されていません。'));
+      }
+      d.appendChild(bodyBox);
+      box.appendChild(d);
+    });
+  }
+
+  // ============================================================ 操作（承認・却下・CSV・再計算）
+
+  /** 操作の共通処理：ボタン無効化 →「処理中...」→ 通知 → 一覧を取り直す → ボタンを戻す */
+  function adminAction(button, fn, args) {
+    if (S.busy) return Promise.resolve(null);
+    setBusy(true, button);
+    return call(fn, args).then(function (res) {
+      App.showToast(res.success ? 'success' : 'error', res.success ? res.message : (/管理者/.test(res.message) ? '管理者権限がありません' : res.message));
+      if (!res.success && /管理者権限がありません|管理者のみ/.test(res.message)) { showDenied(res.message); return res; }
+      return load(ALL_PARTS.filter(function (p) { return p !== 'admin'; })).then(function () { return res; });
+    }).then(function (res) {
+      setBusy(false);
+      return res;
+    }, function (error) {
+      setBusy(false);
+      App.showToast('error', '画面の処理でエラーが発生しました：' + (error && error.message ? error.message : error));
+      return null;
+    });
+  }
+
+  function setBusy(isBusy, button) {
+    S.busy = isBusy;
+    document.body.classList.toggle('is-busy', isBusy);
+    var buttons = document.querySelectorAll('#adminView [data-admin-label], #adminView .js-admin-action, #adminConfirmModal [data-admin-label]');
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (isBusy) {
+        if (!b.hasAttribute('data-original-label')) b.setAttribute('data-original-label', b.textContent);
+        b.disabled = true;
+        if (b === button) { b.classList.add('is-busy'); b.textContent = '処理中...'; }
+      } else {
+        b.classList.remove('is-busy');
+        if (b.hasAttribute('data-original-label')) { b.textContent = b.getAttribute('data-original-label'); b.removeAttribute('data-original-label'); }
+        b.disabled = false;
+      }
+    }
+    $('btnToStaff').disabled = isBusy;
+  }
+
+  /** 確認画面を出してから実行する */
+  function confirmAction(opts) {
+    if (S.busy) return;
+    S.confirmAction = opts;
+    $('adminConfirmTitle').textContent = opts.title;
+    $('adminConfirmText').textContent = opts.text;
+    $('adminConfirmReasonRow').hidden = !opts.needReason;
+    $('adminConfirmReason').value = '';
+    var ok = $('btnAdminConfirmOk');
+    ok.textContent = opts.okLabel;
+    ok.className = 'btn ' + (opts.okClass || 'btn-primary');
+    App.openModal('adminConfirmModal');
+    (opts.needReason ? $('adminConfirmReason') : ok).focus();
+  }
+
+  function onConfirmOk() {
+    var opts = S.confirmAction;
+    if (!opts || S.busy) return;
+    var reason = $('adminConfirmReason').value.trim();
+    if (opts.needReason && !reason) { App.showToast('warn', '却下理由を入力してください'); return; }
+    S.confirmAction = null;
+    App.closeModal('adminConfirmModal');
+    opts.run(opts.button || null, reason);
+  }
+
+  function exportCsv(type, button) {
+    if (S.busy) return;
+    setBusy(true, button);
+    call('exportAdminAttendanceCsv', [{ type: type, date: S.date, month: S.month }]).then(function (res) {
+      setBusy(false);
+      if (!res.success) {
+        App.showToast('error', /管理者/.test(res.message) ? '管理者権限がありません' : res.message);
+        return;
+      }
+      if (downloadText(res.data.fileName, res.data.csv)) App.showToast('success', 'CSVを作成しました（' + res.data.fileName + '）');
+      else App.showToast('error', 'CSVのダウンロードに失敗しました。ブラウザの設定を確認してください');
+    });
+  }
+
+  /** 文字列をファイルとして保存する（CSV は先頭の BOM ごと UTF-8 で保存） */
+  function downloadText(fileName, text) {
+    try {
+      var blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.target = '_self'; // 画面の <base target="_top"> で別の画面へ移動しないように
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 2000);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function onRecalc() {
+    var button = $('btnRecalc');
+    confirmAction({
+      title: '今月の勤怠を再計算しますか？',
+      text: '今月の勤怠記録の、実働・自動休憩・遅刻・早退・社内超過・要確認などを、今の記録と設定から計算し直します。\n出勤・退勤の時刻は変わりません。',
+      okLabel: '再計算する', okClass: 'btn-dark', button: button,
+      run: function (btn) { return adminAction(button, 'recalculateThisMonth', []); },
+    });
+  }
+
+  // ============================================================ 起動
+
+  function bind() {
+    var tabs = document.querySelectorAll('#adminView .tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener('click', function (e) { setMode(e.currentTarget.getAttribute('data-mode')); });
+    }
+    $('admDate').addEventListener('change', function () {
+      if (!$('admDate').value) return;
+      S.date = $('admDate').value;
+      load(['daily', 'flex', 'restDays', 'reports']);
+    });
+    $('admMonth').addEventListener('change', function () {
+      if (!$('admMonth').value) return;
+      S.month = $('admMonth').value;
+      load(['monthly', 'flex']);
+    });
+    ['admSearch'].forEach(function (id) { $(id).addEventListener('input', renderTable); });
+    ['admWorkType', 'admWorkStyle', 'admStatus', 'admNeedsCheck'].forEach(function (id) { $(id).addEventListener('change', renderTable); });
+    $('corShowDone').addEventListener('change', function () { if (S.data.corrections) renderCorrections(); });
+    $('otShowDone').addEventListener('change', function () { if (S.data.overtime) renderOvertime(); });
+    $('admReportFilter').addEventListener('change', function () { if (S.data.reports) renderReports(); });
+    $('btnAdminReload').addEventListener('click', function () {
+      if (S.busy) return;
+      setBusy(true, $('btnAdminReload'));
+      load(ALL_PARTS).then(function () { setBusy(false); }, function () { setBusy(false); });
+    });
+    $('btnCsvDaily').addEventListener('click', function () { exportCsv('daily', $('btnCsvDaily')); });
+    $('btnCsvMonthly').addEventListener('click', function () { exportCsv('monthly', $('btnCsvMonthly')); });
+    $('btnRecalc').addEventListener('click', onRecalc);
+    $('btnAdminConfirmOk').addEventListener('click', onConfirmOk);
+    $('btnAdminConfirmCancel').addEventListener('click', function () { S.confirmAction = null; App.closeModal('adminConfirmModal'); });
+  }
+
+  bind();
+  window.LeafAdmin = { open: open };
+})();
+</script>

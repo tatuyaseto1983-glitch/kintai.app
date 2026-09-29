@@ -53,7 +53,8 @@ function createServer(options = {}) {
       const json = (status, obj) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
       try {
         if (req.method === 'GET' && (req.url === '/' || req.url.startsWith('/?'))) {
-          const html = gas.g.doGet().getContent().replace('<head>', '<head>\n<meta name="viewport" content="width=device-width, initial-scale=1">' + SHIM);
+          const query = Object.fromEntries(new URL(req.url, 'http://localhost').searchParams);
+          const html = gas.g.doGet({ parameter: query }).getContent().replace('<head>', '<head>\n<meta name="viewport" content="width=device-width, initial-scale=1">' + SHIM);
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(html);
           return;

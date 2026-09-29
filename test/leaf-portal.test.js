@@ -509,3 +509,236 @@ test('自動テスト（runAllScenarioTests）は Google 実機と同じ 43件',
   assert.equal(r.results.length, 43);
   assert.equal(r.failed, 0);
 });
+
+// ============================================================ 管理者画面
+
+/** 管理者画面のテスト用：6/1(月) に固定・フレックスが勤務、固定は残業・申請あり */
+function adminReady() {
+  const gas = ready();
+  gas.g.appendRecords_('スタッフマスタ', [{ '社員ID': 'E004', '氏名': '田中', 'メールアドレス': 'tanaka@example.com', '権限': 'staff', '勤務区分': '固定勤務', '在籍状況': '在籍', '部署': '営業部' }]);
+  const staff = gas.main.getSheetByName('スタッフマスタ');
+  staff.data[2][13] = '設計部'; // 佐藤の部署
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-01 09:40');
+  gas.g.clockIn('出社');
+  gas.setNow('2026-06-01 19:12');
+  gas.g.clockOut();
+  gas.loginAs(FLEX);
+  gas.setNow('2026-06-01 10:00');
+  gas.g.clockIn('在宅');
+  gas.setNow('2026-06-01 12:00');
+  gas.g.startBreak('');
+  return gas;
+}
+
+test('管理者画面 1・2：一般スタッフは管理者データを取得できず、adminは取得できる', () => {
+  const gas = adminReady();
+  gas.setNow('2026-06-01 20:00');
+  for (const who of [FIXED, FLEX, 'nobody@example.com', '']) {
+    gas.loginAs(who);
+    for (const [fn, args] of [
+      ['getAdminDashboard', [{}]], ['exportAdminAttendanceCsv', [{ type: 'monthly' }]], ['approveCorrectionRequest', ['x']],
+      ['rejectCorrectionRequest', ['x', 'y']], ['approveOvertimeRequest', ['x']], ['rejectOvertimeRequest', ['x', 'y']],
+      ['confirmDailyReport', ['x']], ['recalculateThisMonth', []], ['exportAttendanceCsv', []],
+    ]) {
+      const r = gas.g[fn](...args);
+      assert.equal(r.success, false, who + ' ' + fn);
+      assert.equal(r.data, null, '管理者データを一切返さない：' + fn);
+      if (who === FIXED || who === FLEX) assert.match(r.message, /管理者権限がありません/, fn);
+    }
+  }
+  gas.loginAs(ADMIN);
+  const r = gas.g.getAdminDashboard({ date: '2026-06-01' });
+  assert.equal(r.success, true, r.message);
+  assert.deepEqual(Object.keys(r.data).sort(), ['admin', 'corrections', 'daily', 'date', 'flex', 'month', 'monthly', 'overtime', 'reports', 'restDays', 'summary', 'today']);
+  assert.equal(r.data.admin.name, '山田');
+  // 取得したい情報だけ返す（不要な大量データを返さない）
+  const part = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['summary', 'setupSystem'] });
+  assert.deepEqual(Object.keys(part.data).sort(), ['date', 'month', 'summary', 'today']);
+});
+
+test('管理者画面 3：日別一覧とサマリー（本日出勤・在宅・中断中・打刻漏れ・残業要確認）', () => {
+  const gas = adminReady();
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-06-01 20:00');
+  const r = gas.g.getAdminDashboard({ date: '2026-06-01' });
+  const s = r.data.summary;
+  assert.deepEqual([s.present, s.remote, s.working, s.onBreak, s.finished, s.notStarted], [2, 1, 0, 1, 1, 2]);
+  assert.equal(s.overtimeNeedsCheck, 1);
+  assert.equal(s.missingPunchStaff, 0, '今日の中断中は打刻漏れではない');
+  const rows = r.data.daily.rows;
+  assert.deepEqual(rows.map((x) => x.name + ':' + x.status), ['山田:未出勤', '佐藤:退勤済み', '鈴木:中断中', '田中:未出勤']);
+  const sato = rows.find((x) => x.name === '佐藤');
+  assert.equal(sato.department, '設計部');
+  assert.equal(sato.late, '00:10');
+  assert.equal(sato.internalExcess, '00:42');
+  assert.equal(sato.workTime, '08:32', '勤務時間は丸めない');
+  assert.equal(sato.needsCheck, '要確認');
+  assert.equal(sato.preOvertimeRequest, 'なし');
+  assert.equal(rows.find((x) => x.name === '鈴木').late, '', 'フレックスは遅刻判定なし');
+
+  // 翌日になると、退勤していない・再開していない記録は打刻漏れになる
+  gas.setNow('2026-06-03 09:00');
+  const next = gas.g.getAdminDashboard({ date: '2026-06-01' });
+  assert.deepEqual(next.data.daily.rows.find((x) => x.name === '鈴木').issues, ['退勤なし', '再開なし']);
+  assert.equal(next.data.summary.missingPunchStaff, 1);
+  // 状態と記録の矛盾
+  const sheet = gas.main.getSheetByName('勤怠記録');
+  sheet.data[1][sheet.data[0].indexOf('状態')] = '勤務中';
+  assert.deepEqual(gas.g.getAdminDashboard({ date: '2026-06-01' }).data.daily.rows.find((x) => x.name === '佐藤').issues, ['状態と記録が不一致']);
+});
+
+test('管理者画面 4：月別一覧（固定の合計・フレックスの残り）', () => {
+  const gas = adminReady();
+  gas.loginAs(FLEX);
+  gas.setNow('2026-06-01 12:30');
+  gas.g.resumeWork();
+  gas.setNow('2026-06-01 19:30');
+  gas.g.clockOut();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-02 09:00');
+  gas.g.submitCorrectionRequest({ targetDate: '2026-06-01', item: '退勤', after: '18:30', reason: 'x' });
+  gas.loginAs(ADMIN);
+  const m = gas.g.getAdminDashboard({ month: '2026-06', parts: ['monthly'] }).data.monthly;
+  assert.equal(m.from, '2026-06-01');
+  const sato = m.rows.find((x) => x.name === '佐藤');
+  assert.deepEqual([sato.workDays, sato.workTime, sato.lateTotal, sato.lateCount, sato.internalExcessTotal, sato.needsCheckCount, sato.correctionCount, sato.flex],
+    [1, '08:32', '00:10', 1, '00:42', 1, 1, null]);
+  const suzuki = m.rows.find((x) => x.name === '鈴木');
+  assert.deepEqual(suzuki.flex, { scheduled: '138:00', worked: '08:00', remaining: '130:00', excess: '00:00' });
+  assert.equal(suzuki.internalExcessTotal, '00:00');
+});
+
+test('管理者画面 5・6：打刻修正申請の承認（再計算）と却下（理由・承認者・日時）', () => {
+  const gas = adminReady();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-02 09:00');
+  const a = gas.g.submitCorrectionRequest({ targetDate: '2026-06-01', item: '出勤', after: '09:30', reason: '打刻が遅れた' }).data.requestId;
+  const b = gas.g.submitCorrectionRequest({ targetDate: '2026-06-01', item: '退勤', after: '18:40', reason: '押し間違い' }).data.requestId;
+  gas.loginAs(ADMIN);
+  let d = gas.g.getAdminDashboard({ parts: ['corrections'] }).data.corrections;
+  assert.equal(d.pendingCount, 2);
+  assert.equal(d.pending[0].department, '設計部');
+
+  assert.equal(gas.g.approveCorrectionRequest(a).success, true);
+  const row = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['daily'] }).data.daily.rows.find((x) => x.name === '佐藤');
+  assert.deepEqual([row.clockIn, row.late, row.workTime, row.correctionStatus], ['09:30', '', '08:42', '申請中']);
+
+  assert.match(gas.g.rejectCorrectionRequest(b, '').message, /却下理由/);
+  assert.equal(gas.g.rejectCorrectionRequest(b, '記録どおりです').success, true);
+  const rec = gas.main.rows('打刻修正申請').find((x) => x['申請ID'] === b);
+  assert.equal(rec['ステータス'], '却下');
+  assert.equal(rec['却下理由'], '記録どおりです');
+  assert.equal(rec['承認者'], '山田');
+  assert.match(rec['承認日時'], /^2026-06-02 09:00/);
+  d = gas.g.getAdminDashboard({ parts: ['corrections'] }).data.corrections;
+  assert.equal(d.pendingCount, 0);
+  assert.equal(d.processed.length, 2);
+  assert.equal(gas.g.approveCorrectionRequest(a).success, false, '二重に承認できない');
+});
+
+test('管理者画面 7・8：残業申請の承認で要確認が消え、却下では残る', () => {
+  const gas = adminReady();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-02 08:00');
+  const ok = gas.g.submitOvertimeRequest({ targetDate: '2026-06-02', plannedStart: '18:30', plannedEnd: '19:30', reason: '図面' }).data.requestId;
+  const ng = gas.g.submitOvertimeRequest({ targetDate: '2026-06-03', plannedStart: '18:30', plannedEnd: '19:30', reason: '図面' }).data.requestId;
+  for (const day of ['2026-06-02', '2026-06-03']) {
+    gas.setNow(day + ' 09:30'); gas.g.clockIn('出社');
+    gas.setNow(day + ' 19:12'); gas.g.clockOut();
+  }
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-06-04 09:00');
+  assert.equal(gas.g.getAdminDashboard({ parts: ['overtime'] }).data.overtime.pendingCount, 2);
+  assert.equal(gas.g.approveOvertimeRequest(ok).success, true);
+  assert.equal(gas.g.rejectOvertimeRequest(ng, '業務上不要').success, true);
+  const daily = (date) => gas.g.getAdminDashboard({ date, parts: ['daily'] }).data.daily.rows.find((x) => x.name === '佐藤');
+  assert.deepEqual([daily('2026-06-02').preOvertimeRequest, daily('2026-06-02').needsCheck, daily('2026-06-02').internalExcess], ['承認済み', '', '00:42']);
+  assert.deepEqual([daily('2026-06-03').preOvertimeRequest, daily('2026-06-03').needsCheck], ['却下', '要確認']);
+  const list = gas.g.getAdminDashboard({ parts: ['overtime'] }).data.overtime;
+  assert.equal(list.processed.find((x) => x.requestId === ok).actualOvertime, '00:42');
+  assert.match(list.processed.find((x) => x.requestId === ng).note, /業務上不要/);
+});
+
+test('管理者画面 9：今月の勤怠を再計算', () => {
+  const gas = adminReady();
+  const sheet = gas.main.getSheetByName('勤怠記録');
+  sheet.data[1][sheet.data[0].indexOf('退勤')] = '18:40';
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-06-05 09:00');
+  const r = gas.g.recalculateThisMonth();
+  assert.equal(r.success, true, r.message);
+  const row = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['daily'] }).data.daily.rows.find((x) => x.name === '佐藤');
+  assert.deepEqual([row.clockOut, row.internalExcess, row.needsCheck], ['18:40', '00:10', '']);
+});
+
+test('管理者画面 10：CSV（日別・月別。部署入り・BOM付き・式にならない）', () => {
+  const gas = adminReady();
+  gas.main.getSheetByName('スタッフマスタ').data[2][13] = '=HYPERLINK("x")';
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-06-05 09:00');
+  let r = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-06' });
+  assert.equal(r.success, true);
+  assert.equal(r.data.fileName, 'kintai_monthly_2026-06.csv');
+  const lines = r.data.csv.split('\r\n');
+  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態'));
+  assert.equal(lines.length, 3);
+  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み$/);
+  r = gas.g.exportAdminAttendanceCsv({ type: 'daily', date: '2026-06-02' });
+  assert.equal(r.data.csv.split('\r\n').length, 1, 'その日の記録がなければ見出しだけ');
+});
+
+test('管理者画面 11：週1日完全休日の警告（問題のある人だけ）', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  for (let d = 21; d <= 27; d++) {
+    const date = '2026-09-' + d;
+    gas.setNow(date + ' 09:30'); gas.g.clockIn('出社');
+    gas.setNow(date + ' 18:30'); gas.g.clockOut();
+  }
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-09-29 09:00');
+  const r = gas.g.getAdminDashboard({ date: '2026-09-23', parts: ['restDays'] }).data.restDays;
+  assert.deepEqual([r.from, r.to], ['2026-09-21', '2026-09-27']);
+  assert.deepEqual(r.rows.map((x) => x.name + ':' + x.status + ':' + x.restDays), ['佐藤:不足:0'], '休みを取れた人は出さない');
+  const now = gas.g.getAdminDashboard({ date: '2026-09-29', parts: ['restDays'] }).data.restDays;
+  assert.ok(now.rows.every((x) => x.status === '未確定'), '今週はまだ確定しない');
+});
+
+test('管理者画面 12：日報（提出済み・下書き・未提出）と確認済みにする', () => {
+  const gas = adminReady();
+  gas.loginAs(FIXED);
+  gas.setNow('2026-06-01 19:20');
+  const id = gas.g.saveDailyReport({ workContent: '現場確認', issues: '資材の遅れ' }).data.reportId;
+  gas.loginAs(FLEX);
+  gas.g.saveDailyReport({ workContent: '下書き', status: '下書き' });
+  gas.loginAs(ADMIN);
+  let rep = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['reports'] }).data.reports;
+  assert.deepEqual(rep.rows.map((x) => x.name + ':' + x.status), ['山田:未提出', '佐藤:提出済み', '鈴木:下書き', '田中:未提出']);
+  assert.deepEqual([rep.submittedCount, rep.notSubmittedCount], [1, 3]);
+  assert.equal(rep.rows.find((x) => x.name === '佐藤').issues, '資材の遅れ');
+  assert.equal(rep.rows.find((x) => x.name === '鈴木').workStyle, '在宅');
+  assert.equal(gas.g.confirmDailyReport(id).success, true);
+  rep = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['reports'] }).data.reports;
+  assert.equal(rep.rows.find((x) => x.name === '佐藤').status, '確認済み');
+});
+
+test('管理者画面：フレックス管理（週・月）と画面の許可リスト', () => {
+  const gas = adminReady();
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-06-01 20:00');
+  const f = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['flex'] }).data.flex;
+  assert.deepEqual(f.rows.map((x) => x.name), ['鈴木']);
+  assert.deepEqual([f.rows[0].week.scheduled, f.rows[0].month.scheduled], ['32:00', '138:00']);
+  // 画面の管理者用の許可リストはすべて requireAdmin を通る関数
+  const html = gas.g.doGet({ parameter: { view: 'admin' } }).getContent();
+  assert.match(html, /data-initial-view="admin"/);
+  assert.match(gas.g.doGet({ parameter: { view: '<script>' } }).getContent(), /data-initial-view="staff"/);
+  const list = JSON.parse(html.match(/ADMIN_FUNCTIONS = (\[[\s\S]*?\]);/)[1].replace(/'/g, '"').replace(/,\s*\]/, ']'));
+  gas.loginAs(FIXED);
+  for (const fn of list) {
+    const r = gas.g[fn]({}, 'x');
+    assert.equal(r.success, false, fn);
+    assert.match(r.message, /管理者権限がありません/, fn);
+  }
+});
