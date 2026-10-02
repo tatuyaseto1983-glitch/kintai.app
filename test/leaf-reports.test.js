@@ -276,16 +276,51 @@ test('日報：コメント（任意・古い順・提出済みだけ・本文�
   assert.match(row['コメントID'], /^CM-/);
 });
 
-test('日報：以前のデータ（確認済み・課題・困りごと）は提出済み・バージョン1として表示', () => {
+test('旧日報（新しい仕組みより前の提出済み）は公開しない：本人と管理者だけが閲覧でき、修正・確認・コメントはできない', () => {
   const gas = office();
-  gas.g.appendRecords_('日報', [{ '日報ID': 'DR-20260930-E005', '日付': '2026-09-30', '社員ID': 'E005', '氏名': '中津井祐貴', '本日の業務内容': '以前の日報',
-    '課題・困りごと': '以前の課題', '明日の予定': '見積', '提出日時': '2026-09-30 18:00:00', 'ステータス': '確認済み' }]);
-  gas.loginAs(OMORI);
+  gas.g.appendRecords_('日報', [
+    { '日報ID': 'DR-20260930-E005', '日付': '2026-09-30', '社員ID': 'E005', '氏名': '中津井祐貴', '本日の業務内容': '以前の日報',
+      '課題・困りごと': '以前の課題', '明日の予定': '見積', '提出日時': '2026-09-30 18:00:00', 'ステータス': '確認済み' },
+    { '日報ID': 'DR-20260929-E006', '日付': '2026-09-29', '社員ID': 'E006', '氏名': '久保亜弓', '本日の業務内容': '以前の下書き', 'ステータス': '下書き' },
+  ]);
   gas.setNow('2026-10-02 10:00');
-  const list = gas.g.getReportList({ month: '2026-09' }).data.reports;
-  assert.deepEqual(list.map((x) => x.reportId + ':' + x.status + ':v' + x.version), ['DR-20260930-E005:submitted:v1']);
-  const d = gas.g.getReportDetail('DR-20260930-E005').data;
-  assert.deepEqual([d.report.issues, d.report.legacy.tomorrowPlan, d.canConfirm], ['以前の課題', '見積', true]);
+  const LEGACY = 'DR-20260930-E005';
+  // 一般社員・役員（管理者ではない）には一覧にも詳細にも出ない
+  for (const viewer of [OMORI, INOKURA, KUBO]) {
+    gas.loginAs(viewer);
+    assert.deepEqual(gas.g.getReportList({ month: '2026-09' }).data.reports.map((x) => x.reportId).filter((x) => x === LEGACY), [], viewer);
+    assert.doesNotMatch(JSON.stringify(gas.g.getReportList({ month: '2026-09' }).data), /以前の日報|以前の課題/);
+    assert.equal(gas.g.getReportDetail(LEGACY).message, '日報が見つかりません');
+    assert.equal(gas.g.confirmReport(LEGACY).message, '日報が見つかりません');
+    assert.equal(gas.g.addReportComment(LEGACY, 'x').message, '日報が見つかりません');
+  }
+  // 本人：見られる（旧「課題・困りごと」も表示）が、修正・確認はできない
+  gas.loginAs(NAKATSUI);
+  const mine = gas.g.getReportList({ month: '2026-09' }).data.reports.find((x) => x.reportId === LEGACY);
+  assert.deepEqual([mine.legacy, mine.status, mine.targetCount, mine.showUpdated], [true, 'submitted', undefined, undefined]);
+  let d = gas.g.getReportDetail(LEGACY).data;
+  assert.deepEqual([d.legacy, d.canEdit, d.canConfirm, d.confirmation, d.report.issues, d.report.legacy.tomorrowPlan], [true, false, undefined, undefined, '以前の課題', '見積']);
+  assert.match(gas.g.getReportEditor(LEGACY).message, /以前の仕組みで提出された日報のため、修正できません/);
+  assert.match(gas.g.submitReport({ reportId: LEGACY, workContent: '書き換え' }).message, /修正できません/);
+  assert.equal(gas.main.rows('日報').find((r) => r['日報ID'] === LEGACY)['日報ステータス'], '', '旧日報のまま（公開されない）');
+  // 管理者：見られるが、確認・コメントはできない
+  gas.loginAs(MITSUYAMA);
+  d = gas.g.getReportDetail(LEGACY).data;
+  assert.deepEqual([d.legacy, d.canEdit, d.report.workContent], [true, false, '以前の日報']);
+  assert.match(gas.g.confirmReport(LEGACY).message, /確認の対象外です/);
+  assert.match(gas.g.addReportComment(LEGACY, 'x').message, /コメントできません/);
+  assert.equal(gas.main.rows('日報_確認').length + gas.main.rows('日報_コメント').length, 0);
+  const row = gas.g.getAdminDashboard({ date: '2026-09-30' }).data.reports.rows.find((r) => r.name === '中津井祐貴');
+  assert.deepEqual([row.submitted, row.legacy, row.targetCount], [true, true, undefined]);
+  // 以前の下書きは本人だけ（管理者にも出ない）
+  assert.equal(gas.g.getReportDetail('DR-20260929-E006').message, '日報が見つかりません');
+  gas.loginAs(KUBO);
+  assert.deepEqual(gas.g.getReportList({ month: '2026-09' }).data.myDrafts.map((x) => x.reportId), ['DR-20260929-E006']);
+  // 新しい仕組みで提出した日報は、これまで通り全社員に公開
+  gas.loginAs(NAKATSUI);
+  const fresh = gas.g.submitReport({ workContent: '新しい日報' }).data.reportId;
+  gas.loginAs(OMORI);
+  assert.equal(gas.g.getReportDetail(fresh).data.confirmation.targetCount, 5);
 });
 
 test('日報の画面：呼べる関数はすべてサーバーにあり、管理者用の関数は含まない', () => {

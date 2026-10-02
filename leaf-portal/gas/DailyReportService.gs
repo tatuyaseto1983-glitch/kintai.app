@@ -85,6 +85,7 @@ function getReportEditor(reportId) {
     } else {
       record = findOwnReportByDate_(staff.employeeId, now.date);
     }
+    if (record && isLegacySubmittedReport_(record)) fail_('以前の仕組みで提出された日報のため、修正できません（本人と管理者だけが閲覧できます）');
     return {
       message: record ? '日報を読み込みました' : '新しい日報です',
       data: {
@@ -160,6 +161,7 @@ function saveReport_(input, mode, options) {
   } else {
     record = findOwnReportByDate_(staff.employeeId, now.date);
   }
+  if (record && isLegacySubmittedReport_(record)) fail_('以前の仕組みで提出された日報のため、修正できません（本人と管理者だけが閲覧できます）');
   const previousState = record ? reportStateOf_(record) : null;
   if (previousState === REPORT_STATE.SUBMITTED && mode === REPORT_STATE.DRAFT) {
     fail_('提出済みの日報は下書きに戻せません。修正するときは「修正を提出」を押してください');
@@ -418,6 +420,16 @@ function reportStateOf_(r) {
   if (state === REPORT_STATE.DRAFT || state === REPORT_STATE.SUBMITTED) return state;
   const label = String(r['ステータス']).trim();
   return label === REPORT_STATUS.SUBMITTED || label === REPORT_STATUS.CONFIRMED ? REPORT_STATE.SUBMITTED : REPORT_STATE.DRAFT;
+}
+
+/**
+ * 旧日報：新しい日報の仕組みより前に提出された日報（「日報ステータス」が空のまま提出済み）。
+ * 全社員には公開せず、本人と管理者だけが閲覧できる。修正・確認・コメントはできない
+ * （修正を許すと新しい形式になり、全社員に公開されてしまうため）。
+ */
+function isLegacySubmittedReport_(r) {
+  const code = String(r['日報ステータス'] === undefined ? '' : r['日報ステータス']).trim();
+  return !code && reportStateOf_(r) === REPORT_STATE.SUBMITTED;
 }
 
 /** 日報のバージョン（提出1回目＝1、修正するたびに +1。下書き＝0。以前の提出済みデータは1） */

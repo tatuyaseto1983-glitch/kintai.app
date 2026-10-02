@@ -405,6 +405,7 @@ function buildAdminReports_(ctx, date) {
     row.submitted = true;
     row.submittedAt = toPlainText_(record['提出日時']);
     row.version = reportVersionOf_(record);
+    if (isLegacySubmittedReport_(record)) { row.legacy = true; return row; } // 旧日報：確認の対象外
     if (share) {
       const c = confirmationStatus_(record, share);
       row.customerCount = share.customerCounts[row.reportId] || 0;

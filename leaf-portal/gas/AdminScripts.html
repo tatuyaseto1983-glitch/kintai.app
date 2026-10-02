@@ -463,6 +463,7 @@
       if (r.submitted) {
         var meta = '接客 ' + (r.customerCount || 0) + '件';
         if (r.targetCount !== undefined) meta += '　' + r.confirmedCount + ' / ' + r.targetCount + '人 確認済み';
+        if (r.legacy) meta += '　以前の日報（本人・管理者のみ閲覧）';
         if (r.version > 1) meta += '　修正あり（バージョン' + r.version + '）';
         left.appendChild(el('span', 'report-row-meta', meta));
       }

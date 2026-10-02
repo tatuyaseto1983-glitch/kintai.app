@@ -185,6 +185,31 @@ test('日報の画面', { skip: !playwright && 'Playwright がないため省略
       await phone.close();
     });
 
+    await t.test('旧日報は公開しない：一般社員の一覧に出ず、管理者は閲覧だけできる', async () => {
+      gas.g.appendRecords_('日報', [{ '日報ID': 'DR-20260929-E001', '日付': '2026-09-29', '社員ID': 'E001', '氏名': '山田 太郎', '本日の業務内容': '旧日報の本文',
+        '成果・進捗': 'つくった', '明日の予定': '熊本', '提出日時': '2026-09-29 21:39:36', 'ステータス': '提出済み' }]);
+      const tanaka = await open('tanaka@example.com', '/?view=reports');
+      await tanaka.waitForSelector('#reportCards');
+      await tanaka.click('#btnReportPrevMonth');
+      await tanaka.waitForFunction(() => /2026年9月/.test(document.getElementById('reportMonthLabel').innerText));
+      await idle(tanaka);
+      assert.doesNotMatch(await tanaka.locator('#reportListPane').innerText(), /山田 太郎|旧日報の本文/, '一般社員には出ない');
+      await tanaka.close();
+
+      const yamada = await open('yamada@example.com', '/?view=reports');
+      await yamada.click('#btnReportPrevMonth');
+      await yamada.waitForSelector('.report-card:has-text("以前の日報（本人・管理者のみ閲覧）")');
+      await yamada.locator('.report-card', { hasText: '以前の日報' }).locator('button', { hasText: '日報を見る' }).click();
+      await yamada.waitForFunction(() => /旧日報の本文/.test(document.getElementById('reportDetailBody').innerText));
+      const body = await yamada.locator('#reportDetailBody').innerText();
+      assert.match(body, /以前の仕組みで提出された日報です。本人と管理者だけが閲覧できます/);
+      assert.match(body, /明日の予定（以前の項目）\s+熊本/);
+      assert.equal(await yamada.locator('#btnConfirmReport').count(), 0, '確認ボタンなし');
+      assert.equal(await yamada.locator('#reportCommentText').count(), 0, 'コメント欄なし');
+      assert.equal(await yamada.locator('#btnReportEdit').isHidden(), true, '修正ボタンなし');
+      await yamada.close();
+    });
+
     assert.deepEqual(errors, [], 'ブラウザで JavaScript のエラーが出ていない');
   } finally {
     await browser.close();

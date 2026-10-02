@@ -77,6 +77,7 @@ function confirmReport(reportId) {
       const record = findReportById_(reportId);
       if (!record || !canViewReport_(record, viewer)) fail_('日報が見つかりません');
       if (reportStateOf_(record) !== REPORT_STATE.SUBMITTED) fail_('提出済みの日報だけ確認できます');
+      if (isLegacySubmittedReport_(record)) fail_('以前の仕組みで提出された日報は、確認の対象外です');
       if (String(record['社員ID']).trim() === viewer.employeeId) fail_('自分の日報は確認の対象外です');
       if (!isReportMember_(viewer)) fail_('在籍中の社員だけが確認できます');
       const version = reportVersionOf_(record);
@@ -108,6 +109,7 @@ function addReportComment(reportId, text) {
       const record = findReportById_(reportId);
       if (!record || !canViewReport_(record, viewer)) fail_('日報が見つかりません');
       if (reportStateOf_(record) !== REPORT_STATE.SUBMITTED) fail_('提出済みの日報にだけコメントできます');
+      if (isLegacySubmittedReport_(record)) fail_('以前の仕組みで提出された日報には、コメントできません');
       if (!isReportMember_(viewer)) fail_('在籍中の社員だけがコメントできます');
       const body = requireText_(text, 'コメント', { max: TEXT_LIMITS.LONG });
       const now = getNowInfo_();
@@ -126,10 +128,12 @@ function addReportComment(reportId, text) {
 
 // ============================================================ 権限
 
-/** 日報を見てよいか：提出済みなら全社員、下書きは本人だけ */
+/** 日報を見てよいか：提出済みなら全社員、下書きは本人だけ、旧日報は本人と管理者だけ */
 function canViewReport_(record, viewer) {
-  if (reportStateOf_(record) === REPORT_STATE.SUBMITTED) return true;
-  return String(record['社員ID']).trim() === viewer.employeeId;
+  const isOwner = String(record['社員ID']).trim() === viewer.employeeId;
+  if (reportStateOf_(record) !== REPORT_STATE.SUBMITTED) return isOwner;
+  if (isLegacySubmittedReport_(record)) return isOwner || viewer.role === ROLES.ADMIN;
+  return true;
 }
 
 /** 日報の確認・コメントができ、確認の対象（分母）になる人：在籍中の社員（役員も含む） */
@@ -205,6 +209,7 @@ function toReportListItem_(record, viewer, ctx) {
     isMine: isMine,
   };
   if (state !== REPORT_STATE.SUBMITTED) return item;
+  if (isLegacySubmittedReport_(record)) { item.legacy = true; return item; } // 旧日報：確認の対象外
   const status = confirmationStatus_(record, ctx);
   const me = status.confirmed.filter(function (c) { return c.employeeId === viewer.employeeId; })[0];
   item.targetCount = status.targetCount;
@@ -224,6 +229,11 @@ function buildReportDetail_(record, viewer, ctx) {
   const isMine = view.employeeId === viewer.employeeId;
   const detail = { report: view, isMine: isMine, canEdit: isMine };
   if (view.status !== REPORT_STATE.SUBMITTED) return detail; // 下書き（本人だけ）：確認・コメントはまだない
+  if (isLegacySubmittedReport_(record)) { // 旧日報（本人と管理者だけ）：閲覧のみ
+    detail.legacy = true;
+    detail.canEdit = false;
+    return detail;
+  }
 
   const status = confirmationStatus_(record, ctx);
   const me = status.confirmed.filter(function (c) { return c.employeeId === viewer.employeeId; })[0];
