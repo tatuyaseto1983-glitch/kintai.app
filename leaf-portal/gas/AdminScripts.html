@@ -18,7 +18,7 @@
   /** 管理者画面から呼んでよいサーバーの関数 */
   var ADMIN_FUNCTIONS = [
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
-    'rejectOvertimeRequest', 'confirmDailyReport', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
+    'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
   ];
   var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'flex', 'restDays', 'reports'];
 
@@ -454,34 +454,29 @@
     });
     if (!rows.length) { box.appendChild(el('p', 'empty', '該当する日報はありません')); return; }
     rows.forEach(function (r) {
-      var d = el('details', 'report' + (r.submitted ? '' : ' not-submitted'));
-      var sum = document.createElement('summary');
-      var left = el('span', '', r.name);
-      left.appendChild(el('span', 'section-sub', '　' + [r.department, r.workStyle].filter(Boolean).join('・')));
-      sum.appendChild(left);
-      var cls = r.status === '確認済み' ? 'badge-ok' : r.status === '提出済み' ? 'badge-working' : r.status === '下書き' ? 'badge-pending' : 'badge-ng';
-      sum.appendChild(el('span', 'badge ' + cls, r.status));
-      d.appendChild(sum);
-      var bodyBox = el('div', 'report-body');
-      if (r.reportId) {
-        var dl = document.createElement('dl');
-        [['本日の業務内容', r.workContent], ['成果・進捗', r.progress], ['課題・困りごと', r.issues], ['明日の予定', r.tomorrowPlan], ['共有事項', r.sharedNotes]]
-          .forEach(function (x) { dl.appendChild(el('dt', '', x[0])); dl.appendChild(el('dd', '', x[1] || '—')); });
-        bodyBox.appendChild(dl);
-        if (r.submittedAt) bodyBox.appendChild(el('p', 'card-note', '提出日時：' + r.submittedAt));
-        if (r.status === '提出済み') {
-          var btn = el('button', 'btn btn-outline btn-sm js-admin-action', '確認済みにする');
-          btn.type = 'button';
-          btn.addEventListener('click', function () { adminAction(btn, 'confirmDailyReport', [r.reportId]); });
-          var actions = el('div', 'request-actions');
-          actions.appendChild(btn);
-          bodyBox.appendChild(actions);
-        }
-      } else {
-        bodyBox.appendChild(el('p', 'empty', 'この日の日報はまだ提出されていません。'));
+      // 下書きはサーバーが「未提出」として返す（内容は管理者にも返さない）
+      var item = el('div', 'report report-row' + (r.submitted ? '' : ' not-submitted'));
+      var left = el('div', 'report-row-main');
+      var name = el('span', 'report-row-name', r.name);
+      name.appendChild(el('span', 'section-sub', '　' + [r.department, r.workStyle].filter(Boolean).join('・')));
+      left.appendChild(name);
+      if (r.submitted) {
+        var meta = '接客 ' + (r.customerCount || 0) + '件';
+        if (r.targetCount !== undefined) meta += '　' + r.confirmedCount + ' / ' + r.targetCount + '人 確認済み';
+        if (r.version > 1) meta += '　修正あり（バージョン' + r.version + '）';
+        left.appendChild(el('span', 'report-row-meta', meta));
       }
-      d.appendChild(bodyBox);
-      box.appendChild(d);
+      item.appendChild(left);
+      var right = el('div', 'report-row-actions');
+      right.appendChild(el('span', 'badge ' + (r.submitted ? 'badge-working' : 'badge-ng'), r.submitted ? '提出済み' : '未提出'));
+      if (r.submitted) {
+        var btn = el('button', 'btn btn-outline btn-sm', '日報を見る');
+        btn.type = 'button';
+        btn.addEventListener('click', function () { if (window.LeafReports) window.LeafReports.openDetail(r.reportId); });
+        right.appendChild(btn);
+      }
+      item.appendChild(right);
+      box.appendChild(item);
     });
   }
 

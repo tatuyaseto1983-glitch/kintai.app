@@ -32,7 +32,7 @@ function getAllAttendance(fromDate, toDate) {
     const from = requireDateKey_(fromDate, '開始日');
     const to = requireDateKey_(toDate, '終了日');
     if (from > to) fail_('開始日は終了日より前にしてください');
-    const records = getAttendanceInRange_(from, to).map(toAttendanceView_);
+    const records = onlyAttendanceTargets_(getAttendanceInRange_(from, to)).map(toAttendanceView_);
     return { message: from + '〜' + to + ' の勤怠を取得しました（' + records.length + '件）', data: { from: from, to: to, records: records } };
   });
 }
@@ -43,7 +43,7 @@ function getDailyAttendance(date) {
     requireAdmin();
     const dateKey = isBlank_(date) ? getNowInfo_().date : requireDateKey_(date, '日付');
     const rows = getAllStaff_()
-      .filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; })
+      .filter(isAttendanceTarget_)
       .map(function (s) {
         const record = findAttendance_(s.employeeId, dateKey);
         if (record) return toAttendanceView_(record);
@@ -60,10 +60,10 @@ function getMonthlyAttendance(month) {
     const settings = getSettings_();
     const monthKey = isBlank_(month) ? getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay) : requireMonthKey_(month, '対象月');
     const range = getMonthRange_(monthKey, settings.monthClosingDay);
-    const records = getAttendanceInRange_(range.from, range.to);
+    const records = onlyAttendanceTargets_(getAttendanceInRange_(range.from, range.to));
 
     const summaries = getAllStaff_()
-      .filter(function (s) { return s.status !== EMPLOYMENT_STATUS.RETIRED; })
+      .filter(function (s) { return s.status !== EMPLOYMENT_STATUS.RETIRED && s.attendanceTarget !== false; })
       .map(function (s) {
         const mine = records.filter(function (r) { return String(r['社員ID']).trim() === s.employeeId; });
         const sum = function (column) { return mine.reduce(function (t, r) { return t + (toMinutes_(r[column]) || 0); }, 0); };
@@ -121,7 +121,7 @@ function checkWeeklyRestDays(date) {
     // 過去の週なら週の全日が確定済み。今週なら今日以降は「まだ休める日」として扱う
     const judgeDate = week.to < today ? addDays_(week.to, 1) : today;
     const results = getAllStaff_()
-      .filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; })
+      .filter(isAttendanceTarget_)
       .map(function (s) {
         const check = checkWeeklyRest_(getAttendanceOfEmployee_(s.employeeId), week.from, judgeDate, settings.weeklyFullRestDays);
         return { employeeId: s.employeeId, name: s.name, workType: s.workType, status: check.status, restDays: check.confirmedRestDays, message: check.message };
@@ -146,7 +146,7 @@ function exportAttendanceCsv(month) {
     const range = getMonthRange_(monthKey, settings.monthClosingDay);
     const headers = getSheetDefinition_(SHEET_NAMES.ATTENDANCE).headers;
     const lines = [headers.map(csvEscape_).join(',')];
-    getAttendanceInRange_(range.from, range.to).forEach(function (r) {
+    onlyAttendanceTargets_(getAttendanceInRange_(range.from, range.to)).forEach(function (r) {
       lines.push(headers.map(function (h) { return csvEscape_(h === '日付' ? toDateKey_(r[h]) : toPlainText_(r[h])); }).join(','));
     });
     return {
@@ -202,6 +202,16 @@ function getAttendanceInRange_(from, to) {
     if (da !== db) return da < db ? -1 : 1;
     return String(a['社員ID']) < String(b['社員ID']) ? -1 : 1;
   });
+}
+
+/**
+ * 勤怠記録のうち、勤怠集計の対象の人の分だけを残す（スタッフマスタで「勤怠集計対象＝対象外」の人を除く）。
+ * スタッフマスタにいない人の記録は、これまでどおり残す。
+ */
+function onlyAttendanceTargets_(records) {
+  const excluded = {};
+  getAllStaff_().forEach(function (s) { if (s.attendanceTarget === false) excluded[s.employeeId] = true; });
+  return records.filter(function (r) { return !excluded[String(r['社員ID']).trim()]; });
 }
 
 function csvEscape_(value) {

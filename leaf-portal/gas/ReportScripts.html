@@ -1,0 +1,625 @@
+<script>
+/* ============================================================
+ * ReportScripts.html — 日報の画面の動き（一覧・閲覧・入力）
+ *
+ * ・社員ID・氏名・日付は画面から送りません（サーバーがログイン中の社員と今日の日付で決めます）
+ * ・下書きはサーバーが本人にしか返しません。確認・コメントもサーバー側で権限を確認します
+ * ・表示する文字はすべて textContent で入れています（HTMLとして解釈しないので安全）
+ * ・保存・提出・確認・コメントは処理中に全ボタンを無効化し、連打しても1回だけ送ります
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var App = window.LeafApp;
+  var el = App.el;
+
+  /** 日報の画面から呼んでよいサーバーの関数 */
+  var REPORT_FUNCTIONS = ['getReportList', 'getReportDetail', 'getReportEditor', 'saveReportDraft', 'submitReport', 'confirmReport', 'addReportComment'];
+  var WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+
+  var R = {
+    busy: false,
+    month: '',          // 一覧で表示中の月
+    currentMonth: '',   // 今月（サーバーが決める）
+    detail: null,       // 表示中の日報
+    editor: null,       // 入力中の日報 { reportId, status, version }
+    choices: null,      // 選択肢（サーバーから受け取る）
+    seq: 0,
+    cardSeq: 0,
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function call(fn, args) { return App.callAllowed(REPORT_FUNCTIONS, fn, args); }
+
+  function formatDateLong(dateKey) {
+    if (!dateKey) return '';
+    var p = dateKey.split('-');
+    var wd = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]))).getUTCDay();
+    return Number(p[0]) + '年' + Number(p[1]) + '月' + Number(p[2]) + '日（' + WEEKDAYS[wd] + '）';
+  }
+  function shortTime(timestamp) { return timestamp ? timestamp.slice(5, 16).replace('-', '/') : ''; }
+  function shiftMonth(monthKey, n) {
+    var y = Number(monthKey.slice(0, 4));
+    var m = Number(monthKey.slice(5, 7)) - 1 + n;
+    y += Math.floor(m / 12);
+    m = ((m % 12) + 12) % 12;
+    return y + '-' + (m + 1 < 10 ? '0' : '') + (m + 1);
+  }
+
+  /** 一覧・閲覧・入力のどれを表示するか */
+  function showPane(name) {
+    ['list', 'detail', 'editor'].forEach(function (p) {
+      $('report' + p.charAt(0).toUpperCase() + p.slice(1) + 'Pane').hidden = p !== name;
+    });
+    App.showView('reports');
+  }
+
+  // ============================================================ 操作の共通処理
+
+  function setBusy(isBusy, button, busyText) {
+    R.busy = isBusy;
+    document.body.classList.toggle('is-busy', isBusy);
+    var buttons = document.querySelectorAll('#reportView button, #reportConfirmModal button');
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (isBusy) {
+        if (!b.hasAttribute('data-was-disabled')) b.setAttribute('data-was-disabled', b.disabled ? '1' : '');
+        b.disabled = true;
+        if (b === button) { b.setAttribute('data-original-label', b.textContent); b.textContent = busyText || '処理中...'; b.classList.add('is-busy'); }
+      } else {
+        if (b.hasAttribute('data-original-label')) { b.textContent = b.getAttribute('data-original-label'); b.removeAttribute('data-original-label'); }
+        b.classList.remove('is-busy');
+        b.disabled = b.getAttribute('data-was-disabled') === '1';
+        b.removeAttribute('data-was-disabled');
+      }
+    }
+  }
+
+  /** サーバーの処理を1回だけ実行して通知する */
+  function act(button, fn, args, busyText) {
+    if (R.busy) return Promise.resolve(null);
+    setBusy(true, button, busyText);
+    return call(fn, args).then(function (res) {
+      setBusy(false);
+      App.showToast(res.success ? 'success' : 'error', res.message);
+      return res;
+    }, function (error) {
+      setBusy(false);
+      App.showToast('error', '画面の処理でエラーが発生しました：' + (error && error.message ? error.message : error));
+      return null;
+    });
+  }
+
+  // ============================================================ 一覧
+
+  function openList(month) {
+    showPane('list');
+    return loadList(month || R.month || '');
+  }
+
+  function loadList(month) {
+    var seq = ++R.seq;
+    var box = $('reportCards');
+    box.textContent = '';
+    box.appendChild(el('p', 'empty', '読み込み中...'));
+    return call('getReportList', [{ month: month }]).then(function (res) {
+      if (seq !== R.seq) return;
+      box.textContent = '';
+      if (!res.success) {
+        box.appendChild(el('p', 'error-text', res.message));
+        App.showToast('error', res.message);
+        return;
+      }
+      var d = res.data;
+      R.month = d.month;
+      if (!month || !R.currentMonth) R.currentMonth = R.currentMonth || d.month;
+      $('reportMonthLabel').textContent = App.formatMonth(d.month);
+      $('btnReportNextMonth').disabled = d.month >= R.currentMonth;
+
+      var drafts = $('reportDraftCards');
+      drafts.textContent = '';
+      d.myDrafts.forEach(function (item) { drafts.appendChild(listCard(item)); });
+      $('reportMyDrafts').hidden = !d.myDrafts.length;
+
+      if (!d.reports.length) box.appendChild(el('p', 'empty', 'この月の提出済みの日報はまだありません。'));
+      d.reports.forEach(function (item) { box.appendChild(listCard(item)); });
+    });
+  }
+
+  function listCard(item) {
+    var isDraft = item.status === 'draft';
+    var card = el('div', 'report-card' + (isDraft ? ' is-draft' : ''));
+    var main = el('div', 'report-card-main');
+    main.appendChild(el('span', 'report-card-date', formatDateLong(item.date)));
+    main.appendChild(el('span', 'report-card-name', item.name));
+    var meta = el('div', 'report-card-meta');
+    meta.appendChild(el('span', '', '接客 ' + item.customerCount + '件'));
+    if (!isDraft) meta.appendChild(el('span', '', item.confirmedCount + ' / ' + item.targetCount + '人 確認済み'));
+    if (isDraft) meta.appendChild(el('span', '', '最終保存 ' + shortTime(item.updatedAt)));
+    main.appendChild(meta);
+    var badges = el('div', 'report-card-badges');
+    if (isDraft) badges.appendChild(el('span', 'badge badge-pending', '下書き'));
+    if (item.showUpdated) badges.appendChild(el('span', 'badge badge-updated', '更新あり'));
+    if (!isDraft && item.isMine) badges.appendChild(el('span', 'badge badge-notstarted', 'あなたの日報'));
+    if (!isDraft && item.isMine && item.isUpdated) badges.appendChild(el('span', 'badge badge-notstarted', '修正済み（バージョン' + item.version + '）'));
+    if (!isDraft && !item.isMine) badges.appendChild(el('span', 'badge ' + (item.myConfirmed ? 'badge-ok' : 'badge-notstarted'), item.myConfirmed ? '確認済み' : '未確認'));
+    if (!isDraft && item.allConfirmed) badges.appendChild(el('span', 'badge badge-ok', '全員確認済み'));
+    if (badges.children.length) main.appendChild(badges);
+    card.appendChild(main);
+
+    var side = el('div', 'report-card-side');
+    var btn = el('button', 'btn btn-outline', isDraft ? '下書きを編集' : '日報を見る');
+    btn.type = 'button';
+    btn.addEventListener('click', function () { if (isDraft) openEditor(item.reportId); else openDetail(item.reportId); });
+    side.appendChild(btn);
+    card.appendChild(side);
+    return card;
+  }
+
+  // ============================================================ 閲覧
+
+  function openDetail(reportId) {
+    showPane('detail');
+    $('btnReportEdit').hidden = true;
+    var body = $('reportDetailBody');
+    body.textContent = '';
+    body.appendChild(el('p', 'empty', '読み込み中...'));
+    var seq = ++R.seq;
+    return call('getReportDetail', [reportId]).then(function (res) {
+      if (seq !== R.seq) return;
+      if (!res.success) {
+        body.textContent = '';
+        body.appendChild(el('p', 'error-text', res.message));
+        App.showToast('error', res.message);
+        return;
+      }
+      renderDetail(res.data);
+    });
+  }
+
+  function textBlock(title, text) {
+    var block = el('div', 'report-text-block');
+    block.appendChild(el('h3', '', title));
+    block.appendChild(text ? el('p', '', text) : el('p', 'empty', '（記入なし）'));
+    return block;
+  }
+
+  function customerView(c, index) {
+    var box = el('div', 'customer-view');
+    box.appendChild(el('h3', '', '接客' + (index + 1)));
+    var dl = document.createElement('dl');
+    var add = function (label, value) { dl.appendChild(el('dt', '', label)); dl.appendChild(el('dd', '', value || '—')); };
+    add('顧客名', c.customerNameUnknown ? '未確認' : c.customerName);
+    add('来場のきっかけ', c.visitTrigger + (c.visitTrigger === 'その他' && c.visitTriggerOther ? '（' + c.visitTriggerOther + '）' : ''));
+    add('接客内容', c.content);
+    add('対応結果', c.result);
+    if (c.resultNote) add('補足コメント', c.resultNote);
+    add('次回対応', c.nextAction + (c.nextAction === '必要' && c.nextActionDetail ? '：' + c.nextActionDetail : ''));
+    box.appendChild(dl);
+    return box;
+  }
+
+  function renderDetail(d) {
+    R.detail = d;
+    var r = d.report;
+    var body = $('reportDetailBody');
+    body.textContent = '';
+    $('btnReportEdit').hidden = !d.canEdit;
+    $('btnReportEdit').textContent = r.status === 'draft' ? '下書きを編集する' : 'この日報を修正する';
+
+    var head = el('div', 'card report-head');
+    head.appendChild(el('span', 'report-head-date', formatDateLong(r.date)));
+    head.appendChild(el('span', 'report-head-name', r.name));
+    var meta = el('div', 'report-head-meta');
+    meta.appendChild(el('span', '', '接客 ' + r.customerCount + '件'));
+    if (r.submittedAt) meta.appendChild(el('span', '', '提出日時 ' + r.submittedAt.slice(0, 16)));
+    if (r.updatedAt) meta.appendChild(el('span', '', '最終更新日時 ' + r.updatedAt.slice(0, 16)));
+    if (r.version > 1) meta.appendChild(el('span', '', 'バージョン ' + r.version));
+    head.appendChild(meta);
+    if (r.status === 'draft') head.appendChild(el('p', 'report-updated-note', '下書きです（あなただけが見られます）。提出すると全社員が閲覧できます。'));
+    if (d.showUpdated) head.appendChild(el('p', 'report-updated-note', '更新あり：この日報は提出後に修正されています（バージョン' + r.version + '）。最新の内容を確認してください。'));
+    body.appendChild(head);
+
+    var cust = el('div', 'card');
+    cust.appendChild(el('h2', 'card-title', '接客記録（' + r.customerCount + '件）'));
+    if (!r.customers.length) cust.appendChild(el('p', 'empty', '接客記録はありません。'));
+    r.customers.forEach(function (c, i) { cust.appendChild(customerView(c, i)); });
+    body.appendChild(cust);
+
+    var work = el('div', 'card');
+    work.appendChild(el('h2', 'card-title', '業務報告'));
+    work.appendChild(textBlock('本日の業務内容', r.workContent));
+    work.appendChild(textBlock('課題・気づき', r.issues));
+    work.appendChild(textBlock('申し送り内容', r.handover));
+    work.appendChild(textBlock('管理者への相談・確認事項', r.consultation));
+    var legacyLabels = { progress: '成果・進捗（以前の項目）', tomorrowPlan: '明日の予定（以前の項目）', sharedNotes: '共有事項（以前の項目）' };
+    Object.keys(r.legacy || {}).forEach(function (k) { work.appendChild(textBlock(legacyLabels[k] || k, r.legacy[k])); });
+    body.appendChild(work);
+
+    if (r.status !== 'submitted') return;
+    body.appendChild(confirmationCard(d));
+    body.appendChild(commentCard(d));
+  }
+
+  function confirmationCard(d) {
+    var c = d.confirmation;
+    var card = el('div', 'card');
+    card.appendChild(el('h2', 'card-title', '確認'));
+    var summary = el('div', 'confirm-summary');
+    summary.appendChild(el('span', 'confirm-count', c.confirmedCount + '人 / ' + c.targetCount + '人確認済み'));
+    if (d.canConfirm) {
+      var btn = el('button', 'btn btn-primary', '確認しました');
+      btn.type = 'button';
+      btn.id = 'btnConfirmReport';
+      btn.addEventListener('click', function () {
+        act(btn, 'confirmReport', [d.report.reportId], '記録中...').then(function (res) { if (res && res.success) renderDetail(res.data); });
+      });
+      summary.appendChild(btn);
+    } else if (d.isMine) {
+      summary.appendChild(el('span', 'badge badge-notstarted', 'あなたの日報（確認の対象外）'));
+    } else if (d.myConfirmed) {
+      summary.appendChild(el('span', 'badge badge-ok', 'あなたは確認済みです'));
+    }
+    card.appendChild(summary);
+
+    var lists = el('div', 'confirm-lists');
+    var done = el('div');
+    done.appendChild(el('h3', '', '確認済み（' + c.confirmed.length + '人）'));
+    var ul = document.createElement('ul');
+    if (!c.confirmed.length) ul.appendChild(el('li', 'empty', 'まだいません'));
+    c.confirmed.forEach(function (x) {
+      var li = document.createElement('li');
+      li.appendChild(el('span', '', x.name));
+      li.appendChild(el('span', 'sub', shortTime(x.confirmedAt)));
+      ul.appendChild(li);
+    });
+    done.appendChild(ul);
+    var pending = el('div');
+    pending.appendChild(el('h3', '', '未確認（' + c.pending.length + '人）'));
+    var ul2 = document.createElement('ul');
+    if (!c.pending.length) ul2.appendChild(el('li', 'empty', '全員確認済みです'));
+    c.pending.forEach(function (x) {
+      var li = document.createElement('li');
+      li.appendChild(el('span', '', x.name));
+      if (x.confirmedOlderAt) li.appendChild(el('span', 'sub', '修正前の版を確認（' + shortTime(x.confirmedOlderAt) + '）'));
+      ul2.appendChild(li);
+    });
+    pending.appendChild(ul2);
+    lists.appendChild(done);
+    lists.appendChild(pending);
+    card.appendChild(lists);
+
+    // 履歴（提出・修正・確認を時刻順に）
+    // 同じ時刻なら「バージョンが小さい順」「提出・修正 → 確認」の順に並べる
+    var events = (d.updateHistory || []).map(function (h) { return { at: h.at, version: h.version, kind: 0, text: h.name + '　' + (h.action === '提出' ? '提出' : '日報を修正（バージョン' + h.version + '）') }; })
+      .concat((d.confirmationHistory || []).map(function (h) { return { at: h.at, version: h.version, kind: 1, text: h.name + '　確認（バージョン' + h.version + '）' }; }))
+      .sort(function (a, b) {
+        if (a.at !== b.at) return a.at < b.at ? -1 : 1;
+        if (a.version !== b.version) return a.version - b.version;
+        return a.kind - b.kind;
+      });
+    if (events.length) {
+      var hist = el('details', 'history-box');
+      hist.appendChild(el('summary', '', '履歴を見る（' + events.length + '件）'));
+      var hl = document.createElement('ul');
+      events.forEach(function (e) { hl.appendChild(el('li', '', shortTime(e.at) + '　' + e.text)); });
+      hist.appendChild(hl);
+      card.appendChild(hist);
+    }
+    return card;
+  }
+
+  function commentCard(d) {
+    var card = el('div', 'card');
+    card.appendChild(el('h2', 'card-title', 'コメント（' + d.comments.length + '件）'));
+    var list = el('ul', 'comment-list');
+    if (!d.comments.length) list.appendChild(el('li', 'empty', 'コメントはまだありません。'));
+    d.comments.forEach(function (c) {
+      var li = el('li', 'comment-item');
+      li.appendChild(el('div', 'comment-meta', c.name + '　' + c.postedAt.slice(0, 16)));
+      li.appendChild(el('div', 'comment-text', c.text));
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+    if (d.canComment) {
+      var row = el('div', 'form-row');
+      var label = el('label', '', 'コメントを書く（任意）');
+      label.setAttribute('for', 'reportCommentText');
+      row.appendChild(label);
+      var ta = el('textarea');
+      ta.id = 'reportCommentText';
+      ta.rows = 3;
+      ta.maxLength = 2000;
+      row.appendChild(ta);
+      card.appendChild(row);
+      var actions = el('div', 'form-actions');
+      var btn = el('button', 'btn btn-outline', 'コメントを投稿');
+      btn.type = 'button';
+      btn.id = 'btnPostComment';
+      btn.addEventListener('click', function () {
+        var text = ta.value.trim();
+        if (!text) { App.showToast('warn', 'コメントを入力してください'); return; }
+        act(btn, 'addReportComment', [d.report.reportId, text], '投稿中...').then(function (res) { if (res && res.success) renderDetail(res.data); });
+      });
+      actions.appendChild(btn);
+      card.appendChild(actions);
+    }
+    return card;
+  }
+
+  // ============================================================ 入力
+
+  function openEditor(reportId) {
+    showPane('editor');
+    $('customerCards').textContent = '';
+    $('reportEditorState').textContent = '読み込み中...';
+    var seq = ++R.seq;
+    return call('getReportEditor', [reportId || '']).then(function (res) {
+      if (seq !== R.seq) return;
+      if (!res.success) {
+        $('reportEditorState').textContent = '';
+        App.showToast('error', res.message);
+        return;
+      }
+      fillEditor(res.data);
+    });
+  }
+
+  function fillEditor(data) {
+    R.choices = data.choices;
+    var r = data.report;
+    R.editor = { reportId: r ? r.reportId : '', status: r ? r.status : 'new', version: r ? r.version : 0 };
+    $('reportDateText').value = formatDateLong(data.date);
+    $('reportAuthorText').value = data.employeeName;
+    $('repWorkContent').value = r ? r.workContent : '';
+    $('repIssues').value = r ? r.issues : '';
+    $('repHandover').value = r ? r.handover : '';
+    $('repConsultation').value = r ? r.consultation : '';
+    $('customerCards').textContent = '';
+    (r ? r.customers : []).forEach(function (c) { addCustomerCard(c); });
+    renumberCustomers();
+    renderEditorState(r);
+  }
+
+  function renderEditorState(r) {
+    var submitted = R.editor.status === 'submitted';
+    $('btnReportDraft').hidden = submitted;
+    $('btnReportDraft').parentNode.classList.toggle('single', submitted);
+    $('btnReportSubmit').textContent = submitted ? '修正を提出' : '日報を提出';
+    $('btnReportSubmit').setAttribute('data-report-label', $('btnReportSubmit').textContent);
+    $('reportActionsNote').textContent = submitted
+      ? '提出済みの日報を修正しています。修正を提出すると、確認済みの人も「未確認」に戻ります。'
+      : '下書きはあなただけが見られます。提出すると全社員が閲覧できます。';
+    var state = !r ? '新しい日報' : submitted ? '提出済み（バージョン' + r.version + '）' : '下書き（最終保存 ' + shortTime(r.updatedAt) + '）';
+    $('reportEditorState').textContent = state;
+  }
+
+  /** 接客記録のカードを1件追加する */
+  function addCustomerCard(c) {
+    var data = c || {};
+    var n = ++R.cardSeq;
+    var ch = R.choices;
+    var card = el('div', 'customer-card');
+    card.setAttribute('data-customer-id', data.customerRecordId || '');
+
+    var head = el('div', 'customer-card-head');
+    head.appendChild(el('h3', 'customer-title', '接客'));
+    var remove = el('button', 'btn btn-remove btn-sm', '削除');
+    remove.type = 'button';
+    remove.addEventListener('click', function () {
+      if (R.busy) return;
+      card.remove();
+      renumberCustomers();
+    });
+    head.appendChild(remove);
+    card.appendChild(head);
+
+    // 顧客名 ＋ 未確認
+    var nameRow = el('div', 'form-row');
+    var nameLabel = el('label', '', '接客顧客名');
+    nameLabel.setAttribute('for', 'custName' + n);
+    nameRow.appendChild(nameLabel);
+    var nameLine = el('div', 'name-row');
+    var name = el('input');
+    name.type = 'text'; name.id = 'custName' + n; name.maxLength = 200; name.className = 'js-name';
+    name.value = data.customerName || '';
+    nameLine.appendChild(name);
+    var unknownLabel = el('label', 'check-label');
+    var unknown = el('input');
+    unknown.type = 'checkbox'; unknown.className = 'js-unknown';
+    unknown.checked = !!data.customerNameUnknown;
+    unknownLabel.appendChild(unknown);
+    unknownLabel.appendChild(document.createTextNode('未確認'));
+    nameLine.appendChild(unknownLabel);
+    nameRow.appendChild(nameLine);
+    card.appendChild(nameRow);
+    var syncName = function () { name.disabled = unknown.checked; if (unknown.checked) name.value = ''; };
+    unknown.addEventListener('change', syncName);
+
+    // 来場のきっかけ ＋ その他の内容
+    var trigger = selectRow(card, '来場のきっかけ', 'custTrigger' + n, ch.visitTriggers, data.visitTrigger, 'js-trigger');
+    var otherRow = inputRow(card, 'その他の内容', 'custOther' + n, data.visitTriggerOther, 'js-other', '例：知人のSNS投稿を見て');
+    var syncOther = function () { otherRow.hidden = trigger.value !== ch.visitTriggerOther; };
+    trigger.addEventListener('change', syncOther);
+
+    textareaRow(card, '接客内容', 'custContent' + n, data.content, 'js-content', 4);
+    selectRow(card, '対応結果', 'custResult' + n, ch.results, data.result, 'js-result');
+    textareaRow(card, '補足コメント（任意）', 'custNote' + n, data.resultNote, 'js-note', 2);
+
+    // 次回対応（必要／不要）＋ 次回対応内容
+    var nextRow = el('div', 'form-row');
+    nextRow.appendChild(el('span', 'label-like', '次回対応'));
+    var choice = el('div', 'choice-row');
+    ch.nextActions.forEach(function (v) {
+      var lab = el('label');
+      var radio = el('input');
+      radio.type = 'radio'; radio.name = 'custNext' + n; radio.value = v; radio.className = 'js-next';
+      radio.checked = data.nextAction === v;
+      lab.appendChild(radio);
+      lab.appendChild(document.createTextNode(v));
+      choice.appendChild(lab);
+    });
+    nextRow.appendChild(choice);
+    card.appendChild(nextRow);
+    var detailRow = inputRow(card, '次回対応内容', 'custNextDetail' + n, data.nextActionDetail, 'js-next-detail', '例：電話、見積送付、再来店、担当者から連絡');
+    var syncNext = function () {
+      var checked = card.querySelector('.js-next:checked');
+      detailRow.hidden = !checked || checked.value !== ch.nextActionRequired;
+    };
+    choice.addEventListener('change', syncNext);
+
+    $('customerCards').appendChild(card);
+    syncName(); syncOther(); syncNext();
+    renumberCustomers();
+    return card;
+  }
+
+  function selectRow(card, labelText, id, options, value, cls) {
+    var row = el('div', 'form-row');
+    var label = el('label', '', labelText);
+    label.setAttribute('for', id);
+    row.appendChild(label);
+    var select = el('select');
+    select.id = id; select.className = cls;
+    select.appendChild(el('option', '', '選択してください')).value = '';
+    options.forEach(function (o) { var opt = el('option', '', o); opt.value = o; select.appendChild(opt); });
+    select.value = value || '';
+    row.appendChild(select);
+    card.appendChild(row);
+    return select;
+  }
+  function inputRow(card, labelText, id, value, cls, placeholder) {
+    var row = el('div', 'form-row');
+    var label = el('label', '', labelText);
+    label.setAttribute('for', id);
+    row.appendChild(label);
+    var input = el('input');
+    input.type = 'text'; input.id = id; input.className = cls; input.maxLength = 200;
+    input.value = value || '';
+    if (placeholder) input.placeholder = placeholder;
+    row.appendChild(input);
+    card.appendChild(row);
+    return row;
+  }
+  function textareaRow(card, labelText, id, value, cls, rows) {
+    var row = el('div', 'form-row');
+    var label = el('label', '', labelText);
+    label.setAttribute('for', id);
+    row.appendChild(label);
+    var ta = el('textarea');
+    ta.id = id; ta.className = cls; ta.rows = rows; ta.maxLength = 2000;
+    ta.value = value || '';
+    row.appendChild(ta);
+    card.appendChild(row);
+    return row;
+  }
+
+  /** 「接客1」「接客2」…の番号と件数を付け直す（件数は入力させず、カードの数から数える） */
+  function renumberCustomers() {
+    var cards = document.querySelectorAll('#customerCards .customer-card');
+    for (var i = 0; i < cards.length; i++) cards[i].querySelector('.customer-title').textContent = '接客' + (i + 1);
+    $('customerCountBadge').textContent = '接客 ' + cards.length + '件';
+    $('customerEmpty').hidden = cards.length > 0;
+  }
+
+  /** 入力内容を集める（社員ID・氏名・日付は入れない） */
+  function collectEditor() {
+    var cards = document.querySelectorAll('#customerCards .customer-card');
+    var customers = [];
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      var next = c.querySelector('.js-next:checked');
+      customers.push({
+        customerRecordId: c.getAttribute('data-customer-id') || '',
+        customerName: c.querySelector('.js-name').value.trim(),
+        customerNameUnknown: c.querySelector('.js-unknown').checked,
+        visitTrigger: c.querySelector('.js-trigger').value,
+        visitTriggerOther: c.querySelector('.js-other').value.trim(),
+        content: c.querySelector('.js-content').value,
+        result: c.querySelector('.js-result').value,
+        resultNote: c.querySelector('.js-note').value,
+        nextAction: next ? next.value : '',
+        nextActionDetail: c.querySelector('.js-next-detail').value.trim(),
+      });
+    }
+    return {
+      reportId: R.editor ? R.editor.reportId : '',
+      workContent: $('repWorkContent').value,
+      issues: $('repIssues').value,
+      handover: $('repHandover').value,
+      consultation: $('repConsultation').value,
+      customers: customers,
+    };
+  }
+
+  /** 提出の前のチェック（最終的なチェックはサーバーで行う） */
+  function checkBeforeSubmit(input) {
+    if (!input.workContent.trim()) return '提出するときは「本日の業務内容」を入力してください';
+    for (var i = 0; i < input.customers.length; i++) {
+      var c = input.customers[i];
+      var label = '接客' + (i + 1) + '：';
+      if (!c.customerNameUnknown && !c.customerName) return label + '顧客名を入力するか、「未確認」にチェックしてください';
+      if (!c.visitTrigger) return label + '来場のきっかけを選んでください';
+      if (c.visitTrigger === R.choices.visitTriggerOther && !c.visitTriggerOther) return label + '「その他の内容」を入力してください';
+      if (!c.result) return label + '対応結果を選んでください';
+      if (!c.nextAction) return label + '次回対応（必要／不要）を選んでください';
+      if (c.nextAction === R.choices.nextActionRequired && !c.nextActionDetail) return label + '次回対応内容を入力してください';
+    }
+    return '';
+  }
+
+  function onSaveDraft() {
+    var input = collectEditor();
+    act($('btnReportDraft'), 'saveReportDraft', [input], '保存中...').then(function (res) {
+      if (res && res.success) { fillEditor({ date: res.data.date, employeeName: res.data.name, report: res.data, choices: R.choices }); }
+    });
+  }
+
+  function onSubmit(event) {
+    if (event) event.preventDefault();
+    if (R.busy) return;
+    var problem = checkBeforeSubmit(collectEditor());
+    if (problem) { App.showToast('warn', problem); return; }
+    var updating = R.editor && R.editor.status === 'submitted';
+    $('reportConfirmTitle').textContent = updating ? '修正を提出しますか？' : '日報を提出しますか？';
+    $('reportConfirmText').textContent = updating
+      ? '修正すると、確認済みの人も「未確認」に戻り、「更新あり」と表示されます。'
+      : '提出後は全社員が閲覧できます。';
+    $('btnReportConfirmOk').textContent = updating ? '修正を提出する' : '提出する';
+    App.openModal('reportConfirmModal');
+    $('btnReportConfirmOk').focus();
+  }
+
+  function onConfirmSubmit() {
+    if (R.busy) return;
+    App.closeModal('reportConfirmModal');
+    var input = collectEditor();
+    act($('btnReportSubmit'), 'submitReport', [input], '提出中...').then(function (res) {
+      if (res && res.success) openDetail(res.data.reportId);
+    });
+  }
+
+  // ============================================================ 起動
+
+  function bind() {
+    $('btnReportWriteToday').addEventListener('click', function () { openEditor(''); });
+    $('btnReportPrevMonth').addEventListener('click', function () { if (R.month) loadList(shiftMonth(R.month, -1)); });
+    $('btnReportNextMonth').addEventListener('click', function () { if (R.month && R.month < R.currentMonth) loadList(shiftMonth(R.month, 1)); });
+    $('btnReportBackToList').addEventListener('click', function () { openList(R.month); });
+    $('btnEditorBack').addEventListener('click', function () { openList(R.month); });
+    $('btnReportEdit').addEventListener('click', function () { if (R.detail) openEditor(R.detail.report.reportId); });
+    $('btnAddCustomer').addEventListener('click', function () {
+      if (R.busy || !R.choices) return;
+      var card = addCustomerCard(null);
+      card.querySelector('.js-name').focus();
+    });
+    $('btnReportDraft').addEventListener('click', onSaveDraft);
+    $('reportEditorForm').addEventListener('submit', onSubmit);
+    $('btnReportConfirmOk').addEventListener('click', onConfirmSubmit);
+    $('btnReportConfirmCancel').addEventListener('click', function () { App.closeModal('reportConfirmModal'); });
+  }
+
+  bind();
+  window.LeafReports = { openList: openList, openDetail: openDetail, openEditor: openEditor };
+})();
+</script>

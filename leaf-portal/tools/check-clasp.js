@@ -24,6 +24,8 @@ const REQUIRED_FILES = [
   'AdminDashboardService.gs', 'AdminView.html', 'AdminStyles.html', 'AdminScripts.html',
   // ロゴ（assets/logo.png から npm run logo で作る）
   'Logo.html',
+  // 日報（一覧・閲覧・確認・コメント）
+  'DailyReportShareService.gs', 'ReportView.html', 'ReportStyles.html', 'ReportScripts.html',
 ];
 
 function checkClaspProject(projectDir) {

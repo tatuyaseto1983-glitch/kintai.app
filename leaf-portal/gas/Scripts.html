@@ -19,7 +19,7 @@
   /** スタッフ画面から呼んでよいサーバーの関数（管理者用の関数はここに入れない） */
   var ALLOWED_FUNCTIONS = [
     'getStaffDashboard', 'getMyAttendance', 'clockIn', 'startBreak', 'resumeWork', 'clockOut',
-    'submitCorrectionRequest', 'getMyCorrectionRequests', 'saveDailyReport', 'getMyDailyReports',
+    'submitCorrectionRequest', 'getMyCorrectionRequests',
     'submitOvertimeRequest', 'getMyOvertimeRequests',
   ];
 
@@ -143,7 +143,6 @@
     }
     if (!isBusy) {
       renderActions();
-      renderReportLock();
       if (!$('overtimeModal').hidden) updatePlannedOvertime(); // 申請不要の短さなどのときは申請ボタンを押せないままにする
     } else {
       setStyleButtonsEnabled(false);
@@ -746,78 +745,7 @@
 
   // ============================================================ 日報
 
-  var reportCache = { month: '', reports: [] };
-  var currentReport = null;
-
-  function openReport() {
-    var today = state.serverDate || jstDateKey(new Date());
-    $('repDate').value = today;
-    $('repDate').max = today;
-    openModal('reportModal');
-    loadReportFor(today);
-  }
-
-  function loadReportFor(dateKey) {
-    fillReport(null);
-    $('reportStatus').textContent = '読み込み中...';
-    var month = dateKey.slice(0, 7);
-    callGas('getMyDailyReports', [month]).then(function (res) {
-      if (!res.success) {
-        $('reportStatus').textContent = '';
-        showToast('error', res.message);
-        return;
-      }
-      reportCache = { month: month, reports: (res.data && res.data.reports) || [] };
-      var found = reportCache.reports.filter(function (r) { return r.date === dateKey; })[0] || null;
-      fillReport(found);
-    });
-  }
-
-  function fillReport(report) {
-    currentReport = report;
-    $('repWork').value = report ? report.workContent : '';
-    $('repProgress').value = report ? report.progress : '';
-    $('repIssues').value = report ? report.issues : '';
-    $('repTomorrow').value = report ? report.tomorrowPlan : '';
-    $('repShared').value = report ? report.sharedNotes : '';
-    var status = $('reportStatus');
-    status.textContent = '';
-    if (report) {
-      var cls = report.status === '確認済み' ? 'badge-ok' : report.status === '提出済み' ? 'badge-working' : 'badge-warn';
-      status.appendChild(el('span', 'badge ' + cls, report.status));
-      if (report.submittedAt) status.appendChild(document.createTextNode(' ' + report.submittedAt.slice(5, 16)));
-    } else {
-      status.appendChild(el('span', 'badge badge-notstarted', '未作成'));
-    }
-    renderReportLock();
-  }
-
-  /** 管理者が確認済みの日報は変更できない（サーバー側でも拒否される） */
-  function renderReportLock() {
-    var locked = !!(currentReport && currentReport.status === '確認済み');
-    ['repWork', 'repProgress', 'repIssues', 'repTomorrow', 'repShared'].forEach(function (id) { $(id).disabled = locked; });
-    if (!state.busy) {
-      $('btnSaveDraft').disabled = locked;
-      $('btnSubmitReport').disabled = locked;
-    }
-  }
-
-  function saveReport(status, button) {
-    var report = {
-      date: $('repDate').value,
-      workContent: $('repWork').value,
-      progress: $('repProgress').value,
-      issues: $('repIssues').value,
-      tomorrowPlan: $('repTomorrow').value,
-      sharedNotes: $('repShared').value,
-      status: status,
-    };
-    if (!report.date) return showToast('warn', '日付を入力してください');
-    if (status === '提出済み' && !report.workContent.trim()) return showToast('warn', '提出するときは「本日の業務内容」を入力してください');
-    runAction({ button: button, fn: 'saveDailyReport', args: [report] }).then(function (r) {
-      if (r && r.success) closeModal('reportModal');
-    });
-  }
+  // 日報の一覧・閲覧・入力は ReportScripts.html にあります
 
   // ============================================================ モーダル・通知
 
@@ -921,18 +849,20 @@
    */
   function showView(view) {
     if (state.busy) return;
-    state.view = view === 'admin' ? 'admin' : 'staff';
+    state.view = view === 'admin' || view === 'reports' ? view : 'staff';
     $('staffView').hidden = state.view !== 'staff';
     $('adminView').hidden = state.view !== 'admin';
-    $('brandSub').textContent = state.view === 'admin' ? '勤怠管理｜管理者画面' : '勤怠管理';
+    $('reportView').hidden = state.view !== 'reports';
+    $('brandSub').textContent = state.view === 'admin' ? '勤怠管理｜管理者画面' : state.view === 'reports' ? '勤怠管理｜日報' : '勤怠管理';
     renderViewSwitch();
     try {
       if (window.google && google.script && google.script.history) {
-        google.script.history.replace(null, state.view === 'admin' ? { view: 'admin' } : {});
+        google.script.history.replace(null, state.view === 'staff' ? {} : { view: state.view });
       }
     } catch (e) { /* URLの書き換えができなくても動作には影響しない */ }
     window.scrollTo(0, 0);
     if (state.view === 'admin' && window.LeafAdmin) window.LeafAdmin.open();
+    // 日報画面は、開く内容（一覧・詳細・入力）を LeafReports が決めてから showView('reports') を呼ぶ
     if (state.view === 'staff' && state.user) refresh(['today', 'month', 'staffStatus', 'flex']); // 管理者が承認した結果なども反映
   }
 
@@ -945,8 +875,8 @@
   function renderViewSwitch() {
     renderOvertimeCard();
     var isAdmin = !!(state.user && state.user.isAdmin === true);
-    $('btnToAdmin').hidden = !(isAdmin && state.view !== 'admin');
-    $('btnToStaff').hidden = state.view !== 'admin';
+    $('btnToAdmin').hidden = !(isAdmin && state.view !== 'admin'); // 日報画面からも管理者画面へ戻れる
+    $('btnToStaff').hidden = state.view === 'staff';
   }
 
   // 管理者画面（AdminScripts.html）と共通の道具
@@ -991,7 +921,8 @@
     var goStaff = document.querySelectorAll('[data-go-staff]');
     for (var k = 0; k < goStaff.length; k++) goStaff[k].addEventListener('click', function () { showView('staff'); });
     $('btnOpenCorrection').addEventListener('click', openCorrection);
-    $('btnOpenReport').addEventListener('click', openReport);
+    $('btnOpenReport').addEventListener('click', function () { if (window.LeafReports) window.LeafReports.openEditor(); });
+    $('btnOpenReportList').addEventListener('click', function () { if (window.LeafReports) window.LeafReports.openList(); });
     $('btnOpenOvertime').addEventListener('click', openOvertime);
     $('otStart').addEventListener('input', updatePlannedOvertime);
     $('otEnd').addEventListener('input', updatePlannedOvertime);
@@ -1001,9 +932,6 @@
     $('corItem').addEventListener('change', updateCorrectionFields);
     $('corDate').addEventListener('change', updateCorrectionFields);
     $('correctionForm').addEventListener('submit', onSubmitCorrection);
-    $('repDate').addEventListener('change', function () { if ($('repDate').value) loadReportFor($('repDate').value); });
-    $('reportForm').addEventListener('submit', function (e) { e.preventDefault(); saveReport('提出済み', $('btnSubmitReport')); });
-    $('btnSaveDraft').addEventListener('click', function () { saveReport('下書き', $('btnSaveDraft')); });
 
     var closers = document.querySelectorAll('[data-close]');
     for (var j = 0; j < closers.length; j++) {
@@ -1035,7 +963,9 @@
       $('loadingScreen').hidden = true;
       $('app').hidden = false;
       // URL に ?view=admin が付いていたら管理者画面から開く（管理者でなければサーバーが拒否する）
-      if (document.body.getAttribute('data-initial-view') === 'admin' && state.user) showView('admin');
+      var initial = document.body.getAttribute('data-initial-view');
+      if (initial === 'admin' && state.user) showView('admin');
+      if (initial === 'reports' && state.user && window.LeafReports) window.LeafReports.openList();
     }, function (error) {
       $('loadingScreen').hidden = true;
       $('app').hidden = false;

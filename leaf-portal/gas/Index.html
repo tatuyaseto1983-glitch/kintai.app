@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <?!= includeHtml_('Styles') ?>
   <?!= includeHtml_('AdminStyles') ?>
+  <?!= includeHtml_('ReportStyles') ?>
 </head>
 <body data-initial-view="<?= initialView ?>">
   <!-- 初回の読み込み中の表示 -->
@@ -151,8 +152,11 @@
 
           <div class="card link-card">
             <h2 class="card-title">日報</h2>
-            <p>本日の日報を入力できます。</p>
-            <button type="button" class="btn btn-outline" id="btnOpenReport">入力する</button>
+            <p>本日の日報を入力できます。提出済みの日報は全社員が閲覧・確認できます。</p>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenReport">入力する</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenReportList">日報一覧</button>
+            </div>
           </div>
           </div>
 
@@ -166,6 +170,9 @@
         </section>
       </div>
     </main>
+
+    <!-- ================= 日報（ReportView.html） ================= -->
+    <?!= includeHtml_('ReportView') ?>
 
     <!-- ================= 管理者画面（AdminView.html） ================= -->
     <?!= includeHtml_('AdminView') ?>
@@ -269,49 +276,6 @@
     </div>
   </div>
 
-  <!-- ================= 日報のフォーム ================= -->
-  <div class="modal" id="reportModal" role="dialog" aria-modal="true" aria-labelledby="reportTitle" hidden>
-    <div class="modal-panel">
-      <div class="modal-head">
-        <h2 id="reportTitle">日報</h2>
-        <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
-      </div>
-      <form id="reportForm" novalidate>
-        <div class="form-row form-row-inline">
-          <div>
-            <label for="repDate">日付</label>
-            <input type="date" id="repDate" required>
-          </div>
-          <p class="report-status" id="reportStatus"></p>
-        </div>
-        <div class="form-row">
-          <label for="repWork">本日の業務内容 <span class="req">提出時は必須</span></label>
-          <textarea id="repWork" rows="3" maxlength="2000"></textarea>
-        </div>
-        <div class="form-row">
-          <label for="repProgress">成果・進捗</label>
-          <textarea id="repProgress" rows="2" maxlength="2000"></textarea>
-        </div>
-        <div class="form-row">
-          <label for="repIssues">課題・困りごと</label>
-          <textarea id="repIssues" rows="2" maxlength="2000"></textarea>
-        </div>
-        <div class="form-row">
-          <label for="repTomorrow">明日の予定</label>
-          <textarea id="repTomorrow" rows="2" maxlength="2000"></textarea>
-        </div>
-        <div class="form-row">
-          <label for="repShared">共有事項</label>
-          <textarea id="repShared" rows="2" maxlength="2000"></textarea>
-        </div>
-        <div class="form-actions">
-          <button type="button" class="btn btn-ghost" id="btnSaveDraft" data-label="下書き保存">下書き保存</button>
-          <button type="submit" class="btn btn-primary" id="btnSubmitReport" data-label="提出する">提出する</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
   <!-- ================= 確認（退勤） ================= -->
   <div class="modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" hidden>
     <div class="modal-panel modal-small">
@@ -326,5 +290,6 @@
 
   <?!= includeHtml_('Scripts') ?>
   <?!= includeHtml_('AdminScripts') ?>
+  <?!= includeHtml_('ReportScripts') ?>
 </body>
 </html>

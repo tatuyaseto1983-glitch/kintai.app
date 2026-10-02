@@ -1,0 +1,112 @@
+<!--
+  ReportView.html — 日報の画面（一覧・閲覧・入力）。Index.html の中に読み込まれます。
+  データは入っていません。ReportScripts.html がサーバーから取得して表示します。
+  （下書きは本人にしか返らない・確認やコメントもサーバーで権限を確認しています）
+-->
+<main class="container report-container" id="reportView" hidden>
+
+  <!-- ================= 一覧 ================= -->
+  <section id="reportListPane" hidden>
+    <div class="report-titlebar">
+      <h1 class="report-title">日報</h1>
+      <button type="button" class="btn btn-primary" id="btnReportWriteToday" data-report-label="今日の日報を書く">今日の日報を書く</button>
+    </div>
+    <div class="card report-month-bar">
+      <button type="button" class="btn btn-ghost btn-sm" id="btnReportPrevMonth" aria-label="前の月">‹</button>
+      <span class="month-label" id="reportMonthLabel"></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnReportNextMonth" aria-label="次の月">›</button>
+    </div>
+    <div id="reportMyDrafts" class="report-drafts" hidden>
+      <h2 class="section-title">自分の下書き <span class="section-sub">（あなただけに表示されています）</span></h2>
+      <div class="report-cards" id="reportDraftCards"></div>
+    </div>
+    <h2 class="section-title">提出済みの日報</h2>
+    <div class="report-cards" id="reportCards"><p class="empty">読み込み中...</p></div>
+  </section>
+
+  <!-- ================= 閲覧 ================= -->
+  <section id="reportDetailPane" hidden>
+    <div class="report-nav">
+      <button type="button" class="btn btn-ghost btn-sm" id="btnReportBackToList">‹ 日報一覧へ</button>
+      <button type="button" class="btn btn-outline btn-sm" id="btnReportEdit" hidden>この日報を修正する</button>
+    </div>
+    <div id="reportDetailBody"><p class="empty">読み込み中...</p></div>
+  </section>
+
+  <!-- ================= 入力 ================= -->
+  <section id="reportEditorPane" hidden>
+    <div class="report-nav">
+      <button type="button" class="btn btn-ghost btn-sm" id="btnEditorBack">‹ 日報一覧へ</button>
+      <span class="report-editor-state" id="reportEditorState"></span>
+    </div>
+    <form id="reportEditorForm" novalidate>
+      <!-- 1. 基本情報（日付・担当者はサーバーが決める。ここでは表示だけ） -->
+      <div class="card report-section">
+        <h2 class="card-title">基本情報</h2>
+        <div class="report-basic">
+          <div class="form-row">
+            <label for="reportDateText">日付</label>
+            <input type="text" id="reportDateText" readonly aria-readonly="true" class="readonly-input">
+          </div>
+          <div class="form-row">
+            <label for="reportAuthorText">担当者</label>
+            <input type="text" id="reportAuthorText" readonly aria-readonly="true" class="readonly-input">
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. 接客記録 -->
+      <div class="card report-section">
+        <div class="card-head">
+          <h2 class="card-title">接客記録</h2>
+          <span class="badge badge-notstarted" id="customerCountBadge">接客 0件</span>
+        </div>
+        <div id="customerCards" class="customer-cards"></div>
+        <p class="empty" id="customerEmpty">接客記録はまだありません。接客した場合は「＋接客を追加」を押してください。</p>
+        <button type="button" class="btn btn-outline add-customer" id="btnAddCustomer">＋接客を追加</button>
+      </div>
+
+      <!-- 3. 業務報告 -->
+      <div class="card report-section">
+        <h2 class="card-title">業務報告</h2>
+        <div class="form-row">
+          <label for="repWorkContent">本日の業務内容 <span class="req">提出時は必須</span></label>
+          <textarea id="repWorkContent" rows="5" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repIssues">課題・気づき <span class="optional">任意</span></label>
+          <textarea id="repIssues" rows="3" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repHandover">申し送り内容 <span class="optional">任意</span></label>
+          <textarea id="repHandover" rows="3" maxlength="2000"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="repConsultation">管理者への相談・確認事項 <span class="optional">任意</span></label>
+          <textarea id="repConsultation" rows="3" maxlength="2000"></textarea>
+        </div>
+      </div>
+
+      <!-- 4. 保存・提出（画面の下に固定） -->
+      <div class="report-actions-bar">
+        <p class="report-actions-note" id="reportActionsNote">下書きはあなただけが見られます。提出すると全社員が閲覧できます。</p>
+        <div class="report-actions">
+          <button type="button" class="btn btn-outline btn-lg" id="btnReportDraft" data-report-label="下書き保存">下書き保存</button>
+          <button type="submit" class="btn btn-primary btn-lg" id="btnReportSubmit" data-report-label="日報を提出">日報を提出</button>
+        </div>
+      </div>
+    </form>
+  </section>
+</main>
+
+<!-- ================= 日報の提出の確認 ================= -->
+<div class="modal" id="reportConfirmModal" role="dialog" aria-modal="true" aria-labelledby="reportConfirmTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="reportConfirmTitle">日報を提出しますか？</h2>
+    <p id="reportConfirmText" class="confirm-text">提出後は全社員が閲覧できます。</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnReportConfirmCancel">キャンセル</button>
+      <button type="button" class="btn btn-primary" id="btnReportConfirmOk" data-report-label="提出する">提出する</button>
+    </div>
+  </div>
+</div>

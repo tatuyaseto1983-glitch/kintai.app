@@ -53,7 +53,7 @@ test('setupSystem：既存シートの足りない見出しだけを右端に足
   const log = gas.g.setupSystem();
   assert.deepEqual(sheet.data[1], ['E009', '既存', 'x@example.com', 'メモ']);
   assert.deepEqual(sheet.data[0].slice(0, 4), ['社員ID', '氏名', 'メールアドレス', '自分で足した列']);
-  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考']);
+  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象']);
   assert.ok(sheet.maxColumns >= 16, '列が足りなければシートの列を増やす');
   assert.equal(empty.data[0][0], '中断ID');
   assert.deepEqual(noHeader.data, [[], ['データだけある行']]);
@@ -340,7 +340,7 @@ test('管理者機能：日別・月別・承認待ち・CSV・再計算', () =>
   assert.equal(gas.g.getFlexSummary('E003').success, true);
 });
 
-test('日報：下書き→提出→確認済み後は変更不可', () => {
+test('日報（以前の saveDailyReport）：下書き→提出→提出後も本人は修正できる（バージョンが上がる）', () => {
   const gas = ready();
   gas.loginAs(FIXED);
   gas.setNow('2026-06-01 17:00');
@@ -353,9 +353,12 @@ test('日報：下書き→提出→確認済み後は変更不可', () => {
   assert.match(gas.g.saveDailyReport({ workContent: 'x', status: '確認済み' }).message, /ステータス/);
 
   gas.loginAs(ADMIN);
-  assert.equal(gas.g.confirmDailyReport(r.data.reportId).success, true);
+  assert.equal(gas.g.confirmDailyReport(r.data.reportId).success, true, '以前の関数名でも「確認しました」になる');
   gas.loginAs(FIXED);
-  assert.match(gas.g.saveDailyReport({ workContent: '変更' }).message, /確認済みの日報は変更できません/);
+  assert.equal(gas.g.saveDailyReport({ workContent: '変更' }).success, true, '提出後も本人は修正できる');
+  assert.match(gas.g.saveDailyReport({ workContent: '変更', status: '下書き' }).message, /下書きに戻せません/);
+  const row = gas.main.rows('日報')[0];
+  assert.deepEqual([row['日報ステータス'], row['バージョン'], row['本日の業務内容']], ['submitted', '2', '変更']);
   assert.equal(gas.g.getMyDailyReports('2026-06').data.reports.length, 1);
 });
 
@@ -549,7 +552,7 @@ test('管理者画面 1・2：一般スタッフは管理者データを取得�
     for (const [fn, args] of [
       ['getAdminDashboard', [{}]], ['exportAdminAttendanceCsv', [{ type: 'monthly' }]], ['approveCorrectionRequest', ['x']],
       ['rejectCorrectionRequest', ['x', 'y']], ['approveOvertimeRequest', ['x']], ['rejectOvertimeRequest', ['x', 'y']],
-      ['confirmDailyReport', ['x']], ['recalculateThisMonth', []], ['exportAttendanceCsv', []],
+      ['recalculateThisMonth', []], ['exportAttendanceCsv', []],
     ]) {
       const r = gas.g[fn](...args);
       assert.equal(r.success, false, who + ' ' + fn);
@@ -719,22 +722,24 @@ test('管理者画面 11：週1日完全休日の警告（問題のある人だ�
   assert.deepEqual(now.previous.rows.map((x) => x.name + ':' + x.status), ['佐藤:不足'], '前の週の確定した不足は警告に出す');
 });
 
-test('管理者画面 12：日報（提出済み・下書き・未提出）と確認済みにする', () => {
+test('管理者画面 12：日報の提出状況（下書きは管理者にも「未提出」として内容を返さない）', () => {
   const gas = adminReady();
   gas.loginAs(FIXED);
   gas.setNow('2026-06-01 19:20');
   const id = gas.g.saveDailyReport({ workContent: '現場確認', issues: '資材の遅れ' }).data.reportId;
   gas.loginAs(FLEX);
-  gas.g.saveDailyReport({ workContent: '下書き', status: '下書き' });
+  gas.g.saveDailyReport({ workContent: '下書きの秘密メモ', status: '下書き' });
   gas.loginAs(ADMIN);
   let rep = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['reports'] }).data.reports;
-  assert.deepEqual(rep.rows.map((x) => x.name + ':' + x.status), ['山田:未提出', '佐藤:提出済み', '鈴木:下書き', '田中:未提出']);
+  assert.deepEqual(rep.rows.map((x) => x.name + ':' + x.status), ['山田:未提出', '佐藤:提出済み', '鈴木:未提出', '田中:未提出']);
   assert.deepEqual([rep.submittedCount, rep.notSubmittedCount], [1, 3]);
-  assert.equal(rep.rows.find((x) => x.name === '佐藤').issues, '資材の遅れ');
+  assert.doesNotMatch(JSON.stringify(rep), /下書きの秘密メモ|資材の遅れ/, '管理者画面の一覧に本文は返さない（下書きは特に）');
   assert.equal(rep.rows.find((x) => x.name === '鈴木').workStyle, '在宅');
+  const sato = rep.rows.find((x) => x.name === '佐藤');
+  assert.deepEqual([sato.reportId, sato.confirmedCount, sato.targetCount], [id, 0, 3]);
   assert.equal(gas.g.confirmDailyReport(id).success, true);
   rep = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['reports'] }).data.reports;
-  assert.equal(rep.rows.find((x) => x.name === '佐藤').status, '確認済み');
+  assert.equal(rep.rows.find((x) => x.name === '佐藤').confirmedCount, 1);
 });
 
 test('管理者画面：フレックス管理（週・月）と画面の許可リスト', () => {

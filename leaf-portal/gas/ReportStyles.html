@@ -1,0 +1,100 @@
+<style>
+/* ============================================================
+ * ReportStyles.html — 日報の画面の見た目（色は Styles.html の --brand-* / --state-* を使います）
+ * ============================================================ */
+.report-container { max-width: 960px; display: block; }
+.report-container > section { display: flex; flex-direction: column; gap: var(--brand-space-gap); }
+.report-container > section[hidden] { display: none !important; }
+.report-titlebar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.report-title { font-family: var(--brand-font-heading); font-size: 22px; font-weight: var(--brand-heading-weight); letter-spacing: var(--brand-heading-spacing); color: var(--brand-heading); margin: 0; }
+.report-month-bar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px; }
+.report-nav { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.report-drafts { display: flex; flex-direction: column; gap: 12px; }
+.report-cards { display: flex; flex-direction: column; gap: 12px; }
+
+/* 一覧のカード */
+.report-card { background: var(--brand-surface); border: 1px solid var(--brand-border); border-radius: var(--brand-radius); box-shadow: var(--brand-shadow);
+  padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.report-card.is-draft { background: var(--brand-surface-soft); border-style: dashed; }
+.report-card-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.report-card-date { font-size: 13px; color: var(--brand-muted); letter-spacing: .04em; }
+.report-card-name { font-size: 17px; font-weight: 600; color: var(--brand-heading); letter-spacing: .04em; }
+.report-card-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--brand-text); }
+.report-card-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.report-card-side { display: flex; align-items: center; gap: 10px; }
+.badge-updated { background: var(--state-warn-bg); color: var(--state-warn); }
+
+/* 閲覧 */
+.report-head { display: flex; flex-direction: column; gap: 6px; }
+.report-head-date { font-size: 14px; color: var(--brand-muted); letter-spacing: .06em; }
+.report-head-name { font-size: 22px; font-weight: 600; color: var(--brand-heading); letter-spacing: .04em; }
+.report-head-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--brand-muted); }
+.report-updated-note { padding: 12px 16px; border-radius: var(--brand-radius-control); background: var(--state-warn-bg); color: #7A4300; font-size: 14px; }
+.report-text-block { margin-bottom: 18px; }
+.report-text-block:last-child { margin-bottom: 0; }
+.report-text-block h3 { font-size: 12px; font-weight: 600; letter-spacing: .08em; color: var(--brand-muted); margin-bottom: 6px; }
+.report-text-block p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.report-text-block .empty { font-size: 14px; }
+.customer-view { border: 1px solid var(--brand-border); border-radius: var(--brand-radius-control); background: var(--brand-surface-soft); padding: 16px 18px; }
+.customer-view + .customer-view { margin-top: 12px; }
+.customer-view h3 { font-size: 14px; font-weight: 600; letter-spacing: .06em; color: var(--brand-heading); margin-bottom: 8px; }
+.customer-view dl { display: grid; grid-template-columns: 9em 1fr; gap: 6px 12px; margin: 0; font-size: 14px; }
+.customer-view dt { color: var(--brand-muted); }
+.customer-view dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.confirm-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.confirm-count { font-size: 20px; font-weight: 600; color: var(--brand-heading); font-variant-numeric: tabular-nums; }
+.confirm-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+.confirm-lists h3 { font-size: 12px; font-weight: 600; letter-spacing: .08em; color: var(--brand-muted); margin-bottom: 6px; }
+.confirm-lists ul { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.confirm-lists li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--brand-border); }
+.confirm-lists .sub { font-size: 12px; color: var(--brand-muted); }
+.history-box summary { cursor: pointer; font-size: 13px; color: var(--brand-muted); margin-top: 14px; }
+.history-box ul { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; color: var(--brand-text); }
+.history-box li { padding: 4px 0; }
+.comment-list { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.comment-item { border: 1px solid var(--brand-border); border-radius: var(--brand-radius-control); padding: 12px 14px; }
+.comment-meta { font-size: 12px; color: var(--brand-muted); margin-bottom: 4px; }
+.comment-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+
+/* 入力 */
+.report-basic { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.readonly-input { background: var(--brand-surface-soft) !important; color: var(--brand-text); cursor: default; }
+.optional { font-size: 12px; font-weight: 400; color: var(--brand-muted); margin-left: 6px; }
+.customer-cards { display: flex; flex-direction: column; gap: 14px; }
+.customer-card { border: 1px solid var(--brand-border); border-radius: var(--brand-radius); background: var(--brand-surface-soft); padding: 18px; }
+.customer-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.customer-card-head h3 { font-size: 15px; font-weight: 600; letter-spacing: .06em; color: var(--brand-heading); }
+.btn-remove { color: var(--state-error); border-color: #E7C5C0; background: var(--brand-surface); }
+.btn-remove:not(:disabled):hover { background: var(--state-error-bg); }
+.name-row { display: flex; gap: 12px; align-items: center; }
+.name-row input[type="text"] { flex: 1; }
+.check-label { display: inline-flex !important; align-items: center; gap: 8px; min-height: 44px; font-weight: 500 !important; white-space: nowrap; margin: 0 !important; cursor: pointer; }
+.check-label input { width: 20px; height: 20px; accent-color: var(--brand-primary); }
+.choice-row { display: flex; gap: 10px; }
+.choice-row label { flex: 1; display: flex !important; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border: 1px solid var(--brand-border-strong);
+  border-radius: var(--brand-radius-control); background: var(--brand-surface); font-weight: 600 !important; cursor: pointer; margin: 0 !important; }
+.choice-row input { accent-color: var(--brand-primary); width: 18px; height: 18px; }
+.choice-row label:has(input:checked) { border-color: var(--brand-primary); background: var(--brand-accent); color: var(--brand-primary); }
+.add-customer { align-self: flex-start; margin-top: 14px; min-height: 52px; }
+.report-section .form-row:last-child { margin-bottom: 0; }
+
+/* 保存・提出のボタン（画面の下に固定） */
+.report-actions-bar { position: sticky; bottom: 0; z-index: 5; margin: 0 calc(-1 * var(--brand-space-gap)); padding: 14px var(--brand-space-gap) 18px;
+  background: rgba(250, 248, 244, .96); border-top: 1px solid var(--brand-border); backdrop-filter: blur(4px); }
+.report-actions-note { font-size: 13px; color: var(--brand-muted); margin-bottom: 10px; }
+.report-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.report-actions.single { grid-template-columns: 1fr; }
+.report-editor-state { font-size: 13px; color: var(--brand-muted); }
+
+@media (max-width: 859px) {
+  .report-basic { grid-template-columns: 1fr; }
+  .confirm-lists { grid-template-columns: 1fr; }
+  .customer-view dl { grid-template-columns: 1fr; gap: 2px; }
+  .customer-view dt { margin-top: 6px; }
+  .name-row { flex-direction: column; align-items: stretch; }
+  .report-card { padding: 16px; }
+  .report-card-side { width: 100%; justify-content: space-between; }
+  .report-actions-bar { margin: 0 calc(-1 * var(--brand-space-gap-sp)); padding: 12px var(--brand-space-gap-sp) 16px; }
+  .report-actions .btn-lg { min-height: 56px; font-size: 16px; }
+}
+</style>

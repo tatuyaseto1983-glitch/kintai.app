@@ -196,25 +196,25 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await page.click('#correctionModal [data-close]');
     });
 
-    await t.test('17. 日報提出（下書き → 提出）', async () => {
+    await t.test('17. 日報提出（下書き → 提出。詳しくは leaf-reports-screen.e2e.js）', async () => {
       await page.click('#btnOpenReport');
-      await page.waitForFunction(() => /未作成/.test(document.getElementById('reportStatus').innerText));
-      await page.click('#btnSubmitReport');
+      await page.waitForFunction(() => /新しい日報/.test(document.getElementById('reportEditorState').innerText));
+      assert.equal(await page.inputValue('#reportAuthorText'), '佐藤 花子');
+      await page.click('#btnReportSubmit');
       assert.match(await toastText(), /本日の業務内容/);
-      await page.fill('#repWork', '現場打合せ');
-      await page.click('#btnSaveDraft');
+      await page.fill('#repWorkContent', '現場打合せ');
+      await page.click('#btnReportDraft');
       await waitIdle();
       assert.match(await toastText(), /下書き保存しました/);
-      await page.click('#btnOpenReport');
-      await page.waitForFunction(() => /下書き/.test(document.getElementById('reportStatus').innerText));
-      assert.equal(await page.inputValue('#repWork'), '現場打合せ');
-      await page.fill('#repTomorrow', '見積作成');
-      await page.click('#btnSubmitReport');
-      await waitIdle();
+      await page.fill('#repHandover', '見積作成');
+      await page.click('#btnReportSubmit');
+      await page.click('#btnReportConfirmOk');
+      await page.waitForSelector('#reportDetailPane:not([hidden]) .report-head');
       assert.match(await toastText(), /日報を提出しました/);
       const row = gas.main.rows('日報')[0];
-      assert.equal(row['ステータス'], '提出済み');
-      assert.equal(row['明日の予定'], '見積作成');
+      assert.deepEqual([row['ステータス'], row['日報ステータス'], row['申し送り内容']], ['提出済み', 'submitted', '見積作成']);
+      await page.click('#btnToStaff');
+      assert.equal(await page.locator('#staffView').isVisible(), true);
     });
 
     await t.test('18. スマホ表示：横にはみ出さず、ボタンが大きい', async () => {
@@ -250,7 +250,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
 
     await t.test('画面から管理者用の関数・社員IDの指定を使っていない', async () => {
       const used = [...new Set(calls)].sort();
-      assert.deepEqual(used, ['clockIn', 'clockOut', 'getMyCorrectionRequests', 'getMyDailyReports', 'getStaffDashboard', 'resumeWork', 'saveDailyReport', 'startBreak', 'submitCorrectionRequest']);
+      assert.deepEqual(used, ['clockIn', 'clockOut', 'getMyCorrectionRequests', 'getReportDetail', 'getReportEditor', 'getStaffDashboard', 'resumeWork', 'saveReportDraft', 'startBreak', 'submitCorrectionRequest', 'submitReport']);
       assert.deepEqual(errors, [], 'ブラウザで JavaScript のエラーが出ていない');
     });
   } finally {

@@ -47,6 +47,7 @@ function setupSystem() {
  * 戻り値は結果の説明（ログ用）。
  */
 function ensureSheet_(ss, definition) {
+  definition = withAllHeaders_(definition);
   let sheet = ss.getSheetByName(definition.name);
 
   if (!sheet) {
@@ -84,6 +85,14 @@ function ensureSheet_(ss, definition) {
   writeHeaderCells_(sheet, startColumn, missing);
   prepareNewColumns_(sheet, definition, startColumn, missing);
   return '足りない列を右端に追加しました（' + missing.join('、') + '）';
+}
+
+/** 必須の見出しと任意の見出し（optionalHeaders）をまとめた定義。setupSystem() はどちらも作る */
+function withAllHeaders_(definition) {
+  const copy = {};
+  Object.keys(definition).forEach(function (k) { copy[k] = definition[k]; });
+  copy.headers = definition.headers.concat(definition.optionalHeaders || []);
+  return copy;
 }
 
 /** 見出しを書き込み、太字・色付けする */

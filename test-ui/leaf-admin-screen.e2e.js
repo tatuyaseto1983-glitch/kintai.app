@@ -196,11 +196,16 @@ test('管理者画面をブラウザで操作する', { skip: !playwright && 'Pl
       await page.selectOption('#admReportFilter', 'notSubmitted');
       assert.equal(await page.locator('#admReports .report').count(), 3);
       await page.selectOption('#admReportFilter', 'submitted');
-      await page.locator('#admReports summary', { hasText: '佐藤 花子' }).click();
-      assert.match(await page.locator('#admReports').innerText(), /現場打合せ[\s\S]*図面確認/);
-      await page.locator('#admReports button', { hasText: '確認済みにする' }).click();
-      await idle(page);
-      assert.match(await page.locator('#admReports').innerText(), /確認済み/);
+      assert.doesNotMatch(await page.locator('#admReports').innerText(), /現場打合せ/, '一覧には本文を出さない');
+      assert.match(await page.locator('#admReports').innerText(), /佐藤 花子[\s\S]*0 \/ 3人 確認済み/);
+      await page.locator('#admReports button', { hasText: '日報を見る' }).click();
+      await page.waitForSelector('#reportDetailPane:not([hidden]) .report-head');
+      assert.match(await page.locator('#reportDetailBody').innerText(), /現場打合せ/);
+      await page.click('#btnConfirmReport');
+      await page.waitForFunction(() => /1人 \/ 3人確認済み/.test(document.getElementById('reportDetailBody').innerText));
+      await page.click('#btnToAdmin');
+      await page.waitForSelector('#adminContent:not([hidden])');
+      await page.waitForFunction(() => /1 \/ 3人 確認済み/.test(document.getElementById('admReports').innerText));
     });
 
     await t.test('今月の勤怠を再計算（確認あり）', async () => {

@@ -85,6 +85,12 @@
 .report-body dt { font-size: 12px; color: var(--text-sub); font-weight: 700; margin-top: 8px; }
 .report-body dd { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .report.not-submitted summary { color: var(--text-sub); }
+.report-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; flex-wrap: wrap; }
+.report-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.report-row-name { font-weight: 600; color: var(--brand-heading); }
+.report-row-meta { font-size: 13px; color: var(--text-sub); }
+.report-row-actions { display: flex; align-items: center; gap: 10px; }
+.report-row.not-submitted .report-row-name { color: var(--text-sub); font-weight: 500; }
 .rest-pending summary { cursor: pointer; font-size: 13px; color: var(--text-sub); }
 .rest-pending .sub { margin-top: 4px; }
 .tool-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }

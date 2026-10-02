@@ -26,6 +26,11 @@ const SHEET_NAMES = {
   OVERTIME: '残業申請',
   DAILY_REPORTS: '日報',
   SETTINGS: '設定',
+  // 日報の詳細（1つの日報に複数行ずつ。日報IDでつなぐ）
+  REPORT_CUSTOMERS: '日報_接客',
+  REPORT_CONFIRMATIONS: '日報_確認',
+  REPORT_COMMENTS: '日報_コメント',
+  REPORT_HISTORY: '日報_更新履歴',
 };
 
 /** 権限 */
@@ -66,8 +71,20 @@ const CORRECTION_ITEMS = {
 /** 勤怠記録の「打刻修正状況」列に入れる文字 */
 const CORRECTION_STATE = { PENDING: '申請中', APPROVED: '修正済み', REJECTED: '却下' };
 
-/** 日報のステータス */
+/** 日報のステータス（「ステータス」列に入れる表示用の文字。以前の「確認済み」は提出済みとして扱う） */
 const REPORT_STATUS = { DRAFT: '下書き', SUBMITTED: '提出済み', CONFIRMED: '確認済み' };
+
+/** 日報のステータス（「日報ステータス」列に入れる内部の値） */
+const REPORT_STATE = { DRAFT: 'draft', SUBMITTED: 'submitted' };
+
+/** スタッフマスタ「勤怠集計対象」：この値の人は、全スタッフ勤務状況・勤怠集計に含めない（空欄＝対象） */
+const ATTENDANCE_TARGET = { YES: '対象', NO: '対象外' };
+
+/** 日報の接客記録の選択肢 */
+const VISIT_TRIGGERS = ['Web検索', 'Googleマップ', 'Instagram', 'LINE', '紹介', '既存顧客', '看板・通りがかり', 'チラシ', 'イベント', 'その他', '未確認'];
+const VISIT_TRIGGER_OTHER = 'その他';
+const CUSTOMER_RESULTS = ['契約', '見積提出', '検討中', '次回予約', '資料渡し', '案内のみ', '対応完了', 'その他'];
+const NEXT_ACTION = { REQUIRED: '必要', NOT_REQUIRED: '不要' };
 
 /** 勤怠記録の「事前残業申請」列：申請が見つからないとき／不要なとき */
 const OVERTIME_REQUEST_LABEL = { NONE: 'なし', NOT_REQUIRED: '不要' };
@@ -123,10 +140,13 @@ const SHEET_DEFINITIONS = [
     name: SHEET_NAMES.STAFF,
     headers: ['社員ID', '氏名', 'メールアドレス', '権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤',
       '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考'],
+    // 任意の列：setupSystem() が右端に追加する。無くても動く（空欄＝勤怠集計の対象）
+    optionalHeaders: ['勤怠集計対象'],
     choices: {
       '権限': [ROLES.STAFF, ROLES.ADMIN],
       '勤務区分': [WORK_TYPES.FIXED, WORK_TYPES.FLEX],
       '在籍状況': [EMPLOYMENT_STATUS.ACTIVE, EMPLOYMENT_STATUS.ON_LEAVE, EMPLOYMENT_STATUS.RETIRED],
+      '勤怠集計対象': [ATTENDANCE_TARGET.YES, ATTENDANCE_TARGET.NO],
     },
     freeChoices: { '雇用区分': EMPLOYMENT_TYPES },
   },
@@ -156,7 +176,29 @@ const SHEET_DEFINITIONS = [
     name: SHEET_NAMES.DAILY_REPORTS,
     headers: ['日報ID', '日付', '社員ID', '氏名', '勤務形態', '本日の業務内容', '成果・進捗', '課題・困りごと',
       '明日の予定', '共有事項', '提出日時', 'ステータス'],
+    // 新しい日報の列（setupSystem() が右端に追加。以前の列はそのまま残す）
+    optionalHeaders: ['日報ステータス', 'バージョン', '接客件数', '課題・気づき', '申し送り内容', '管理者への相談・確認事項',
+      '最終更新日時', '作成日時'],
     choices: { 'ステータス': [REPORT_STATUS.DRAFT, REPORT_STATUS.SUBMITTED, REPORT_STATUS.CONFIRMED] },
+  },
+  {
+    name: SHEET_NAMES.REPORT_CUSTOMERS,
+    headers: ['接客ID', '日報ID', '社員ID', '並び順', '顧客名', '顧客名未確認', '来場のきっかけ', 'その他の内容', '接客内容',
+      '対応結果', '補足コメント', '次回対応', '次回対応内容', '削除', '作成日時', '更新日時'],
+  },
+  {
+    // 確認するたびに1行追加（消さない）。「確認済み」かどうかは、今の日報バージョンの行があるかで決める
+    name: SHEET_NAMES.REPORT_CONFIRMATIONS,
+    headers: ['確認ID', '日報ID', '日報バージョン', '社員ID', '確認者名', '確認日時'],
+  },
+  {
+    name: SHEET_NAMES.REPORT_COMMENTS,
+    headers: ['コメントID', '日報ID', '社員ID', '社員名', 'コメント', '投稿日時'],
+  },
+  {
+    // 保存・提出・修正のたびに1行追加。「内容」はその時点の日報（JSON）
+    name: SHEET_NAMES.REPORT_HISTORY,
+    headers: ['履歴ID', '日報ID', 'バージョン', '操作', '社員ID', '社員名', '日時', '内容'],
   },
   {
     name: SHEET_NAMES.SETTINGS,

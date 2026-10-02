@@ -32,14 +32,14 @@ const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overt
 
 /**
  * WebアプリのURLを開いたときに呼ばれ、画面を返します。
- * URLの最後に ?view=admin を付けると、最初に管理者画面を開きます。
+ * URLの最後に ?view=admin を付けると管理者画面、?view=reports を付けると日報一覧を最初に開きます。
  * ※ここでは「どちらの画面を先に開くか」だけを決めます。管理者のデータは、画面が
  *   getAdminDashboard() を呼んだときにサーバー側で requireAdmin() を通った場合だけ返します。
  */
 function doGet(e) {
   const template = HtmlService.createTemplateFromFile('Index');
   const requested = e && e.parameter ? String(e.parameter.view || '') : '';
-  template.initialView = requested === 'admin' ? 'admin' : 'staff';
+  template.initialView = requested === 'admin' || requested === 'reports' ? requested : 'staff';
   template.brandName = APP_BRAND_NAME;
   template.logoSrc = getLogoDataUri_();
   const output = template.evaluate()

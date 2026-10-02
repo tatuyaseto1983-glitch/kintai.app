@@ -71,7 +71,7 @@ function getTodayStaffStatus() {
     const me = getCurrentStaff_(); // 登録済みのスタッフだけが見られる
     const now = getNowInfo_();
     const list = getAllStaff_()
-      .filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; })
+      .filter(isAttendanceTarget_) // 在籍中で、勤怠集計対象の人だけ（役員など「対象外」の人は出さない）
       .map(function (s) {
         const record = findCurrentAttendance_(s.employeeId, now.date);
         const status = record ? String(record['状態']) : ATTENDANCE_STATUS.NOT_STARTED;

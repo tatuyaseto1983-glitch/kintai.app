@@ -91,6 +91,7 @@ function exportAdminAttendanceCsv(params) {
       '遅刻', '早退', '社内超過', '事前残業申請', '要確認', '打刻漏れ', '打刻修正状況', '状態'];
     const lines = [headers.map(csvCell_).join(',')];
     getAttendanceInRange_(range.from, range.to).forEach(function (record) {
+      if (ctx.excludedIds[String(record['社員ID']).trim()]) return; // 勤怠集計の対象外（役員など）は出さない
       const row = toAdminAttendanceRow_(record, ctx);
       lines.push([row.date, row.employeeId, row.name, row.department, row.workType, row.workStyle, row.clockIn, row.clockOut,
         row.autoBreak, row.breakTotal, row.workTime, row.late, row.earlyLeave, row.internalExcess, row.preOvertimeRequest,
@@ -125,7 +126,11 @@ function buildAdminContext_(settings, today) {
     if (!attendanceByKey[id + '|' + date]) attendanceByKey[id + '|' + date] = r;
   });
   const staffList = getAllStaff_();
+  // 勤怠集計の対象外（役員など）の社員ID。勤怠の一覧・集計・CSVから除く
+  const excludedIds = {};
+  staffList.forEach(function (s) { if (s.attendanceTarget === false) excludedIds[s.employeeId] = true; });
   return {
+    excludedIds: excludedIds,
     settings: settings,
     today: today,
     calc: calc,
@@ -138,7 +143,8 @@ function buildAdminContext_(settings, today) {
 
 /** 画面に出すスタッフ（退職者以外） */
 function visibleStaff_(ctx) {
-  return ctx.staffList.filter(function (s) { return s.status !== EMPLOYMENT_STATUS.RETIRED; });
+  // 勤怠の一覧・集計に出すのは、退職者以外で「勤怠集計対象」の人（役員など対象外の人は除く）
+  return ctx.staffList.filter(function (s) { return s.status !== EMPLOYMENT_STATUS.RETIRED && s.attendanceTarget !== false; });
 }
 
 /** 今操作中の勤怠（今日の記録。なければ前日のまだ終わっていない記録） */
@@ -196,7 +202,7 @@ function buildAdminSummary_(ctx) {
     missingPunchStaff: 0, missingPunchRecords: 0, overtimeNeedsCheck: 0,
     pendingCorrections: 0, pendingOvertime: 0,
   };
-  ctx.staffList.filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; }).forEach(function (s) {
+  ctx.staffList.filter(isAttendanceTarget_).forEach(function (s) {
     const record = currentAttendanceFromContext_(ctx, s.employeeId);
     if (!record || isBlank_(record['出勤'])) { summary.notStarted += 1; return; }
     summary.present += 1;
@@ -210,6 +216,7 @@ function buildAdminSummary_(ctx) {
   // 今月（今日まで）の打刻漏れと残業要確認
   const staffWithIssues = {};
   Object.keys(ctx.attendanceByEmployee).forEach(function (id) {
+    if (ctx.excludedIds[id]) return;
     ctx.attendanceByEmployee[id].forEach(function (r) {
       const date = toDateKey_(r['日付']);
       if (date < range.from || date > ctx.today) return;
@@ -243,7 +250,7 @@ function buildAdminDaily_(ctx, date) {
   // スタッフマスタから外れた人の記録も、その日にあれば表示する
   Object.keys(ctx.attendanceByKey).forEach(function (key) {
     const parts = key.split('|');
-    if (parts[1] === date && !listed[parts[0]]) rows.push(toAdminAttendanceRow_(ctx.attendanceByKey[key], ctx));
+    if (parts[1] === date && !listed[parts[0]] && !ctx.excludedIds[parts[0]]) rows.push(toAdminAttendanceRow_(ctx.attendanceByKey[key], ctx));
   });
   return { date: date, rows: rows };
 }
@@ -318,7 +325,7 @@ function buildAdminFlex_(ctx, date, month) {
   const week = getWeekRange_(date, settings.weekStartDay);
   const monthRange = getMonthRange_(month, settings.monthClosingDay);
   const rows = ctx.staffList
-    .filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE && s.workType === WORK_TYPES.FLEX; })
+    .filter(function (s) { return isAttendanceTarget_(s) && s.workType === WORK_TYPES.FLEX; })
     .map(function (s) {
       const rule = buildWorkRule_(s.workType, s, settings);
       const records = ctx.attendanceByEmployee[s.employeeId] || [];
@@ -361,7 +368,7 @@ function buildAdminRestDays_(ctx, date) {
 function checkRestDaysForWeek_(ctx, week) {
   const judgeDate = week.to < ctx.today ? addDays_(week.to, 1) : ctx.today; // 既存の checkWeeklyRestDays と同じ判定
   const rows = [];
-  ctx.staffList.filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; }).forEach(function (s) {
+  ctx.staffList.filter(isAttendanceTarget_).forEach(function (s) {
     const check = checkWeeklyRest_(ctx.attendanceByEmployee[s.employeeId] || [], week.from, judgeDate, ctx.settings.weeklyFullRestDays);
     if (check.status === '確保済み') return;
     rows.push({
@@ -373,26 +380,38 @@ function checkRestDaysForWeek_(ctx, week) {
   return rows;
 }
 
-/** 日報：その日の全スタッフ（未提出の人も含む） */
+/**
+ * 日報：その日の在籍スタッフ全員の提出状況（未提出の人も含む）。
+ * 下書きは本人以外に見せないため、管理者にも「未提出」として返し、内容は返さない。
+ * 提出済みの内容は、日報画面（getReportDetail）で見る。
+ */
 function buildAdminReports_(ctx, date) {
   const byEmployee = {};
   readTable_(SHEET_NAMES.DAILY_REPORTS).records.forEach(function (r) {
-    if (toDateKey_(r['日付']) === date) byEmployee[String(r['社員ID']).trim()] = r;
+    if (toDateKey_(r['日付']) === date && reportStateOf_(r) === REPORT_STATE.SUBMITTED) byEmployee[String(r['社員ID']).trim()] = r;
   });
+  const hasShareSheets = !!getSpreadsheet_().getSheetByName(SHEET_NAMES.REPORT_CONFIRMATIONS) && !!getSpreadsheet_().getSheetByName(SHEET_NAMES.REPORT_CUSTOMERS);
+  const share = hasShareSheets && Object.keys(byEmployee).length ? buildReportShareContext_() : null;
   const rows = ctx.staffList.filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; }).map(function (s) {
     const record = byEmployee[s.employeeId];
     const attendance = ctx.attendanceByKey[s.employeeId + '|' + date];
-    if (record) {
-      const view = toDailyReportView_(record);
-      view.department = s.department;
-      view.submitted = view.status === REPORT_STATUS.SUBMITTED || view.status === REPORT_STATUS.CONFIRMED;
-      return view;
-    }
-    return {
+    const row = {
       reportId: '', date: date, employeeId: s.employeeId, name: s.name, department: s.department,
       workStyle: attendance ? toPlainText_(attendance['勤務形態']) : '', status: '未提出', submitted: false, submittedAt: '',
-      workContent: '', progress: '', issues: '', tomorrowPlan: '', sharedNotes: '',
     };
+    if (!record) return row;
+    row.reportId = toPlainText_(record['日報ID']);
+    row.status = REPORT_STATUS.SUBMITTED;
+    row.submitted = true;
+    row.submittedAt = toPlainText_(record['提出日時']);
+    row.version = reportVersionOf_(record);
+    if (share) {
+      const c = confirmationStatus_(record, share);
+      row.customerCount = share.customerCounts[row.reportId] || 0;
+      row.confirmedCount = c.confirmedCount;
+      row.targetCount = c.targetCount;
+    }
+    return row;
   });
   return {
     date: date, rows: rows,

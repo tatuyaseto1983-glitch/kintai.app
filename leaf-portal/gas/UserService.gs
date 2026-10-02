@@ -88,8 +88,18 @@ function getAllStaff_() {
         status: String(r['在籍状況']).trim(),
         hireDate: toDateKey_(r['入社日']),
         department: String(r['部署']).trim(),
+        // 勤怠集計対象：「対象外」の人（役員など）は全スタッフ勤務状況・勤怠集計に含めない。空欄・列なし＝対象
+        attendanceTarget: r['勤怠集計対象'] === undefined || String(r['勤怠集計対象']).trim() !== ATTENDANCE_TARGET.NO,
       };
     });
+}
+
+/**
+ * 全スタッフ勤務状況・勤怠集計の対象か（在籍中で、勤怠集計対象が「対象外」でない人）。
+ * ※日報の閲覧・確認・コメントの対象とは別のルールです（日報は isReportMember_ を使う）
+ */
+function isAttendanceTarget_(staff) {
+  return staff.status === EMPLOYMENT_STATUS.ACTIVE && staff.attendanceTarget !== false;
 }
 
 /** 社員IDでスタッフを探す（見つからなければ null） */
