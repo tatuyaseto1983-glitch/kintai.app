@@ -1,16 +1,50 @@
 <!--
-  HolidayWorkView.html — 休日出勤申請のフォームと申請履歴（スタッフ画面）。Index.html の中に読み込まれます。
+  HolidayWorkView.html — 休日出勤申請の画面（スタッフ画面）。Index.html の中に読み込まれます。
+    holidayWorkModal … 申請状況（「新しく申請する」「申請中・承認済み」「過去の申請」の3区分）
+    hwFormModal      … 新規申請のフォーム（新しく申請するときだけ。取消の項目は出さない）
+    hwWithdrawModal  … 承認前の「申請を取り下げる」の確認
+    hwCancelModal    … 承認後の「取消申請」（取消理由は必須）
   申請者・社員IDは表示だけで、サーバーへは送りません（サーバーがログイン中の社員で決めます）。
   対象かどうかもサーバーが判定します（対象外の人にはカードを出しません）。
 -->
+
+<!-- ================= 申請状況 ================= -->
 <div class="modal" id="holidayWorkModal" role="dialog" aria-modal="true" aria-labelledby="holidayWorkTitle" hidden>
   <div class="modal-panel">
     <div class="modal-head">
       <h2 id="holidayWorkTitle">休日出勤申請</h2>
       <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
     </div>
+
+    <section class="hw-section" aria-labelledby="hwNewTitle">
+      <h3 class="hw-section-title" id="hwNewTitle">新しく申請する</h3>
+      <p class="form-lead">休日に出勤する予定がある場合は、事前に申請してください。</p>
+      <button type="button" class="btn btn-primary" id="btnHwNew">＋休日出勤を申請</button>
+    </section>
+
+    <section class="hw-section" aria-labelledby="hwActiveTitle">
+      <h3 class="hw-section-title" id="hwActiveTitle">申請中・承認済み</h3>
+      <p class="hw-section-note">承認前は「申請を取り下げる」、承認後は「取消申請」（管理者が確認します）で取り消せます。</p>
+      <div class="hw-cards" id="hwActiveList"><p class="empty">読み込み中...</p></div>
+    </section>
+
+    <section class="hw-section" aria-labelledby="hwPastTitle">
+      <h3 class="hw-section-title" id="hwPastTitle">過去の申請</h3>
+      <p class="hw-section-note">却下・取消済みの申請と、休日出勤日が過ぎた申請です。</p>
+      <div class="hw-cards" id="hwPastList"><p class="empty">読み込み中...</p></div>
+    </section>
+  </div>
+</div>
+
+<!-- ================= 新規申請のフォーム ================= -->
+<div class="modal" id="hwFormModal" role="dialog" aria-modal="true" aria-labelledby="hwFormTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="hwFormTitle">休日出勤を申請する</h2>
+      <button type="button" class="modal-close" id="btnHwFormClose" aria-label="閉じる">×</button>
+    </div>
     <form id="holidayWorkForm" novalidate>
-      <p class="form-lead">休日に出勤する予定がある場合は、事前に申請してください。管理者が承認すると「承認済み」になります。承認後の変更は「取消申請」で行います。</p>
+      <p class="form-lead">休日に出勤する予定を入力してください。管理者が承認すると「承認済み」になります。</p>
       <div class="form-row">
         <label for="hwApplicant">申請者</label>
         <input type="text" id="hwApplicant" readonly aria-readonly="true" class="readonly-input">
@@ -67,29 +101,39 @@
         <textarea id="hwNote" rows="2" maxlength="2000"></textarea>
       </div>
       <div class="form-actions">
-        <button type="button" class="btn btn-ghost" data-close>キャンセル</button>
+        <button type="button" class="btn btn-ghost" id="btnHwFormBack">戻る</button>
         <button type="submit" class="btn btn-primary" id="btnSubmitHolidayWork">申請する</button>
       </div>
     </form>
-    <div class="recent" id="hwHistory">
-      <h3>自分の休日出勤申請</h3>
-      <ul class="recent-list recent-list-ot" id="hwList"><li class="empty">読み込み中...</li></ul>
+  </div>
+</div>
+
+<!-- ================= 申請を取り下げる（承認前） ================= -->
+<div class="modal" id="hwWithdrawModal" role="dialog" aria-modal="true" aria-labelledby="hwWithdrawTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="hwWithdrawTitle">申請を取り下げますか？</h2>
+    <dl class="hw-target" id="hwWithdrawTarget"></dl>
+    <p class="confirm-text">まだ承認されていないため、管理者の確認なしで、すぐに「取消済み」になります。</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnHwWithdrawBack">戻る</button>
+      <button type="button" class="btn btn-danger" id="btnHwWithdrawOk">申請を取り下げる</button>
     </div>
   </div>
 </div>
 
-<!-- 取り下げ・取消申請の確認 -->
-<div class="modal" id="hwConfirmModal" role="dialog" aria-modal="true" aria-labelledby="hwConfirmTitle" hidden>
+<!-- ================= 取消申請（承認後） ================= -->
+<div class="modal" id="hwCancelModal" role="dialog" aria-modal="true" aria-labelledby="hwCancelTitle" hidden>
   <div class="modal-panel modal-small">
-    <h2 id="hwConfirmTitle"></h2>
-    <p id="hwConfirmText" class="confirm-text"></p>
-    <div class="form-row" id="hwConfirmReasonRow" hidden>
-      <label for="hwConfirmReason">取消の理由 <span class="req">必須</span></label>
-      <textarea id="hwConfirmReason" rows="3" maxlength="2000" placeholder="例：お客様の都合で立ち会いが不要になったため"></textarea>
+    <h2 id="hwCancelTitle">取消申請</h2>
+    <p class="confirm-text">承認済みの休日出勤を取り消すには、管理者の確認が必要です。管理者が承認すると「取消済み」になります。</p>
+    <dl class="hw-target" id="hwCancelTarget"></dl>
+    <div class="form-row">
+      <label for="hwCancelReason">取消理由 <span class="req">必須</span></label>
+      <textarea id="hwCancelReason" rows="3" maxlength="2000" placeholder="例：お客様の都合で立ち会いが不要になったため"></textarea>
     </div>
     <div class="form-actions">
-      <button type="button" class="btn btn-ghost" id="btnHwConfirmCancel">キャンセル</button>
-      <button type="button" class="btn btn-primary" id="btnHwConfirmOk">実行する</button>
+      <button type="button" class="btn btn-ghost" id="btnHwCancelBack">戻る</button>
+      <button type="button" class="btn btn-primary" id="btnHwCancelOk">取消を申請する</button>
     </div>
   </div>
 </div>

@@ -14,7 +14,7 @@ function loadPlaywright() {
 const playwright = loadPlaywright();
 const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
 
-test('休日出勤申請の画面', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
+test('休日出勤申請の画面（新規申請・申請中／承認済み・過去の申請・取り下げ／取消申請を分ける）', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas } = createServer();
   // 休日出勤申請対象：佐藤・鈴木＝対象、山田（管理者）＝対象外、田中＝空欄（申請できない）
   const sheet = gas.main.getSheetByName('スタッフマスタ');
@@ -56,16 +56,27 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
     });
 
     let sato;
-    await t.test('フォーム：申請者は表示のみ・過去日は選べない・予定時間帯と予定拘束時間（休憩を含む）・振替休日予定日は「取得予定」のときだけ', async () => {
+    const hubCard = (p, area, text) => p.locator('#' + area + ' .hw-card', { hasText: text });
+    const openHub = async (p) => {
+      await p.click('#btnOpenHolidayWorkHistory');
+      await p.waitForSelector('#holidayWorkModal:not([hidden])');
+    };
+
+    await t.test('新規申請フォーム：カードの［休日出勤を申請する］から開く。取消の項目は出さない。申請者は表示のみ・予定時間帯／予定拘束時間・振替休日予定日の条件', async () => {
       sato = await open('sato@example.com');
       await sato.waitForSelector('#holidayWorkCard:not([hidden])');
+      assert.deepEqual(await sato.locator('#holidayWorkCard button').allInnerTexts(), ['休日出勤を申請する', '申請状況を見る']);
       await sato.click('#btnOpenHolidayWork');
-      await sato.waitForSelector('#holidayWorkModal:not([hidden])');
+      await sato.waitForSelector('#hwFormModal:not([hidden])');
+      assert.equal(await sato.innerText('#hwFormTitle'), '休日出勤を申請する');
+      const formText = await sato.locator('#hwFormModal').innerText();
+      assert.doesNotMatch(formText, /取消|取り下げ|申請中・承認済み|過去の申請/, '新規申請フォームに既存申請の取消項目を出さない');
+      assert.equal(await sato.locator('#holidayWorkModal').isHidden(), true);
       assert.equal(await sato.inputValue('#hwApplicant'), '佐藤 花子（E002）');
       assert.equal(await sato.getAttribute('#hwApplicant', 'readonly'), '');
       assert.equal(await sato.getAttribute('#hwDate', 'min'), '2026-10-02');
-      assert.match(await sato.locator('#holidayWorkModal').innerText(), /予定時間帯[\s\S]*予定拘束時間[\s\S]*休憩は差し引いていません/);
-      assert.doesNotMatch(await sato.locator('#holidayWorkModal').innerText(), /予定勤務時間/);
+      assert.match(formText, /予定時間帯[\s\S]*予定拘束時間[\s\S]*休憩は差し引いていません/);
+      assert.doesNotMatch(formText, /予定勤務時間/);
       await sato.fill('#hwStart', '09:00');
       await sato.fill('#hwEnd', '17:30');
       assert.equal(await sato.innerText('#hwRangeText'), '09:00 〜 17:30');
@@ -73,7 +84,6 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
       await sato.fill('#hwEnd', '08:00');
       assert.match(await sato.innerText('#hwSpanNote'), /日付をまたぐ休日出勤は申請できません/);
       await sato.fill('#hwEnd', '17:30');
-      assert.equal(await sato.locator('#hwSpanNote').isHidden(), true);
       assert.equal(await sato.locator('#hwCompDateRow').isHidden(), true);
       await sato.selectOption('#hwCompType', '取得予定');
       assert.equal(await sato.locator('#hwCompDateRow').isHidden(), false);
@@ -84,24 +94,63 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
       assert.equal(await sato.inputValue('#hwCompDate'), '', '別の区分にすると予定日は消える');
     });
 
-    await t.test('申請：必須の確認 → 申請 → カードと履歴に「申請中」（入力した文字はHTMLとして解釈しない）', async () => {
+    await t.test('申請 → 申請状況の「申請中・承認済み」に、休日出勤日・予定時間帯・ステータス・振替休日と［申請を取り下げる］', async () => {
       await sato.fill('#hwDate', '2026-10-10');
       await sato.click('#btnSubmitHolidayWork');
       assert.match(await lastToast(sato), /休日出勤理由を入力してください/);
-      await sato.fill('#hwReason', '現場立ち会い');
+      await sato.fill('#hwReason', '<img src=x onerror="window.__xss=1">現場立ち会い');
       await sato.fill('#hwContent', '配筋検査');
-      await sato.fill('#hwNote', '<img src=x onerror="window.__xss=1">メモ');
       await sato.click('#btnSubmitHolidayWork');
-      await sato.waitForSelector('#holidayWorkModal', { state: 'hidden' });
+      await sato.waitForSelector('#hwFormModal', { state: 'hidden' });
       assert.match(await lastToast(sato), /休日出勤を申請しました（2026-10-10）/);
       await sato.waitForFunction(() => /10\/10[\s\S]*申請中/.test(document.getElementById('holidayWorkMiniList').innerText));
-      await sato.click('#btnOpenHolidayWorkHistory');
-      const item = sato.locator('#hwList .hw-item').first();
-      assert.match(await item.innerText(), /10\/10（土）　09:00〜17:30（拘束 8:30）[\s\S]*申請中[\s\S]*振替休日：取得予定（日付未定）[\s\S]*<img src=x onerror="window.__xss=1">メモ/);
-      assert.equal(await sato.locator('#hwList img').count(), 0);
-      assert.equal(await sato.evaluate(() => window.__xss), undefined);
-      assert.equal(await item.locator('.js-hw-withdraw').count(), 1, '申請中は取り下げできる');
-      await shot(sato, 'holiday-01-form');
+      await openHub(sato);
+      assert.deepEqual(await sato.locator('#holidayWorkModal .hw-section-title').allInnerTexts(), ['新しく申請する', '申請中・承認済み', '過去の申請']);
+      assert.equal(await sato.innerText('#btnHwNew'), '＋休日出勤を申請');
+      const card = hubCard(sato, 'hwActiveList', '10/10');
+      assert.match(await card.innerText(), /10\/10（土）[\s\S]*申請中[\s\S]*予定時間帯\s+09:00〜17:30（予定拘束 8:30）[\s\S]*振替休日\s+取得予定（日付未定）[\s\S]*<img src=x onerror="window.__xss=1">現場立ち会い/);
+      assert.deepEqual(await card.locator('button').allInnerTexts(), ['申請を取り下げる'], '申請中は取り下げだけ');
+      assert.equal(await sato.locator('#holidayWorkModal img').count(), 0);
+      assert.equal(await sato.evaluate(() => window.__xss), undefined, '入力した文字はHTMLとして解釈しない');
+      assert.match(await sato.innerText('#hwPastList'), /過去の申請はありません/);
+      await shot(sato, 'holiday-01-hub');
+    });
+
+    await t.test('申請状況の［＋休日出勤を申請］→ フォーム（申請状況は閉じる）→［戻る］で申請状況へ。申請後も申請状況へ戻る', async () => {
+      await sato.click('#btnHwNew');
+      await sato.waitForSelector('#hwFormModal:not([hidden])');
+      assert.equal(await sato.locator('#holidayWorkModal').isHidden(), true, '新規申請と既存の一覧を同時に出さない');
+      await sato.click('#btnHwFormBack');
+      await sato.waitForSelector('#holidayWorkModal:not([hidden])');
+      assert.equal(await sato.locator('#hwFormModal').isHidden(), true);
+      await sato.click('#btnHwNew');
+      await sato.fill('#hwDate', '2026-10-11');
+      await sato.fill('#hwStart', '10:00');
+      await sato.fill('#hwEnd', '15:00');
+      await sato.fill('#hwReason', '展示会の準備');
+      await sato.fill('#hwContent', 'ショールームの設営');
+      await sato.selectOption('#hwCompType', '取得予定なし');
+      await sato.click('#btnSubmitHolidayWork');
+      await sato.waitForSelector('#holidayWorkModal:not([hidden])');
+      await sato.waitForFunction(() => document.querySelectorAll('#hwActiveList .hw-card').length === 2);
+      assert.match(await hubCard(sato, 'hwActiveList', '10/11').innerText(), /振替休日\s+取得予定なし/);
+    });
+
+    await t.test('［申請を取り下げる］：専用の確認（対象の申請を表示）→ すぐ取消済みになり「過去の申請」へ', async () => {
+      await hubCard(sato, 'hwActiveList', '10/11').locator('button', { hasText: '申請を取り下げる' }).click();
+      await sato.waitForSelector('#hwWithdrawModal:not([hidden])');
+      assert.match(await sato.innerText('#hwWithdrawTarget'), /休日出勤日\s+10\/11（日）[\s\S]*予定時間帯\s+10:00〜15:00[\s\S]*休日出勤理由\s+展示会の準備/);
+      assert.equal(await sato.locator('#hwFormModal').isHidden(), true, '新規申請フォームは使わない');
+      await sato.keyboard.press('Escape');
+      assert.equal(await sato.locator('#hwWithdrawModal').isHidden(), true, 'Esc は上の確認だけ閉じる');
+      assert.equal(await sato.locator('#holidayWorkModal').isHidden(), false);
+      await hubCard(sato, 'hwActiveList', '10/11').locator('button', { hasText: '申請を取り下げる' }).click();
+      await sato.click('#btnHwWithdrawBack');
+      assert.equal(await sato.locator('#hwWithdrawModal').isHidden(), true);
+      await hubCard(sato, 'hwActiveList', '10/11').locator('button', { hasText: '申請を取り下げる' }).click();
+      await sato.click('#btnHwWithdrawOk');
+      await sato.waitForFunction(() => /10\/11[\s\S]*取消済み/.test(document.getElementById('hwPastList').innerText));
+      assert.equal(await hubCard(sato, 'hwPastList', '10/11').locator('button').count(), 0, '過去の申請には操作ボタンなし');
       await sato.click('#holidayWorkModal [data-close]');
     });
 
@@ -111,7 +160,7 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
       assert.match(await yamada.locator('#summaryCards').innerText(), /休日出勤申請待ち\s*1\s*件/);
       assert.equal(await yamada.innerText('#hwPendingBadge'), '処理待ち 1件');
       const req = yamada.locator('#admHolidayWork .request').first();
-      assert.match(await req.innerText(), /佐藤 花子[\s\S]*申請中[\s\S]*10\/10（土）　09:00〜17:30（予定拘束 8:30）[\s\S]*理由：現場立ち会い[\s\S]*業務内容：配筋検査/);
+      assert.match(await req.innerText(), /佐藤 花子[\s\S]*申請中[\s\S]*10\/10（土）　09:00〜17:30（予定拘束 8:30）[\s\S]*業務内容：配筋検査/);
       await req.locator('button', { hasText: '却下' }).click();
       await yamada.click('#btnAdminConfirmOk');
       assert.match(await lastToast(yamada), /却下理由を入力してください/);
@@ -126,26 +175,35 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
       await yamada.close();
     });
 
-    await t.test('取消：承認済みは本人が取消申請 → 管理者が取消を承認 → 取消済み', async () => {
+    await t.test('［取消申請］（承認済み）：専用の取消画面（休日出勤日・予定時間帯・元の理由・取消理由は必須）→ 取消申請中 → 管理者が承認 → 過去の申請', async () => {
       await post('/__test/login', { email: 'sato@example.com' });
       await sato.reload();
       await sato.waitForSelector('#holidayWorkCard:not([hidden])');
-      await sato.click('#btnOpenHolidayWorkHistory');
-      const item = sato.locator('#hwList .hw-item').first();
-      await item.waitFor();
-      assert.match(await item.innerText(), /承認済み/);
-      assert.equal(await item.locator('.js-hw-withdraw').count(), 0, '承認済みは直接取り下げできない');
-      await item.locator('.js-hw-cancel').click();
-      await sato.click('#btnHwConfirmOk');
-      assert.match(await lastToast(sato), /取消の理由を入力してください/);
-      await sato.fill('#hwConfirmReason', '立ち会い不要になった');
-      await sato.click('#btnHwConfirmOk');
-      await sato.waitForFunction(() => /取消申請中/.test(document.getElementById('hwList').innerText));
+      await openHub(sato);
+      const card = hubCard(sato, 'hwActiveList', '10/10');
+      await card.waitFor();
+      assert.match(await card.innerText(), /承認済み/);
+      assert.deepEqual(await card.locator('button').allInnerTexts(), ['取消申請'], '承認済みは取消申請だけ（取り下げはできない）');
+      await card.locator('button', { hasText: '取消申請' }).click();
+      await sato.waitForSelector('#hwCancelModal:not([hidden])');
+      assert.equal(await sato.locator('#hwFormModal').isHidden(), true, '新規申請フォームは使わない');
+      assert.match(await sato.innerText('#hwCancelTarget'), /休日出勤日\s+10\/10（土）[\s\S]*予定時間帯\s+09:00〜17:30[\s\S]*休日出勤理由\s+<img src=x onerror="window.__xss=1">現場立ち会い/);
+      assert.deepEqual(await sato.locator('#hwCancelModal button').allInnerTexts(), ['戻る', '取消を申請する']);
+      await sato.click('#btnHwCancelOk');
+      assert.match(await lastToast(sato), /取消理由を入力してください/);
+      assert.equal(await sato.locator('#hwCancelModal').isHidden(), false);
+      await sato.click('#btnHwCancelBack');
+      assert.equal(await sato.locator('#hwCancelModal').isHidden(), true);
+      await card.locator('button', { hasText: '取消申請' }).click();
+      await sato.fill('#hwCancelReason', '立ち会い不要になった');
+      await shot(sato, 'holiday-03-cancel');
+      await sato.click('#btnHwCancelOk');
+      await sato.waitForFunction(() => /取消申請中[\s\S]*取消理由\s+立ち会い不要になった[\s\S]*管理者の確認待ち/.test(document.getElementById('hwActiveList').innerText));
+      assert.equal(await hubCard(sato, 'hwActiveList', '10/10').locator('button').count(), 0, '取消申請中はボタンなし');
 
       const yamada = await open('yamada@example.com', '/?view=admin');
       const req = yamada.locator('#admHolidayWork .request', { hasText: '取消申請中' });
       await req.waitFor();
-      assert.match(await req.innerText(), /取消申請：[\s\S]*理由：立ち会い不要になった/);
       await req.locator('button', { hasText: '取消を承認' }).click();
       await yamada.click('#btnAdminConfirmOk');
       await idle(yamada);
@@ -155,7 +213,10 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
 
       await post('/__test/login', { email: 'sato@example.com' });
       await sato.reload();
-      await sato.waitForFunction(() => /取消済み/.test(document.getElementById('holidayWorkMiniList').innerText));
+      await sato.waitForSelector('#holidayWorkCard:not([hidden])');
+      await openHub(sato);
+      await sato.waitForFunction(() => /10\/10[\s\S]*取消済み/.test(document.getElementById('hwPastList').innerText));
+      assert.match(await sato.innerText('#hwActiveList'), /申請中・承認済みの申請はありません/);
       await sato.close();
     });
 
@@ -165,10 +226,12 @@ test('休日出勤申請の画面', { skip: !playwright && 'Playwright がない
       const p = await phone.newPage();
       await p.goto(base + '/');
       await p.waitForSelector('#holidayWorkCard:not([hidden])');
-      await p.click('#btnOpenHolidayWork');
+      await p.click('#btnOpenHolidayWorkHistory');
+      assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, '申請状況');
+      await p.click('#btnHwNew');
       await p.selectOption('#hwCompType', '取得予定');
-      assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0);
-      await shot(p, 'holiday-03-phone');
+      assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, '新規申請');
+      await shot(p, 'holiday-04-phone');
       await phone.close();
     });
 

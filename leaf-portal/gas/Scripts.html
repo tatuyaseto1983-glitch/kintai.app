@@ -941,8 +941,9 @@
     }
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || state.busy) return;
-      var open = document.querySelector('.modal:not([hidden])');
-      if (open) closeModal(open.id);
+      // 画面の上に重なっているもの（あとに書かれているもの）から閉じる
+      var opened = document.querySelectorAll('.modal:not([hidden])');
+      if (opened.length) closeModal(opened[opened.length - 1].id);
     });
     // 別のタブから戻ってきたとき、しばらく経っていれば状況を取り直す（他の端末で打刻した場合など）
     document.addEventListener('visibilitychange', function () {
