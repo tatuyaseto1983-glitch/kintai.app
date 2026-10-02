@@ -85,7 +85,9 @@ function ensureSheet_(ss, definition) {
   if (needColumns > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), needColumns);
   writeHeaderCells_(sheet, startColumn, missing);
   prepareNewColumns_(sheet, definition, startColumn, missing);
-  return '足りない列を右端に追加しました（' + missing.join('、') + '）';
+  // 新しく作った列だけに初期値を入れる（定義に onColumnsAdded があるとき。既存の列・値には触れない）
+  const note = typeof definition.onColumnsAdded === 'function' ? definition.onColumnsAdded(sheet, missing) : '';
+  return '足りない列を右端に追加しました（' + missing.join('、') + '）' + (note ? '。' + note : '');
 }
 
 /** 必須の見出しと任意の見出し（optionalHeaders）をまとめた定義。setupSystem() はどちらも作る */

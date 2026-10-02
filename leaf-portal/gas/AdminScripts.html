@@ -19,8 +19,9 @@
   var ADMIN_FUNCTIONS = [
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
     'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
+    'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
   ];
-  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'flex', 'restDays', 'reports'];
+  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'flex', 'restDays', 'reports'];
 
   var S = {
     loaded: false,  // 一度でも管理者データを表示できたか
@@ -66,7 +67,7 @@
   function showDenied(message) {
     S.loaded = false;
     S.data = {};
-    ['admTableBody', 'admCorrections', 'admOvertime', 'admFlexBody', 'admRestList', 'admReports', 'summaryCards'].forEach(function (id) { $(id).textContent = ''; });
+    ['admTableBody', 'admCorrections', 'admOvertime', 'admHolidayWork', 'admFlexBody', 'admRestList', 'admReports', 'summaryCards'].forEach(function (id) { $(id).textContent = ''; });
     $('adminContent').hidden = true;
     $('adminDenied').hidden = false;
     var denied = /管理者権限がありません|管理者のみ/.test(message);
@@ -89,6 +90,7 @@
     if (d.daily || d.monthly) renderTable();
     if (d.corrections) renderCorrections();
     if (d.overtime) renderOvertime();
+    if (d.holidayWork) renderHolidayWork();
     if (d.flex) renderFlex();
     if (d.restDays) renderRestDays();
     if (d.reports) renderReports();
@@ -113,6 +115,7 @@
       ['今月の残業要確認', s.overtimeNeedsCheck, '件', s.overtimeNeedsCheck ? 'red' : 'gray', App.formatDateShort(s.monthFrom) + '〜今日'],
       ['修正申請待ち', s.pendingCorrections, '件', s.pendingCorrections ? 'orange' : 'gray', ''],
       ['残業申請待ち', s.pendingOvertime, '件', s.pendingOvertime ? 'orange' : 'gray', ''],
+      ['休日出勤申請待ち', s.pendingHolidayWork || 0, '件', s.pendingHolidayWork ? 'orange' : 'gray', '取消申請を含む'],
     ];
     var box = $('summaryCards');
     box.textContent = '';
@@ -343,6 +346,81 @@
     });
   }
 
+  /** 休日出勤申請（申請中・取消申請中が処理待ち）。承認しても勤怠記録は変えない */
+  function renderHolidayWork() {
+    var list = S.data.holidayWork;
+    var box = $('admHolidayWork');
+    if (list.setupRequired) {
+      $('hwPendingBadge').hidden = true;
+      box.textContent = '';
+      box.appendChild(el('p', 'empty', '休日出勤申請シートがまだありません。Apps Script で setupSystem() を実行してください。'));
+      return;
+    }
+    renderPendingBadge('hwPendingBadge', list.pendingCount);
+    $('hwPendingBadge').textContent = '処理待ち ' + list.pendingCount + '件';
+    renderRequestList(box, list, $('hwShowDone').checked, function (r) {
+      var waiting = r.status === '申請中' || r.status === '取消申請中';
+      var item = el('div', 'request' + (waiting ? ' is-pending' : ''));
+      var head = el('div', 'request-head');
+      var name = el('span', 'request-name', r.name);
+      if (r.department) name.appendChild(el('span', 'section-sub', '　' + r.department));
+      head.appendChild(name);
+      head.appendChild(el('span', 'badge ' + (waiting ? 'badge-pending' : r.status === '承認済み' ? 'badge-ok' : r.status === '却下' ? 'badge-ng' : 'badge-notstarted'), r.status));
+      item.appendChild(head);
+      var span = App.trimHour(r.plannedSpan);
+      item.appendChild(el('div', 'request-main', App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '（予定拘束 ' + span + '）'));
+      var comp = r.compDayType + (r.compDayType === '取得予定' ? '（' + (r.compDayDate ? App.formatDateShort(r.compDayDate) : '日付未定') + '）' : '');
+      var meta = '理由：' + r.reason + '\n業務内容：' + r.content + '\n振替休日：' + comp;
+      if (r.note) meta += '\n備考：' + r.note;
+      meta += '\n申請日時：' + r.requestedAt;
+      if (r.approvedAt) meta += '\n処理：' + (r.approverName || '—') + '（' + r.approvedAt + '）';
+      if (r.rejectReason) meta += '\n却下理由：' + r.rejectReason;
+      if (r.cancelRequestedAt) meta += '\n取消申請：' + r.cancelRequestedAt + '　理由：' + (r.cancelReason || '—');
+      if (r.cancelApprovedAt) meta += '\n取消済み：' + (r.cancelHandlerName || '—') + '（' + r.cancelApprovedAt + '）';
+      if (r.cancelRejectReason) meta += '\n取消却下：' + (r.cancelHandlerName || '—') + '　理由：' + r.cancelRejectReason;
+      if (r.status === '承認済み' || r.status === '取消申請中') {
+        meta += '\n実績（勤怠記録・参考）：' + (r.actual ? '出勤 ' + (r.actual.clockIn || '—') + '／退勤 ' + (r.actual.clockOut || '—') +
+          (r.actual.workTime ? '（実働 ' + App.trimHour(r.actual.workTime) + '）' : '') : '勤怠の記録なし');
+      }
+      item.appendChild(el('div', 'request-meta', meta));
+      var who = r.name + 'さん　' + App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd;
+      if (r.status === '申請中') {
+        item.appendChild(requestActions(
+          function () {
+            confirmAction({
+              title: '休日出勤申請を承認しますか？', text: who + '\n\n承認しても勤怠記録は変わりません。',
+              okLabel: '承認する', okClass: 'btn-primary',
+              run: function (btn) { return adminAction(btn, 'approveHolidayWorkRequest', [r.requestId]); },
+            });
+          },
+          function () {
+            confirmAction({
+              title: '休日出勤申請を却下しますか？', text: who,
+              okLabel: '却下する', okClass: 'btn-danger', needReason: true,
+              run: function (btn, reason) { return adminAction(btn, 'rejectHolidayWorkRequest', [r.requestId, reason]); },
+            });
+          }));
+      } else if (r.status === '取消申請中') {
+        item.appendChild(requestActions(
+          function () {
+            confirmAction({
+              title: '取消申請を承認しますか？', text: who + '\n取消の理由：' + (r.cancelReason || '—') + '\n\n承認すると「取消済み」になります。',
+              okLabel: '取消を承認する', okClass: 'btn-primary',
+              run: function (btn) { return adminAction(btn, 'approveHolidayWorkCancellation', [r.requestId]); },
+            });
+          },
+          function () {
+            confirmAction({
+              title: '取消申請を却下しますか？', text: who + '\n却下すると「承認済み」のままになります。',
+              okLabel: '取消を却下する', okClass: 'btn-danger', needReason: true,
+              run: function (btn, reason) { return adminAction(btn, 'rejectHolidayWorkCancellation', [r.requestId, reason]); },
+            });
+          }, '取消を承認', '取消を却下'));
+      }
+      return item;
+    });
+  }
+
   function renderPendingBadge(id, count) {
     $(id).hidden = !count;
     $(id).textContent = '承認待ち ' + count + '件';
@@ -369,12 +447,12 @@
     return box;
   }
 
-  function requestActions(onApprove, onReject) {
+  function requestActions(onApprove, onReject, approveLabel, rejectLabel) {
     var row = el('div', 'request-actions');
-    var reject = el('button', 'btn btn-danger btn-sm js-admin-action', '却下');
+    var reject = el('button', 'btn btn-danger btn-sm js-admin-action', rejectLabel || '却下');
     reject.type = 'button';
     reject.addEventListener('click', onReject);
-    var approve = el('button', 'btn btn-primary btn-sm js-admin-action', '承認');
+    var approve = el('button', 'btn btn-primary btn-sm js-admin-action', approveLabel || '承認');
     approve.type = 'button';
     approve.addEventListener('click', onApprove);
     row.appendChild(reject);
@@ -608,6 +686,7 @@
     ['admWorkType', 'admWorkStyle', 'admStatus', 'admNeedsCheck'].forEach(function (id) { $(id).addEventListener('change', renderTable); });
     $('corShowDone').addEventListener('change', function () { if (S.data.corrections) renderCorrections(); });
     $('otShowDone').addEventListener('change', function () { if (S.data.overtime) renderOvertime(); });
+    $('hwShowDone').addEventListener('change', function () { if (S.data.holidayWork) renderHolidayWork(); });
     $('admReportFilter').addEventListener('change', function () { if (S.data.reports) renderReports(); });
     $('btnAdminReload').addEventListener('click', function () {
       if (S.busy) return;

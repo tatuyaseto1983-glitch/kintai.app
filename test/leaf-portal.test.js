@@ -51,10 +51,11 @@ test('setupSystem：既存シートの足りない見出しだけを右端に足
   settings.data = [['項目', '値', '説明'], ['自動休憩', '00:45', '会社で変更済み']];
 
   const log = gas.g.setupSystem();
-  assert.deepEqual(sheet.data[1], ['E009', '既存', 'x@example.com', 'メモ']);
+  assert.deepEqual(sheet.data[1].slice(0, 4), ['E009', '既存', 'x@example.com', 'メモ'], '既存のデータは動かさない');
+  assert.equal(sheet.data[1][sheet.data[0].indexOf('休日出勤申請対象')], '対象', '新しく作った「休日出勤申請対象」列にだけ初期値が入る');
   assert.deepEqual(sheet.data[0].slice(0, 4), ['社員ID', '氏名', 'メールアドレス', '自分で足した列']);
-  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象']);
-  assert.ok(sheet.maxColumns >= 16, '列が足りなければシートの列を増やす');
+  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象', '休日出勤申請対象']);
+  assert.ok(sheet.maxColumns >= 17, '列が足りなければシートの列を増やす');
   assert.equal(empty.data[0][0], '中断ID');
   assert.deepEqual(noHeader.data, [[], ['データだけある行']]);
   assert.match(log, /日報：⚠ 1行目（見出し）が空/);
@@ -611,7 +612,7 @@ test('管理者画面 1・2：一般スタッフは管理者データを取得�
   gas.loginAs(ADMIN);
   const r = gas.g.getAdminDashboard({ date: '2026-06-01' });
   assert.equal(r.success, true, r.message);
-  assert.deepEqual(Object.keys(r.data).sort(), ['admin', 'corrections', 'daily', 'date', 'flex', 'month', 'monthly', 'overtime', 'reports', 'restDays', 'summary', 'today']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['admin', 'corrections', 'daily', 'date', 'flex', 'holidayWork', 'month', 'monthly', 'overtime', 'reports', 'restDays', 'summary', 'today']);
   assert.equal(r.data.admin.name, '山田');
   // 取得したい情報だけ返す（不要な大量データを返さない）
   const part = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['summary', 'setupSystem'] });

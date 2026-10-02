@@ -31,6 +31,7 @@ const SHEET_NAMES = {
   REPORT_CONFIRMATIONS: '日報_確認',
   REPORT_COMMENTS: '日報_コメント',
   REPORT_HISTORY: '日報_更新履歴',
+  HOLIDAY_WORK: '休日出勤申請',
 };
 
 /** 権限 */
@@ -79,6 +80,24 @@ const REPORT_STATE = { DRAFT: 'draft', SUBMITTED: 'submitted' };
 
 /** スタッフマスタ「勤怠集計対象」：この値の人は、全スタッフ勤務状況・勤怠集計に含めない（空欄＝対象） */
 const ATTENDANCE_TARGET = { YES: '対象', NO: '対象外' };
+
+/**
+ * スタッフマスタ「休日出勤申請対象」：「対象」の人だけが休日出勤申請できる（空欄・対象外は申請できない）。
+ * 勤怠集計対象とは別に管理する。列を作るとき（setupSystem）だけ、勤怠集計対象をもとに初期値を入れる。
+ */
+const HOLIDAY_WORK_TARGET = { YES: '対象', NO: '対象外' };
+
+/** 休日出勤申請のステータス（残業申請・打刻修正申請の「承認待ち」とは別の名前） */
+const HOLIDAY_WORK_STATUS = {
+  PENDING: '申請中',
+  APPROVED: '承認済み',
+  REJECTED: '却下',
+  CANCEL_REQUESTED: '取消申請中',
+  CANCELLED: '取消済み',
+};
+
+/** 休日出勤の振替休日区分 */
+const COMP_DAY_TYPES = { PLANNED: '取得予定', NONE: '取得予定なし', UNDECIDED: '未定' };
 
 /** 日報の接客記録の選択肢 */
 const VISIT_TRIGGERS = ['Web検索', 'Googleマップ', 'Instagram', 'LINE', '紹介', '既存顧客', '看板・通りがかり', 'チラシ', 'イベント', 'その他', '未確認'];
@@ -141,13 +160,16 @@ const SHEET_DEFINITIONS = [
     headers: ['社員ID', '氏名', 'メールアドレス', '権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤',
       '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考'],
     // 任意の列：setupSystem() が右端に追加する。無くても動く（空欄＝勤怠集計の対象）
-    optionalHeaders: ['勤怠集計対象'],
+    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象'],
     choices: {
       '権限': [ROLES.STAFF, ROLES.ADMIN],
       '勤務区分': [WORK_TYPES.FIXED, WORK_TYPES.FLEX],
       '在籍状況': [EMPLOYMENT_STATUS.ACTIVE, EMPLOYMENT_STATUS.ON_LEAVE, EMPLOYMENT_STATUS.RETIRED],
       '勤怠集計対象': [ATTENDANCE_TARGET.YES, ATTENDANCE_TARGET.NO],
+      '休日出勤申請対象': [HOLIDAY_WORK_TARGET.YES, HOLIDAY_WORK_TARGET.NO],
     },
+    // 列を新しく作ったときだけ、初期値を入れる（既存の値は変えない）。中身は HolidayWorkService.gs
+    onColumnsAdded: function (sheet, added) { return initHolidayWorkTargetColumn_(sheet, added); },
     freeChoices: { '雇用区分': EMPLOYMENT_TYPES },
   },
   {
@@ -199,6 +221,19 @@ const SHEET_DEFINITIONS = [
     // 保存・提出・修正のたびに1行追加。「内容」はその時点の日報（JSON）
     name: SHEET_NAMES.REPORT_HISTORY,
     headers: ['履歴ID', '日報ID', 'バージョン', '操作', '社員ID', '社員名', '日時', '内容'],
+  },
+  {
+    // 休日出勤の「予定」。勤怠記録（実績）には書き込まない。照合は 社員ID＋休日出勤日 ↔ 勤怠記録の 社員ID＋日付
+    // 「予定勤務時間」は開始〜終了の差（休憩を差し引かない）。画面では「予定拘束時間」と表示する
+    name: SHEET_NAMES.HOLIDAY_WORK,
+    headers: ['申請ID', '申請日時', '社員ID', '氏名', '休日出勤日', '開始予定時刻', '終了予定時刻', '予定勤務時間',
+      '休日出勤理由', '業務内容', '振替休日区分', '振替休日予定日', '備考', 'ステータス', '承認者ID', '承認者名', '承認日時',
+      '却下理由', '取消申請日時', '取消承認日時', '取消理由', '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時'],
+    choices: {
+      'ステータス': [HOLIDAY_WORK_STATUS.PENDING, HOLIDAY_WORK_STATUS.APPROVED, HOLIDAY_WORK_STATUS.REJECTED,
+        HOLIDAY_WORK_STATUS.CANCEL_REQUESTED, HOLIDAY_WORK_STATUS.CANCELLED],
+      '振替休日区分': [COMP_DAY_TYPES.PLANNED, COMP_DAY_TYPES.NONE, COMP_DAY_TYPES.UNDECIDED],
+    },
   },
   {
     name: SHEET_NAMES.SETTINGS,

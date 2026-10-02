@@ -151,6 +151,17 @@
             <button type="button" class="btn btn-outline" id="btnOpenOvertime">申請する</button>
           </div>
 
+          <!-- 休日出勤申請の対象の人だけに表示（対象かどうかはサーバーが判定。申請もサーバー側で確認） -->
+          <div class="card link-card" id="holidayWorkCard" hidden>
+            <h2 class="card-title">休日出勤申請</h2>
+            <p>休日に出勤する予定がある場合は、事前に申請してください。</p>
+            <ul class="mini-list" id="holidayWorkMiniList"></ul>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenHolidayWork">申請する</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenHolidayWorkHistory">申請履歴</button>
+            </div>
+          </div>
+
           <div class="card link-card">
             <h2 class="card-title">日報</h2>
             <p>本日の日報を入力できます。提出済みの日報は全社員が閲覧・確認できます。</p>
@@ -233,6 +244,9 @@
     </div>
   </div>
 
+  <!-- ================= 休日出勤申請のフォーム（HolidayWorkView.html） ================= -->
+  <?!= includeHtml_('HolidayWorkView') ?>
+
   <!-- ================= 残業申請のフォーム ================= -->
   <div class="modal" id="overtimeModal" role="dialog" aria-modal="true" aria-labelledby="overtimeTitle" hidden>
     <div class="modal-panel">
@@ -292,5 +306,6 @@
   <?!= includeHtml_('Scripts') ?>
   <?!= includeHtml_('AdminScripts') ?>
   <?!= includeHtml_('ReportScripts') ?>
+  <?!= includeHtml_('HolidayWorkScripts') ?>
 </body>
 </html>

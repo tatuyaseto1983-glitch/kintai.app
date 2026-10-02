@@ -18,7 +18,7 @@
  */
 
 /** getAdminDashboard() で取得できる情報の種類 */
-const ADMIN_DASHBOARD_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'flex', 'restDays', 'reports'];
+const ADMIN_DASHBOARD_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'flex', 'restDays', 'reports'];
 
 /** 申請一覧で返す「処理済み」の件数（承認待ちは全件返す） */
 const ADMIN_RECENT_REQUEST_LIMIT = 30;
@@ -36,7 +36,7 @@ const PUNCH_ISSUES = {
  *   date  日別表示・日報・完全休日・フレックス週の対象日 '2026-09-29'（省略すると今日）
  *   month 月別表示・フレックス月の対象月 '2026-09'（省略すると date の月）
  *   parts 取得したい情報（省略するとすべて）：
- *         'admin' 'summary' 'daily' 'monthly' 'corrections' 'overtime' 'flex' 'restDays' 'reports'
+ *         'admin' 'summary' 'daily' 'monthly' 'corrections' 'overtime' 'holidayWork' 'flex' 'restDays' 'reports'
  */
 function getAdminDashboard(params) {
   return runApi_(function () {
@@ -57,6 +57,7 @@ function getAdminDashboard(params) {
     if (has('monthly')) data.monthly = buildAdminMonthly_(ctx, month);
     if (has('corrections')) data.corrections = listRequestsForAdmin_(SHEET_NAMES.CORRECTIONS, toCorrectionView_, ctx);
     if (has('overtime')) data.overtime = listRequestsForAdmin_(SHEET_NAMES.OVERTIME, toOvertimeView_, ctx);
+    if (has('holidayWork')) data.holidayWork = buildAdminHolidayWork_(ctx);
     if (has('flex')) data.flex = buildAdminFlex_(ctx, date, month);
     if (has('restDays')) data.restDays = buildAdminRestDays_(ctx, date);
     if (has('reports')) data.reports = buildAdminReports_(ctx, date);
@@ -200,7 +201,7 @@ function buildAdminSummary_(ctx) {
     date: ctx.today, monthFrom: range.from, monthTo: range.to,
     present: 0, remote: 0, working: 0, onBreak: 0, finished: 0, notStarted: 0,
     missingPunchStaff: 0, missingPunchRecords: 0, overtimeNeedsCheck: 0,
-    pendingCorrections: 0, pendingOvertime: 0,
+    pendingCorrections: 0, pendingOvertime: 0, pendingHolidayWork: 0,
   };
   ctx.staffList.filter(isAttendanceTarget_).forEach(function (s) {
     const record = currentAttendanceFromContext_(ctx, s.employeeId);
@@ -227,6 +228,13 @@ function buildAdminSummary_(ctx) {
   summary.missingPunchStaff = Object.keys(staffWithIssues).length;
   summary.pendingCorrections = findRecords_(SHEET_NAMES.CORRECTIONS, function (r) { return r['ステータス'] === REQUEST_STATUS.PENDING; }).length;
   summary.pendingOvertime = findRecords_(SHEET_NAMES.OVERTIME, function (r) { return r['ステータス'] === REQUEST_STATUS.PENDING; }).length;
+  // 休日出勤：申請中＋取消申請中（シートがまだなければ 0）
+  if (getSpreadsheet_().getSheetByName(SHEET_NAMES.HOLIDAY_WORK)) {
+    summary.pendingHolidayWork = findRecords_(SHEET_NAMES.HOLIDAY_WORK, function (r) {
+      const s = String(r['ステータス']).trim();
+      return s === HOLIDAY_WORK_STATUS.PENDING || s === HOLIDAY_WORK_STATUS.CANCEL_REQUESTED;
+    }).length;
+  }
   return summary;
 }
 

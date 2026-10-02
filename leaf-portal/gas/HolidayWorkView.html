@@ -1,0 +1,95 @@
+<!--
+  HolidayWorkView.html — 休日出勤申請のフォームと申請履歴（スタッフ画面）。Index.html の中に読み込まれます。
+  申請者・社員IDは表示だけで、サーバーへは送りません（サーバーがログイン中の社員で決めます）。
+  対象かどうかもサーバーが判定します（対象外の人にはカードを出しません）。
+-->
+<div class="modal" id="holidayWorkModal" role="dialog" aria-modal="true" aria-labelledby="holidayWorkTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="holidayWorkTitle">休日出勤申請</h2>
+      <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
+    </div>
+    <form id="holidayWorkForm" novalidate>
+      <p class="form-lead">休日に出勤する予定がある場合は、事前に申請してください。管理者が承認すると「承認済み」になります。承認後の変更は「取消申請」で行います。</p>
+      <div class="form-row">
+        <label for="hwApplicant">申請者</label>
+        <input type="text" id="hwApplicant" readonly aria-readonly="true" class="readonly-input">
+      </div>
+      <div class="form-row">
+        <label for="hwDate">休日出勤日 <span class="req">必須</span></label>
+        <input type="date" id="hwDate" required>
+      </div>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="hwStart">開始予定時刻 <span class="req">必須</span></label>
+          <input type="time" id="hwStart" required>
+        </div>
+        <div>
+          <label for="hwEnd">終了予定時刻 <span class="req">必須</span></label>
+          <input type="time" id="hwEnd" required>
+        </div>
+      </div>
+      <div class="form-row form-row-2">
+        <div>
+          <span class="label-like">予定時間帯</span>
+          <p class="hw-range" id="hwRangeText" aria-live="polite">--:-- 〜 --:--</p>
+        </div>
+        <div>
+          <span class="label-like">予定拘束時間</span>
+          <p class="planned-time" id="hwSpanText" aria-live="polite">--:--</p>
+        </div>
+      </div>
+      <p class="form-hint">予定拘束時間は、開始から終了までの時間です（休憩は差し引いていません）。</p>
+      <p class="form-note" id="hwSpanNote" hidden></p>
+      <div class="form-row">
+        <label for="hwReason">休日出勤理由 <span class="req">必須</span></label>
+        <textarea id="hwReason" rows="2" maxlength="2000" required placeholder="例：お客様の都合で、休日に現場立ち会いが必要なため"></textarea>
+      </div>
+      <div class="form-row">
+        <label for="hwContent">業務内容 <span class="req">必須</span></label>
+        <textarea id="hwContent" rows="3" maxlength="2000" required placeholder="例：〇〇様邸の配筋検査の立ち会い"></textarea>
+      </div>
+      <div class="form-row">
+        <label for="hwCompType">振替休日区分 <span class="req">必須</span></label>
+        <select id="hwCompType" required>
+          <option value="">選んでください</option>
+          <option value="取得予定">取得予定</option>
+          <option value="取得予定なし">取得予定なし</option>
+          <option value="未定">未定</option>
+        </select>
+      </div>
+      <div class="form-row" id="hwCompDateRow" hidden>
+        <label for="hwCompDate">振替休日予定日 <span class="optional">日付が未定なら空欄のまま申請できます</span></label>
+        <input type="date" id="hwCompDate">
+      </div>
+      <div class="form-row">
+        <label for="hwNote">備考 <span class="optional">任意</span></label>
+        <textarea id="hwNote" rows="2" maxlength="2000"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" data-close>キャンセル</button>
+        <button type="submit" class="btn btn-primary" id="btnSubmitHolidayWork">申請する</button>
+      </div>
+    </form>
+    <div class="recent" id="hwHistory">
+      <h3>自分の休日出勤申請</h3>
+      <ul class="recent-list recent-list-ot" id="hwList"><li class="empty">読み込み中...</li></ul>
+    </div>
+  </div>
+</div>
+
+<!-- 取り下げ・取消申請の確認 -->
+<div class="modal" id="hwConfirmModal" role="dialog" aria-modal="true" aria-labelledby="hwConfirmTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="hwConfirmTitle"></h2>
+    <p id="hwConfirmText" class="confirm-text"></p>
+    <div class="form-row" id="hwConfirmReasonRow" hidden>
+      <label for="hwConfirmReason">取消の理由 <span class="req">必須</span></label>
+      <textarea id="hwConfirmReason" rows="3" maxlength="2000" placeholder="例：お客様の都合で立ち会いが不要になったため"></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnHwConfirmCancel">キャンセル</button>
+      <button type="button" class="btn btn-primary" id="btnHwConfirmOk">実行する</button>
+    </div>
+  </div>
+</div>

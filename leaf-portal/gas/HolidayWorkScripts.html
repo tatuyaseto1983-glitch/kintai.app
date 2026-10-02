@@ -1,0 +1,299 @@
+<script>
+/* ============================================================
+ * HolidayWorkScripts.html — 休日出勤申請の動き（スタッフ画面）
+ *
+ * ・申請できるか（休日出勤申請対象か）はサーバーが判定します。対象外ならカードを出しません
+ *   （画面で隠すのは目安。申請はサーバー側でも必ず拒否します）
+ * ・社員ID・氏名は画面から送りません（サーバーがログイン中の社員で決めます）
+ * ・表示する文字はすべて textContent で入れています（HTMLとして解釈しないので安全）
+ * ・申請・取り下げ・取消申請は処理中に全ボタンを無効化し、連打しても1回だけ送ります
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var App = window.LeafApp;
+  var el = App.el;
+
+  /** 休日出勤申請の画面から呼んでよいサーバーの関数（管理者用の関数は入れない） */
+  var HW_FUNCTIONS = ['getMyHolidayWorkRequests', 'submitHolidayWorkRequest', 'withdrawHolidayWorkRequest', 'requestHolidayWorkCancellation'];
+  var STATUS = { PENDING: '申請中', APPROVED: '承認済み', REJECTED: '却下', CANCEL_REQUESTED: '取消申請中', CANCELLED: '取消済み' };
+  var COMP_PLANNED = '取得予定';
+
+  var H = { busy: false, data: null, confirm: null, seq: 0 };
+
+  function $(id) { return document.getElementById(id); }
+  function call(fn, args) { return App.callAllowed(HW_FUNCTIONS, fn, args); }
+  function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+  function toMinutes(text) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(text || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+  function today() { return (H.data && H.data.today) || App.getServerDate() || App.jstDateKey(new Date()); }
+  function spanLabel(text) { return text ? App.trimHour(text) : '—'; }
+
+  // ============================================================ 取得・表示
+
+  function load() {
+    var seq = ++H.seq;
+    return call('getMyHolidayWorkRequests', []).then(function (res) {
+      if (seq !== H.seq) return res;
+      if (!res.success || !res.data || !res.data.eligible) {
+        // 未登録・対象外・準備中（setupSystem 前）はカードを出さない
+        H.data = res.success ? res.data : null;
+        $('holidayWorkCard').hidden = true;
+        return res;
+      }
+      H.data = res.data;
+      $('holidayWorkCard').hidden = false;
+      renderMini();
+      renderList();
+      return res;
+    });
+  }
+
+  function statusBadge(status) {
+    var cls = status === STATUS.PENDING ? 'badge-warn' : status === STATUS.APPROVED ? 'badge-ok' : status === STATUS.REJECTED ? 'badge-ng'
+      : status === STATUS.CANCEL_REQUESTED ? 'badge-warn' : 'badge-notstarted';
+    return el('span', 'badge ' + cls, status);
+  }
+
+  /** カードの中の最近の申請（3件） */
+  function renderMini() {
+    var mini = $('holidayWorkMiniList');
+    mini.textContent = '';
+    (H.data.requests || []).slice(0, 3).forEach(function (r) {
+      var li = document.createElement('li');
+      li.appendChild(el('span', '', App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd));
+      li.appendChild(statusBadge(r.status));
+      mini.appendChild(li);
+    });
+  }
+
+  /** フォームの下の「自分の休日出勤申請」 */
+  function renderList() {
+    var list = $('hwList');
+    list.textContent = '';
+    var items = (H.data && H.data.requests) || [];
+    if (!items.length) { list.appendChild(el('li', 'empty', 'まだ申請はありません')); return; }
+    items.forEach(function (r) {
+      var li = document.createElement('li');
+      li.className = 'hw-item';
+      li.setAttribute('data-request-id', r.requestId);
+      var line = el('div', 'ot-line');
+      line.appendChild(el('strong', '', App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '（拘束 ' + spanLabel(r.plannedSpan) + '）'));
+      line.appendChild(statusBadge(r.status));
+      li.appendChild(line);
+      var comp = r.compDayType + (r.compDayType === COMP_PLANNED ? '（' + (r.compDayDate ? App.formatDateShort(r.compDayDate) : '日付未定') + '）' : '');
+      var sub = '理由：' + r.reason + '\n業務内容：' + r.content + '\n振替休日：' + comp;
+      if (r.note) sub += '\n備考：' + r.note;
+      sub += '\n申請日時：' + r.requestedAt.slice(0, 16);
+      if (r.status === STATUS.APPROVED || r.status === STATUS.CANCEL_REQUESTED || (r.status === STATUS.CANCELLED && r.approvedAt)) {
+        sub += '\n承認：' + (r.approverName || '—') + '（' + (r.approvedAt || '').slice(0, 16) + '）';
+      }
+      if (r.status === STATUS.CANCEL_REQUESTED) sub += '\n取消申請：' + r.cancelRequestedAt.slice(0, 16) + '　理由：' + r.cancelReason;
+      if (r.status === STATUS.CANCELLED) sub += '\n取消：' + (r.cancelApprovedAt || '').slice(0, 16) + '（' + (r.cancelReason || '') + '）';
+      li.appendChild(el('div', 'ot-sub', sub));
+      if (r.status === STATUS.REJECTED && r.rejectReason) li.appendChild(el('div', 'ot-reject', '却下理由：' + r.rejectReason));
+      if (r.status === STATUS.APPROVED && r.cancelRejectReason) li.appendChild(el('div', 'ot-reject', '取消は却下されました：' + r.cancelRejectReason));
+
+      var actions = el('div', 'hw-actions');
+      if (r.status === STATUS.PENDING) actions.appendChild(actionButton('取り下げ', 'js-hw-withdraw', function () { askWithdraw(r); }));
+      if (r.status === STATUS.APPROVED && r.workDate >= today()) actions.appendChild(actionButton('取消申請', 'js-hw-cancel', function () { askCancel(r); }));
+      if (actions.children.length) li.appendChild(actions);
+      list.appendChild(li);
+    });
+  }
+
+  function actionButton(label, cls, onClick) {
+    var b = el('button', 'btn btn-outline btn-sm ' + cls, label);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  // ============================================================ フォーム
+
+  function open(scrollToHistory) {
+    if (!H.data || !H.data.eligible) return;
+    var user = App.getUser();
+    $('holidayWorkForm').reset();
+    $('hwApplicant').value = user ? user.name + '（' + user.employeeId + '）' : '';
+    $('hwDate').min = today(); // 事前申請なので過去日は選べない（サーバー側でも拒否）
+    $('hwCompDate').min = today();
+    $('hwStart').value = '09:00';
+    $('hwEnd').value = '';
+    updateCompDate();
+    updateSpan();
+    renderList();
+    App.openModal('holidayWorkModal');
+    if (scrollToHistory) $('hwHistory').scrollIntoView({ block: 'start' });
+    else $('hwDate').focus();
+  }
+
+  /** 開始・終了から、予定時間帯と予定拘束時間（休憩を差し引かない）を表示する */
+  function updateSpan() {
+    var start = toMinutes($('hwStart').value);
+    var end = toMinutes($('hwEnd').value);
+    var note = $('hwSpanNote');
+    var problem = '';
+    $('hwRangeText').textContent = ($('hwStart').value || '--:--') + ' 〜 ' + ($('hwEnd').value || '--:--');
+    if (start === null || end === null) {
+      $('hwSpanText').textContent = '--:--';
+    } else if (end <= start) {
+      $('hwSpanText').textContent = '--:--';
+      problem = '終了予定時刻は、開始予定時刻より後にしてください（日付をまたぐ休日出勤は申請できません）。';
+    } else {
+      var span = end - start;
+      $('hwSpanText').textContent = Math.floor(span / 60) + ':' + pad2(span % 60);
+    }
+    note.textContent = problem;
+    note.hidden = !problem;
+    note.classList.toggle('is-error', !!problem);
+    return problem;
+  }
+
+  /** 振替休日予定日は「取得予定」のときだけ表示する（それ以外は値を消す） */
+  function updateCompDate() {
+    var planned = $('hwCompType').value === COMP_PLANNED;
+    $('hwCompDateRow').hidden = !planned;
+    if (!planned) $('hwCompDate').value = '';
+  }
+
+  function collect() {
+    return {
+      workDate: $('hwDate').value,
+      plannedStart: $('hwStart').value,
+      plannedEnd: $('hwEnd').value,
+      reason: $('hwReason').value.trim(),
+      content: $('hwContent').value.trim(),
+      compDayType: $('hwCompType').value,
+      compDayDate: $('hwCompType').value === COMP_PLANNED ? $('hwCompDate').value : '',
+      note: $('hwNote').value.trim(),
+    };
+  }
+
+  /** 送る前の確認（最終的なチェックはサーバー側で必ず行う） */
+  function checkBeforeSubmit(req) {
+    if (!req.workDate) return '休日出勤日を入力してください';
+    if (req.workDate < today()) return '過去の日付は申請できません';
+    if (!req.plannedStart) return '開始予定時刻を入力してください';
+    if (!req.plannedEnd) return '終了予定時刻を入力してください';
+    var spanProblem = updateSpan();
+    if (spanProblem) return spanProblem;
+    if (!req.reason) return '休日出勤理由を入力してください';
+    if (!req.content) return '業務内容を入力してください';
+    if (!req.compDayType) return '振替休日区分を選んでください';
+    if (req.compDayDate && req.compDayDate === req.workDate) return '振替休日予定日は、休日出勤日と別の日にしてください';
+    if (req.compDayDate && req.compDayDate < today()) return '振替休日予定日に過去の日付は指定できません';
+    return '';
+  }
+
+  function onSubmit(event) {
+    event.preventDefault();
+    var req = collect();
+    var problem = checkBeforeSubmit(req);
+    if (problem) { App.showToast('warn', problem); return; }
+    act($('btnSubmitHolidayWork'), 'submitHolidayWorkRequest', [req], '申請中...').then(function (res) {
+      if (!res || !res.success) return;
+      App.closeModal('holidayWorkModal');
+      load();
+    });
+  }
+
+  // ============================================================ 取り下げ・取消申請
+
+  function askWithdraw(r) {
+    openConfirm({
+      title: '申請を取り下げますか？',
+      text: App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '\n承認前のため、すぐに「取消済み」になります。',
+      okLabel: '取り下げる', okClass: 'btn-danger', needReason: false,
+      run: function (btn) { return act(btn, 'withdrawHolidayWorkRequest', [r.requestId], '処理中...'); },
+    });
+  }
+
+  function askCancel(r) {
+    openConfirm({
+      title: '取消を申請しますか？',
+      text: App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '\n承認済みの申請です。管理者が取消を承認すると「取消済み」になります。',
+      okLabel: '取消申請する', okClass: 'btn-primary', needReason: true,
+      run: function (btn, reason) { return act(btn, 'requestHolidayWorkCancellation', [r.requestId, reason], '申請中...'); },
+    });
+  }
+
+  function openConfirm(opts) {
+    if (H.busy) return;
+    H.confirm = opts;
+    $('hwConfirmTitle').textContent = opts.title;
+    $('hwConfirmText').textContent = opts.text;
+    $('hwConfirmReasonRow').hidden = !opts.needReason;
+    $('hwConfirmReason').value = '';
+    var ok = $('btnHwConfirmOk');
+    ok.textContent = opts.okLabel;
+    ok.className = 'btn ' + opts.okClass;
+    App.openModal('hwConfirmModal');
+    (opts.needReason ? $('hwConfirmReason') : ok).focus();
+  }
+
+  function onConfirmOk() {
+    var opts = H.confirm;
+    if (!opts || H.busy) return;
+    var reason = $('hwConfirmReason').value.trim();
+    if (opts.needReason && !reason) { App.showToast('warn', '取消の理由を入力してください'); return; }
+    H.confirm = null;
+    App.closeModal('hwConfirmModal');
+    opts.run($('btnHwConfirmOk'), reason).then(function (res) { if (res && res.success) load(); });
+  }
+
+  // ============================================================ 操作の共通処理
+
+  function setBusy(isBusy, button, busyText) {
+    H.busy = isBusy;
+    document.body.classList.toggle('is-busy', isBusy);
+    var buttons = document.querySelectorAll('#holidayWorkCard button, #holidayWorkModal button, #hwConfirmModal button');
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (isBusy) {
+        if (!b.hasAttribute('data-was-disabled')) b.setAttribute('data-was-disabled', b.disabled ? '1' : '');
+        b.disabled = true;
+        if (b === button) { b.setAttribute('data-original-label', b.textContent); b.textContent = busyText || '処理中...'; }
+      } else {
+        if (b.hasAttribute('data-original-label')) { b.textContent = b.getAttribute('data-original-label'); b.removeAttribute('data-original-label'); }
+        b.disabled = b.getAttribute('data-was-disabled') === '1';
+        b.removeAttribute('data-was-disabled');
+      }
+    }
+  }
+
+  /** サーバーの処理を1回だけ実行して通知する */
+  function act(button, fn, args, busyText) {
+    if (H.busy) return Promise.resolve(null);
+    setBusy(true, button, busyText);
+    return call(fn, args).then(function (res) {
+      setBusy(false);
+      App.showToast(res.success ? 'success' : 'error', res.message);
+      return res;
+    }, function (error) {
+      setBusy(false);
+      App.showToast('error', '画面の処理でエラーが発生しました：' + (error && error.message ? error.message : error));
+      return null;
+    });
+  }
+
+  function bind() {
+    $('btnOpenHolidayWork').addEventListener('click', function () { open(false); });
+    $('btnOpenHolidayWorkHistory').addEventListener('click', function () { open(true); });
+    ['hwStart', 'hwEnd'].forEach(function (id) {
+      $(id).addEventListener('input', updateSpan);
+      $(id).addEventListener('change', updateSpan);
+    });
+    $('hwCompType').addEventListener('change', updateCompDate);
+    $('holidayWorkForm').addEventListener('submit', onSubmit);
+    $('btnHwConfirmOk').addEventListener('click', onConfirmOk);
+    $('btnHwConfirmCancel').addEventListener('click', function () { H.confirm = null; App.closeModal('hwConfirmModal'); });
+  }
+
+  bind();
+  load();
+  window.LeafHolidayWork = { reload: load };
+})();
+</script>

@@ -30,6 +30,8 @@ const REQUIRED_FILES = [
   'Logo.html',
   // 日報（一覧・閲覧・確認・コメント）
   'DailyReportShareService.gs', 'ReportView.html', 'ReportStyles.html', 'ReportScripts.html',
+  // 休日出勤申請
+  'HolidayWorkService.gs', 'HolidayWorkView.html', 'HolidayWorkScripts.html',
 ];
 
 const PROD_CONFIG = '.clasp.json';

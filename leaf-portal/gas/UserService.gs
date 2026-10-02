@@ -90,6 +90,8 @@ function getAllStaff_() {
         department: String(r['部署']).trim(),
         // 勤怠集計対象：「対象外」の人（役員など）は全スタッフ勤務状況・勤怠集計に含めない。空欄・列なし＝対象
         attendanceTarget: r['勤怠集計対象'] === undefined || String(r['勤怠集計対象']).trim() !== ATTENDANCE_TARGET.NO,
+        // 休日出勤申請対象：「対象」と書かれた人だけ true（空欄・列なし＝申請できない）
+        holidayWorkTarget: r['休日出勤申請対象'] !== undefined && String(r['休日出勤申請対象']).trim() === HOLIDAY_WORK_TARGET.YES,
       };
     });
 }
