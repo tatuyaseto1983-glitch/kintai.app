@@ -1,5 +1,6 @@
 # clasp の接続先（人・環境ごとに違うので Git には入れない）
 .clasp.json
+.clasp.test.json
 # clasp のログイン情報（絶対に Git に入れない）
 .clasprc.json
 node_modules/

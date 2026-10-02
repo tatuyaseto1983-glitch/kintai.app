@@ -435,6 +435,44 @@ test('clasp push 前の確認：設定の間違いを止める', () => {
   assert.match(checkClaspProject(dir).errors[0], /Config\.gs/);
 });
 
+test('テスト環境への反映：.clasp.test.json を使い、本番と同じスクリプトIDなら止める', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { checkClaspProject } = require('../leaf-portal/tools/check-clasp');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clasp-test-'));
+  fs.cpSync(path.join(__dirname, '..', 'leaf-portal', 'gas'), path.join(dir, 'gas'), { recursive: true });
+  const prodId = '1' + 'p'.repeat(56);
+  const testId = '1' + 't'.repeat(56);
+  const write = (name, id) => fs.writeFileSync(path.join(dir, name), JSON.stringify({ scriptId: id, rootDir: 'gas' }));
+  write('.clasp.json', prodId);
+  assert.match(checkClaspProject(dir, { test: true }).errors[0], /\.clasp\.test\.json がありません/, 'テスト用の設定がなければ止める（本番の設定は使わない）');
+  write('.clasp.test.json', prodId);
+  assert.match(checkClaspProject(dir, { test: true }).errors[0], /スクリプトIDが同じです/, '本番と同じIDならテストへの反映を止める');
+  assert.match(checkClaspProject(dir).errors[0], /スクリプトIDが同じです/, '本番への反映も止める');
+  write('.clasp.test.json', testId);
+  const r = checkClaspProject(dir, { test: true });
+  assert.deepEqual([r.ok, r.scriptId, r.configName], [true, testId, '.clasp.test.json']);
+  assert.equal(checkClaspProject(dir).scriptId, prodId, '本番の設定はそのまま');
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'leaf-portal', 'package.json'), 'utf8'));
+  assert.match(pkg.scripts['push:test'], /--test && clasp -P \.clasp\.test\.json push$/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'leaf-portal', '.gitignore'), 'utf8'), /^\.clasp\.test\.json$/m);
+});
+
+test('テスト用スプレッドシート（名前に「テスト」）では画面に「テスト環境」と出る。setupSystem は対象のシート名を記録', () => {
+  const gas = createLeafGas();
+  gas.main.name = 'リーフ勤怠管理';
+  gas.g.setupSystem();
+  let out = gas.g.doGet();
+  assert.doesNotMatch(out.getContent(), /id="envBadge"/);
+  assert.doesNotMatch(out.getTitle(), /テスト/);
+  gas.main.name = '【テスト】リーフ勤怠管理';
+  out = gas.g.doGet();
+  assert.match(out.getContent(), /<span class="env-badge" id="envBadge">テスト環境<\/span>/);
+  assert.match(out.getTitle(), /^【テスト環境】/);
+  assert.match(gas.g.setupSystem(), /対象のスプレッドシート：「【テスト】リーフ勤怠管理」 https:/);
+});
+
 test('スタッフ画面：doGet() が画面を返し、Styles・Scripts が読み込まれる', () => {
   const gas = createLeafGas();
   const out = gas.g.doGet();

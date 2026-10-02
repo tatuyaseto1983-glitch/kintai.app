@@ -42,11 +42,25 @@ function doGet(e) {
   template.initialView = requested === 'admin' || requested === 'reports' ? requested : 'staff';
   template.brandName = APP_BRAND_NAME;
   template.logoSrc = getLogoDataUri_();
+  template.envLabel = getEnvironmentLabel_();
   const output = template.evaluate()
-    .setTitle(WEB_APP_TITLE)
+    .setTitle((template.envLabel ? '【' + template.envLabel + '】' : '') + WEB_APP_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   if (APP_FAVICON_URL) output.setFaviconUrl(APP_FAVICON_URL);
   return output;
+}
+
+/**
+ * テスト用スプレッドシートで動いているときの表示（ヘッダーの「テスト環境」とタブの名前）。
+ * スプレッドシート名に「テスト」が入っていればテスト環境とみなします（例：【テスト】リーフ勤怠管理）。
+ * 本番のスプレッドシート名には「テスト」を入れないでください。
+ */
+function getEnvironmentLabel_() {
+  try {
+    return /テスト/.test(getSpreadsheet_().getName()) ? 'テスト環境' : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 /**

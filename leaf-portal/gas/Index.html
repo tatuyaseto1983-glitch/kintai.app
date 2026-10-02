@@ -32,6 +32,7 @@
             <span class="brand-name"><?= brandName ?></span>
             <span class="brand-sub" id="brandSub">勤怠管理</span>
           </div>
+          <? if (envLabel) { ?><span class="env-badge" id="envBadge"><?= envLabel ?></span><? } ?>
         </div>
         <div class="user-box" id="userBox" hidden>
           <div class="user-name" id="userName"></div>

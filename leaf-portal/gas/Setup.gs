@@ -17,7 +17,8 @@
 function setupSystem() {
   requireEditorExecution_('setupSystem');
   const ss = getSpreadsheet_();
-  const lines = [];
+  // どのスプレッドシートに対して実行したかを最初に記録する（テスト用と本番の取り違え防止）
+  const lines = ['対象のスプレッドシート：「' + ss.getName() + '」 ' + ss.getUrl()];
 
   if (ss.getSpreadsheetTimeZone() !== APP_TIMEZONE) {
     ss.setSpreadsheetTimeZone(APP_TIMEZONE);

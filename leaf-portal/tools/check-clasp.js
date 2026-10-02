@@ -3,12 +3,15 @@
  * clasp push の前に、反映先の設定が安全かを確認するスクリプトです。
  *   npm run check      … 確認だけ
  *   npm run push       … 確認して問題がなければ clasp push
+ *   npm run check:test … テスト環境（.clasp.test.json）の確認だけ
+ *   npm run push:test  … テスト環境へ clasp push（本番の .clasp.json は使わない）
  *
  * 確認すること
  *   - leaf-portal/.clasp.json があるか、正しい形か
  *   - rootDir が "gas"（leaf-portal/gas の中だけを反映する）になっているか
  *   - スクリプトID に、Webアプリの「デプロイID」などを間違えて入れていないか
  *   - leaf-portal/gas に必要なファイルがそろっているか
+ *   - テスト環境と本番のスクリプトIDが同じになっていないか（同じなら止める）
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -28,25 +31,41 @@ const REQUIRED_FILES = [
   'DailyReportShareService.gs', 'ReportView.html', 'ReportStyles.html', 'ReportScripts.html',
 ];
 
-function checkClaspProject(projectDir) {
+const PROD_CONFIG = '.clasp.json';
+const TEST_CONFIG = '.clasp.test.json';
+
+/** 設定ファイルの scriptId だけを読む（なければ空文字） */
+function readScriptId_(file) {
+  try { return String(JSON.parse(fs.readFileSync(file, 'utf8')).scriptId || '').trim(); } catch (e) { return ''; }
+}
+
+/**
+ * @param {string} projectDir leaf-portal フォルダ
+ * @param {{test?: boolean}} [options] test: true ならテスト環境（.clasp.test.json）を確認する
+ */
+function checkClaspProject(projectDir, options) {
+  const test = !!(options && options.test);
+  const configName = test ? TEST_CONFIG : PROD_CONFIG;
   const errors = [];
   const warnings = [];
-  const configPath = path.join(projectDir, '.clasp.json');
+  const configPath = path.join(projectDir, configName);
   let scriptId = '';
 
   if (!fs.existsSync(configPath)) {
-    errors.push('leaf-portal/.clasp.json がありません。README「B-6」の手順で .clasp.json.example をコピーして作ってください');
+    errors.push(test
+      ? 'leaf-portal/.clasp.test.json がありません。README「Q-3」の手順で、テスト用 Apps Script のスクリプトIDを入れて作ってください'
+      : 'leaf-portal/.clasp.json がありません。README「B-6」の手順で .clasp.json.example をコピーして作ってください');
   } else {
     let config = null;
     try {
       config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     } catch (e) {
-      errors.push('.clasp.json の書き方が正しくありません（" や , や { } を確認してください）：' + e.message);
+      errors.push(configName + ' の書き方が正しくありません（" や , や { } を確認してください）：' + e.message);
     }
     if (config) {
       scriptId = String(config.scriptId || '').trim();
       if (!scriptId || scriptId.includes('ここに')) {
-        errors.push('.clasp.json の scriptId にスクリプトIDが入っていません');
+        errors.push(configName + ' の scriptId にスクリプトIDが入っていません');
       } else if (/^AKfy/.test(scriptId)) {
         errors.push('scriptId に入っているのは Webアプリの「デプロイID」です。Apps Script の ⚙「プロジェクトの設定」にある「スクリプト ID」を入れてください');
       } else if (!/^[A-Za-z0-9_-]+$/.test(scriptId)) {
@@ -55,9 +74,15 @@ function checkClaspProject(projectDir) {
         warnings.push('scriptId が短めです（' + scriptId.length + '文字）。スプレッドシートのIDを入れていないか、Apps Script の「スクリプト ID」と見比べてください');
       }
       if (config.rootDir !== 'gas' || config.srcDir) {
-        errors.push('.clasp.json の rootDir は "gas" にしてください（leaf-portal/gas の中だけを反映するため）');
+        errors.push(configName + ' の rootDir は "gas" にしてください（leaf-portal/gas の中だけを反映するため）');
       }
     }
+  }
+
+  // テスト環境と本番が同じスクリプトIDなら、どちらへの反映も止める（本番を上書きしないため）
+  const otherId = readScriptId_(path.join(projectDir, test ? PROD_CONFIG : TEST_CONFIG));
+  if (scriptId && otherId && scriptId === otherId) {
+    errors.push('.clasp.json（本番）と .clasp.test.json（テスト）のスクリプトIDが同じです。テスト用スプレッドシートの Apps Script の「スクリプト ID」を .clasp.test.json に入れてください');
   }
 
   const gasDir = path.join(projectDir, 'gas');
@@ -67,11 +92,14 @@ function checkClaspProject(projectDir) {
   const extra = files.filter((f) => !REQUIRED_FILES.includes(f));
   if (extra.length) warnings.push('次のファイルも一緒に反映されます：' + extra.join('、'));
 
-  return { ok: errors.length === 0, errors, warnings, scriptId, files };
+  return { ok: errors.length === 0, errors, warnings, scriptId, files, configName, test };
 }
 
 if (require.main === module) {
-  const result = checkClaspProject(PROJECT_DIR);
+  const result = checkClaspProject(PROJECT_DIR, { test: process.argv.includes('--test') });
+  console.log(result.test
+    ? '■ 反映先：テスト環境（' + TEST_CONFIG + '）'
+    : '■ 反映先：本番環境（' + PROD_CONFIG + '）');
   result.warnings.forEach((w) => console.log('⚠ ' + w));
   if (!result.ok) {
     result.errors.forEach((e) => console.error('✖ ' + e));
@@ -84,4 +112,4 @@ if (require.main === module) {
   console.log('✔ 反映するファイル（' + result.files.length + '個）：' + result.files.join('、'));
 }
 
-module.exports = { checkClaspProject, REQUIRED_FILES };
+module.exports = { checkClaspProject, REQUIRED_FILES, PROD_CONFIG, TEST_CONFIG };

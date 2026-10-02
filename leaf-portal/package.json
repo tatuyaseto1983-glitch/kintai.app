@@ -13,6 +13,9 @@
     "status": "node tools/check-clasp.js && clasp status",
     "push": "node tools/check-clasp.js && clasp push",
     "open": "clasp open-script",
+    "check:test": "node tools/check-clasp.js --test",
+    "push:test": "node tools/check-clasp.js --test && clasp -P .clasp.test.json push",
+    "open:test": "clasp -P .clasp.test.json open-script",
     "logo": "node tools/build-logo.js"
   },
   "devDependencies": {
