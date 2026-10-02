@@ -14,6 +14,7 @@
  *   - テスト環境と本番のスクリプトIDが同じになっていないか（同じなら止める）
  */
 const fs = require('node:fs');
+const { execSync } = require('node:child_process');
 const path = require('node:path');
 
 const PROJECT_DIR = path.join(__dirname, '..');
@@ -110,6 +111,24 @@ if (require.main === module) {
   console.log('  → Apps Script の ⚙「プロジェクトの設定」の「スクリプト ID」と同じか確認してください');
   console.log('  → 既存の勤怠アプリ（gas/）のプロジェクトではないことも確認してください');
   console.log('✔ 反映するファイル（' + result.files.length + '個）：' + result.files.join('、'));
+  const commit = readGitCommit(PROJECT_DIR);
+  console.log('✔ 反映するコードの版：' + (readAppBuild(PROJECT_DIR) || '（不明）') + (commit ? '（Git：' + commit + '）' : ''));
+  console.log('  → 反映とデプロイ更新のあと、Webアプリの画面の一番下に同じ「版」が出ていれば、新しいコードが動いています');
 }
 
-module.exports = { checkClaspProject, REQUIRED_FILES, PROD_CONFIG, TEST_CONFIG };
+/** gas/WebApp.gs の APP_BUILD（画面の一番下に出る「版」）を読む */
+function readAppBuild(projectDir) {
+  try {
+    const m = fs.readFileSync(path.join(projectDir, 'gas', 'WebApp.gs'), 'utf8').match(/const APP_BUILD = '([^']+)'/);
+    return m ? m[1] : '';
+  } catch (e) { return ''; }
+}
+
+/** 今のフォルダの Git のコミット（git pull 済みかの確認用）。Git がなければ空文字 */
+function readGitCommit(projectDir) {
+  try {
+    return execSync('git log -1 --format="%h %s"', { cwd: projectDir, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch (e) { return ''; }
+}
+
+module.exports = { readAppBuild, readGitCommit, checkClaspProject, REQUIRED_FILES, PROD_CONFIG, TEST_CONFIG };

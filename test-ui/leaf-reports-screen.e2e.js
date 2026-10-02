@@ -202,6 +202,7 @@ test('日報の画面', { skip: !playwright && 'Playwright がないため省略
       await yamada.locator('.report-card', { hasText: '以前の日報' }).locator('button', { hasText: '日報を見る' }).click();
       await yamada.waitForFunction(() => /旧日報の本文/.test(document.getElementById('reportDetailBody').innerText));
       const body = await yamada.locator('#reportDetailBody').innerText();
+      assert.match(body, /以前の日報（本人・管理者のみ閲覧）/, '詳細にも一覧と同じ表示');
       assert.match(body, /以前の仕組みで提出された日報です。本人と管理者だけが閲覧できます/);
       assert.match(body, /明日の予定（以前の項目）\s+熊本/);
       assert.equal(await yamada.locator('#btnConfirmReport').count(), 0, '確認ボタンなし');

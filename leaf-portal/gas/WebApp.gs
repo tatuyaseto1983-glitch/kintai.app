@@ -16,6 +16,11 @@
 /** 画面のタイトル */
 /** 会社名（ヘッダー・ブラウザのタイトル・フッターに表示） */
 const APP_BRAND_NAME = 'Leaf Co.,Ltd';
+/**
+ * 画面の一番下に出る「版」。どのコードが動いているか（push とデプロイ更新が済んでいるか）を画面で確かめるためのもの。
+ * コードを変えて反映するときは、この値も変えてください（npm run check の表示と見比べます）。
+ */
+const APP_BUILD = '2026.10.02-3';
 
 /** 画面のタイトル（ブラウザのタブに表示） */
 const WEB_APP_TITLE = 'Leaf Co.,Ltd｜勤怠管理';
@@ -43,6 +48,7 @@ function doGet(e) {
   template.brandName = APP_BRAND_NAME;
   template.logoSrc = getLogoDataUri_();
   template.envLabel = getEnvironmentLabel_();
+  template.appBuild = APP_BUILD;
   const output = template.evaluate()
     .setTitle((template.envLabel ? '【' + template.envLabel + '】' : '') + WEB_APP_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');

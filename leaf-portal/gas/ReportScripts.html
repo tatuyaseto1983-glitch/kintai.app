@@ -205,7 +205,7 @@
     var r = d.report;
     var body = $('reportDetailBody');
     body.textContent = '';
-    $('btnReportEdit').hidden = !d.canEdit;
+    $('btnReportEdit').hidden = !d.canEdit || !!d.legacy; // 旧日報は修正できない（サーバーでも拒否）
     $('btnReportEdit').textContent = r.status === 'draft' ? '下書きを編集する' : 'この日報を修正する';
 
     var head = el('div', 'card report-head');
@@ -218,6 +218,7 @@
     if (r.version > 1) meta.appendChild(el('span', '', 'バージョン ' + r.version));
     head.appendChild(meta);
     if (r.status === 'draft') head.appendChild(el('p', 'report-updated-note', '下書きです（あなただけが見られます）。提出すると全社員が閲覧できます。'));
+    if (d.legacy) head.appendChild(el('span', 'badge badge-notstarted', '以前の日報（本人・管理者のみ閲覧）'));
     if (d.legacy) head.appendChild(el('p', 'report-updated-note', '以前の仕組みで提出された日報です。本人と管理者だけが閲覧できます（確認・コメント・修正はできません）。'));
     if (d.showUpdated) head.appendChild(el('p', 'report-updated-note', '更新あり：この日報は提出後に修正されています（バージョン' + r.version + '）。最新の内容を確認してください。'));
     body.appendChild(head);

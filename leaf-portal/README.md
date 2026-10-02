@@ -906,6 +906,9 @@ favicon を変えられるのは `setFaviconUrl()` だけで、**インターネ
 4. テスト用の Apps Script のタブを **再読み込み** → 左に `DailyReportShareService.gs`・`ReportView.html` などが並んでいることを確認
    （`npm run open:test` でもテスト用の Apps Script を開けます）
 5. **本番の Apps Script は開かない・触らない**（本番のデプロイもそのまま）
+6. **どのコードが動いているかの確認**：`npm run check:test` の最後に出る `✔ 反映するコードの版：2026.10.02-3（Git：…）` と、
+   テスト用URLの画面の一番下の「版 …」が同じなら、push とデプロイ更新が済んでいます。違えば、`git pull` 忘れかデプロイ更新忘れです
+   （/exec の画面は「デプロイを管理 → 新バージョン」で更新するまで古いままです）
 
 ### Q-5. `setupSystem()` をテスト用シートにだけ実行する
 

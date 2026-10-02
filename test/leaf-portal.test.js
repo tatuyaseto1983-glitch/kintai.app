@@ -473,6 +473,16 @@ test('テスト用スプレッドシート（名前に「テスト」）では�
   assert.match(gas.g.setupSystem(), /対象のスプレッドシート：「【テスト】リーフ勤怠管理」 https:/);
 });
 
+test('画面の一番下に「版」が出る（npm run check の表示と同じ値。push・デプロイ更新の確認用）', () => {
+  const path = require('node:path');
+  const { readAppBuild } = require('../leaf-portal/tools/check-clasp');
+  const build = readAppBuild(path.join(__dirname, '..', 'leaf-portal'));
+  assert.match(build, /^\d{4}\.\d{2}\.\d{2}-\d+$/);
+  const gas = createLeafGas();
+  gas.g.setupSystem();
+  assert.match(gas.g.doGet().getContent(), new RegExp('<span class="app-build" id="appBuild">版 ' + build.replace(/\./g, '\\.') + '</span>'));
+});
+
 test('スタッフ画面：doGet() が画面を返し、Styles・Scripts が読み込まれる', () => {
   const gas = createLeafGas();
   const out = gas.g.doGet();
@@ -483,7 +493,7 @@ test('スタッフ画面：doGet() が画面を返し、Styles・Scripts が読�
   assert.ok(html.includes('<img class="brand-logo" src="' + logo + '"'), 'ロゴは Logo.html の内容をそのまま使う');
   assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd<\/span>/);
   assert.match(html, /<span class="brand-sub" id="brandSub">勤怠管理<\/span>/);
-  assert.match(html, /<footer class="site-footer">Leaf Co\.,Ltd<\/footer>/);
+  assert.match(html, /<footer class="site-footer">Leaf Co\.,Ltd<span class="app-build" id="appBuild">版 [^<]+<\/span><\/footer>/);
   assert.doesNotMatch(html, /リーフ 社内ポータル|brand-mark/, '古い表記・葉っぱアイコンは残っていない');
   assert.equal(out.faviconUrl, undefined, 'favicon のURLが未設定なら設定しない');
   assert.equal(out.metaTags.viewport, 'width=device-width, initial-scale=1');
