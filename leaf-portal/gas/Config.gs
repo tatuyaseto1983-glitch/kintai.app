@@ -200,8 +200,8 @@ const SHEET_DEFINITIONS = [
   {
     name: SHEET_NAMES.BREAKS,
     headers: ['中断ID', '勤怠ID', '日付', '社員ID', '氏名', '中断開始', '再開', '中断時間', '理由'],
-    // 中断したときの勤務区間（以前の行は空欄のまま読める）
-    optionalHeaders: ['勤務区間ID'],
+    // 中断したときの勤務区間（以前の行は空欄のまま読める）。打刻日時は秒まで（並び順とテスト環境での確認用）
+    optionalHeaders: ['勤務区間ID', '中断打刻日時', '再開打刻日時'],
   },
   {
     name: SHEET_NAMES.CORRECTIONS,
@@ -264,6 +264,8 @@ const SHEET_DEFINITIONS = [
     name: SHEET_NAMES.WORK_SEGMENTS,
     headers: ['勤務区間ID', '勤怠ID', '日付', '社員ID', '氏名', '区間番号', '勤務形態', '開始時刻', '終了時刻', '区間実働',
       '直行', '直帰', '現場名', '備考', '作成日時', '更新日時'],
+    // 実際に打刻した日時（秒まで）。打刻修正で時刻を直すと空欄にする（直した時刻は 開始時刻・終了時刻 が正）
+    optionalHeaders: ['開始打刻日時', '終了打刻日時'],
   },
   {
     name: SHEET_NAMES.SETTINGS,

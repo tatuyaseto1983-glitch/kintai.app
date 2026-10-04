@@ -113,6 +113,8 @@ function getDaySegments_(record, segmentRows) {
         style: toPlainText_(row['勤務形態']) || WORK_STYLES.OFFICE,
         startMinutes: toMinutes_(row['開始時刻']),
         endMinutes: toMinutes_(row['終了時刻']),
+        startStamp: toPlainText_(row['開始打刻日時']),
+        endStamp: toPlainText_(row['終了打刻日時']),
         row: row,
         virtual: false,
       };
@@ -135,6 +137,34 @@ function getDaySegments_(record, segmentRows) {
 function findOpenSegment_(segments) {
   const open = segments.filter(function (s) { return s.endMinutes === null; });
   return open.length ? open[open.length - 1] : null;
+}
+
+/**
+ * 1日のまとめ（出勤・退勤・最初の勤務形態）を、すべての勤務区間から毎回作り直す。
+ *   出勤 = 全区間の最小の開始、退勤 = 終了済みの区間の最大の終了（勤務中の区間があるときは空欄）
+ *   勤務形態 = 最初に始まった区間の勤務形態
+ * 再出勤・切替・中断のあとでも、出勤（最初の開始）は変わらない。
+ */
+function summarizeDaySegments_(segments) {
+  if (!segments.length) return null;
+  const timeline = toDayTimeline_(segments, []);
+  let first = 0;
+  timeline.segments.forEach(function (s, i) { if (s.start < timeline.segments[first].start) first = i; });
+  let lastEnd = null;
+  let lastIndex = segments.length - 1;
+  timeline.segments.forEach(function (s, i) { if (s.end !== null && (lastEnd === null || s.end > lastEnd)) { lastEnd = s.end; lastIndex = i; } });
+  const open = findOpenSegment_(segments);
+  if (open) lastIndex = segments.indexOf(open);
+  return {
+    firstIndex: first,
+    lastIndex: lastIndex, // 退勤を直すときの区間（勤務中の区間があればその区間、なければ最後に終わった区間）
+    clockInMinutes: segments[first].startMinutes,
+    clockOutMinutes: open || lastEnd === null ? null : lastEnd % 1440,
+    clockIn: minutesToClock_(segments[first].startMinutes),
+    clockOut: open || lastEnd === null ? '' : minutesToClock_(lastEnd),
+    workStyle: segments[first].style,
+    hasOpen: !!open,
+  };
 }
 
 // ============================================================ 計算（シートを使わない純粋な計算）
@@ -221,7 +251,8 @@ function calculateSegmentedWorkTime_(p) {
 
   const workBeforeBreak = gross - deducted;
   const autoBreakMinutes = workBeforeBreak > p.autoBreakThresholdMinutes ? p.autoBreakMinutes : 0;
-  const firstStart = timeline.segments.length ? timeline.segments[0].start : 0;
+  // 遅刻は全区間の最小の開始、早退は最大の終了で判定する（区間番号の順ではなく時刻で）
+  const firstStart = timeline.segments.reduce(function (m, s) { return Math.min(m, s.start); }, timeline.segments.length ? timeline.segments[0].start : 0);
   const lastEnd = timeline.segments.reduce(function (m, s) { return Math.max(m, s.end); }, firstStart);
 
   const result = {
@@ -268,11 +299,14 @@ function makeSegmentId_(attendanceId, number) {
   return makeUniqueId_(SHEET_NAMES.WORK_SEGMENTS, '勤務区間ID', 'WS-' + String(attendanceId).replace(/^AT-/, '') + '-' + pad2_(number));
 }
 
-/** 区間を1つ追加する */
-function appendSegment_(record, style, startText, endText, timestamp) {
+/**
+ * 区間を1つ追加する（すでにある区間の開始時刻・勤務形態は書き換えない）。
+ * @param {string} [startStamp] 実際に打刻した日時（秒まで）。以前の記録から作るときは空
+ */
+function appendSegment_(record, style, startText, endText, timestamp, startStamp) {
   const attendanceId = String(record['勤怠ID']).trim();
   const number = getSegmentRowsOfAttendance_(attendanceId).reduce(function (m, r) { return Math.max(m, Number(r['区間番号']) || 0); }, 0) + 1;
-  return appendRecord_(SHEET_NAMES.WORK_SEGMENTS, {
+  return appendRecord_(SHEET_NAMES.WORK_SEGMENTS, onlyExistingColumns_(SHEET_NAMES.WORK_SEGMENTS, {
     '勤務区間ID': makeSegmentId_(attendanceId, number),
     '勤怠ID': attendanceId,
     '日付': toDateKey_(record['日付']),
@@ -284,7 +318,8 @@ function appendSegment_(record, style, startText, endText, timestamp) {
     '終了時刻': endText || '',
     '作成日時': timestamp,
     '更新日時': timestamp,
-  });
+    '開始打刻日時': startStamp || '',
+  }));
 }
 
 /**
@@ -316,9 +351,11 @@ function assignSegmentToBreaks_(attendanceId, segmentId) {
   return count;
 }
 
-/** 区間の終了時刻を入れる */
-function closeSegmentRow_(row, endText, timestamp) {
-  updateRecord_(SHEET_NAMES.WORK_SEGMENTS, row, { '終了時刻': endText, '更新日時': timestamp });
+/** 区間の終了時刻を入れる（endStamp＝実際の打刻日時。秒まで） */
+function closeSegmentRow_(row, endText, timestamp, endStamp) {
+  updateRecord_(SHEET_NAMES.WORK_SEGMENTS, row, onlyExistingColumns_(SHEET_NAMES.WORK_SEGMENTS, {
+    '終了時刻': endText, '更新日時': timestamp, '終了打刻日時': endStamp || '',
+  }));
 }
 
 /** 今の区間（終了時刻が空の行） */
@@ -329,15 +366,12 @@ function findOpenSegmentRow_(rows) {
 
 /**
  * 今の区間を endText で終え、新しい勤務形態の区間を startText から始める。
- * 今の区間がまだ0分（開始＝終了）なら、新しい行は作らずに今の区間の勤務形態と開始を書き換える（0分の区間を作らない）。
+ * 同じ分の中の操作で今の区間が0分になっても、今の区間の開始・勤務形態は書き換えない（出勤＝最初の開始を守る）。
+ * @param {string} endStamp / startStamp 実際の打刻日時（秒まで）
  */
-function closeAndStartSegment_(record, openRow, endText, style, startText, timestamp) {
-  if (toClockText_(openRow['開始時刻']) === endText) {
-    updateRecord_(SHEET_NAMES.WORK_SEGMENTS, openRow, { '勤務形態': style, '開始時刻': startText, '更新日時': timestamp });
-    return openRow;
-  }
-  closeSegmentRow_(openRow, endText, timestamp);
-  return appendSegment_(record, style, startText, '', timestamp);
+function closeAndStartSegment_(record, openRow, endText, style, startText, timestamp, endStamp, startStamp) {
+  closeSegmentRow_(openRow, endText, timestamp, endStamp);
+  return appendSegment_(record, style, startText, '', timestamp, startStamp);
 }
 
 // ============================================================ 切替
@@ -362,7 +396,7 @@ function switchWorkStyle_(workStyle) {
   if (toPlainText_(open['勤務形態']) === style) fail_('すでに' + style + 'で勤務中です');
 
   const from = toPlainText_(open['勤務形態']);
-  closeAndStartSegment_(record, open, now.time, style, now.time, now.timestamp);
+  closeAndStartSegment_(record, open, now.time, style, now.time, now.timestamp, now.timestamp, now.timestamp);
   recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
   return { message: from + 'から' + style + 'に切り替えました（' + now.time + '）', data: toAttendanceView_(record) };
 }
@@ -371,36 +405,153 @@ function switchWorkStyle_(workStyle) {
 
 /**
  * 勤怠記録1件のタイムライン（勤務区間と中断）。本人または管理者にだけ返すこと。
- * 戻り値：{ segments: [{ number, style, start, end, workTime, virtual }], breaks: [{ start, end, minutes, reason }],
- *          currentStyle, office, remote, siteOuting, breakTotal, autoBreak, workTime, segmentCount }
+ * 戻り値：{ events: [{ time, kind, label }]（操作の順。下の buildTimelineEvents_）,
+ *          segments: [{ number, style, start, end, workTime, virtual }], breaks: [{ start, end, minutes, reason }],
+ *          currentStyle, segmentCount, showSeconds }
+ * showSeconds が true（テスト環境）のときだけ、events の time を秒まで（HH:mm:ss）にする。
  */
-function buildAttendanceTimeline_(record) {
+function buildAttendanceTimeline_(record, options) {
   const attendanceId = String(record['勤怠ID']).trim();
   const segments = getDaySegments_(record, getSegmentRowsOfAttendance_(attendanceId));
   const breaks = getBreaksOfAttendance_(attendanceId);
   const open = findOpenSegment_(segments);
+  const showSeconds = options && options.showSeconds !== undefined ? !!options.showSeconds : getEnvironmentLabel_() !== '';
+  const stampTime = function (stamp, clock) {
+    const m = String(stamp || '').match(/\d{2}:\d{2}:\d{2}$/);
+    return showSeconds && m && m[0].slice(0, 5) === clock ? m[0] : clock;
+  };
   return {
+    events: buildTimelineEvents_(segments, breaks.map(function (b) {
+      return {
+        segmentId: toPlainText_(b['勤務区間ID']),
+        startMinutes: toMinutes_(b['中断開始']),
+        endMinutes: toMinutes_(b['再開']),
+        startStamp: toPlainText_(b['中断打刻日時']),
+        endStamp: toPlainText_(b['再開打刻日時']),
+      };
+    })).map(function (e) {
+      return { time: stampTime(e.stamp, minutesToClock_(e.minutes)), kind: e.kind, label: e.label, style: e.style || '' };
+    }),
     segments: segments.map(function (s) {
       return {
         number: s.number,
         style: s.style,
-        start: minutesToClock_(s.startMinutes),
-        end: s.endMinutes === null ? '' : minutesToClock_(s.endMinutes),
+        start: stampTime(s.startStamp, minutesToClock_(s.startMinutes)),
+        end: s.endMinutes === null ? '' : stampTime(s.endStamp, minutesToClock_(s.endMinutes)),
         workTime: s.row ? toDurationText_(s.row['区間実働']) : '',
         virtual: s.virtual,
       };
     }),
     breaks: breaks.map(function (b) {
       return {
-        start: toClockText_(b['中断開始']),
-        end: toClockText_(b['再開']),
+        start: stampTime(b['中断打刻日時'], toClockText_(b['中断開始'])),
+        end: stampTime(b['再開打刻日時'], toClockText_(b['再開'])),
         minutes: toDurationText_(b['中断時間']),
         reason: toPlainText_(b['理由']),
       };
     }),
     currentStyle: open ? open.style : '',
     segmentCount: segments.length,
+    showSeconds: showSeconds,
   };
+}
+
+/**
+ * 勤務区間と中断を、操作の内容が分かる時系列の出来事にする（シートを使わない純粋な計算）。
+ *   例：12:05 出社で出勤／12:07 中断／12:08 再開（出社）／12:09 在宅へ切替／12:10 中断／12:11 再開（在宅）／12:12 退勤／12:15 在宅で再出勤
+ * 並び順：時刻（その日の最初の開始を基準に、12時間以上前の時刻は翌日とみなす）→ 同じ分の中は操作の順番
+ *        （区間ごとに「開始 → その区間の中断・再開（記録の順）→ 終了」）。
+ * @param {object[]} segments getDaySegments_ の戻り値（区間番号の順）
+ * @param {object[]} breaks   [{ segmentId, startMinutes, endMinutes, startStamp, endStamp }]（中断履歴の順）
+ * 戻り値：[{ minutes, abs, kind, label, style, stamp }]
+ */
+function buildTimelineEvents_(segments, breaks) {
+  if (!segments.length) return [];
+  // 基準は区間1（その日に最初に作った区間）の開始。日付をまたいだ時刻（基準より12時間以上前）は翌日として後ろに並べる
+  const dayStart = segments[0].startMinutes;
+  const abs = function (m) { return m < dayStart - 720 ? m + 1440 : m; };
+  const segAbs = segments.map(function (s) {
+    const start = abs(s.startMinutes);
+    return { start: start, end: s.endMinutes === null ? null : start + durationBetween_(s.startMinutes, s.endMinutes) };
+  });
+  // 中断がどの区間のものか（勤務区間IDがあればそれ、なければ中断開始を含む区間）
+  const ownerOf = function (b, bStart) {
+    if (b.segmentId) {
+      for (let i = 0; i < segments.length; i++) if (segments[i].id === b.segmentId) return i;
+    }
+    let owner = 0;
+    segAbs.forEach(function (s, i) { if (s.start <= bStart) owner = i; });
+    return owner;
+  };
+  const events = [];
+  const add = function (minutes, rank, kind, label, style, stamp) {
+    events.push({ minutes: ((minutes % 1440) + 1440) % 1440, abs: minutes, rank: rank, kind: kind, label: label, style: style, stamp: stamp || '' });
+  };
+  const brs = breaks.filter(function (b) { return b.startMinutes !== null && b.startMinutes !== undefined; }).map(function (b, i) {
+    const start = abs(b.startMinutes);
+    const end = b.endMinutes === null || b.endMinutes === undefined ? null : start + durationBetween_(b.startMinutes, b.endMinutes);
+    return { b: b, i: i, start: start, end: end, owner: ownerOf(b, start), consumed: false };
+  });
+
+  // 先に「中断 → 別の勤務形態で再開」を見つけておく（前の区間の終わりに中断し、その再開で次の区間が始まった）
+  const resumedBy = {};
+  segments.forEach(function (s, k) {
+    if (k === 0) return;
+    const prev = segAbs[k - 1];
+    const cur = segAbs[k];
+    const hit = brs.filter(function (x) { return !x.consumed && x.owner === k - 1 && prev.end !== null && x.start === prev.end && x.end === cur.start; })[0];
+    if (hit) { hit.consumed = true; resumedBy[k] = hit; }
+  });
+
+  segments.forEach(function (s, k) {
+    const cur = segAbs[k];
+    const base = k * 10000;
+    if (k === 0) {
+      add(cur.start, base, 'start', s.style + 'で出勤', s.style, s.startStamp);
+    } else {
+      const prev = segAbs[k - 1];
+      const resumed = resumedBy[k];
+      if (resumed) {
+        add(cur.start, base, 'resume', '再開（' + s.style + '）', s.style, s.startStamp || resumed.b.endStamp);
+      } else if (prev.end !== null && prev.end === cur.start && isSwitchBoundary_(segments, k - 1)) {
+        add(cur.start, base, 'switch', s.style + 'へ切替', s.style, s.startStamp);
+      } else {
+        add(cur.start, base, 'reclockin', s.style + 'で再出勤', s.style, s.startStamp);
+      }
+    }
+    brs.filter(function (x) { return x.owner === k; }).forEach(function (x) {
+      add(x.start, base + 1 + x.i * 2, 'break', '中断', '', x.b.startStamp);
+      if (x.end !== null && !x.consumed) {
+        const owner = segments[k];
+        add(x.end, base + 2 + x.i * 2, 'resume', '再開（' + owner.style + '）', owner.style, x.b.endStamp);
+      }
+    });
+    if (cur.end !== null) {
+      const next = segAbs[k + 1];
+      const switched = next && next.start === cur.end && isSwitchBoundary_(segments, k);
+      const intoBreak = next && brs.some(function (x) { return x.owner === k && x.start === cur.end && x.end === next.start; });
+      // 次の区間がこの終わりから続く（切替・中断からの再開）なら「退勤」は出さない
+      if (!switched && !intoBreak) {
+        add(cur.end, base + 9999, 'end', '退勤', s.style, s.endStamp);
+      }
+    }
+  });
+  events.sort(function (a, b) { return a.abs !== b.abs ? a.abs - b.abs : a.rank - b.rank; });
+  return events;
+}
+
+/**
+ * 区間 k の終わりと区間 k+1 の始まりが同じ時刻のとき、それが「切替」か（退勤→同じ分に再出勤ではないか）。
+ * 勤務形態が同じなら必ず退勤→再出勤（同じ勤務形態への切替はできない）。
+ * 打刻日時（秒）が両方あれば、切替は同じ打刻（同じ日時）、退勤→再出勤は別の打刻になる。
+ * 打刻日時がない（以前の記録・打刻修正後）ときは、勤務形態が変わっていれば切替とみなす。
+ */
+function isSwitchBoundary_(segments, k) {
+  const cur = segments[k];
+  const next = segments[k + 1];
+  if (cur.style === next.style) return false; // 同じ勤務形態への切替はできないので、退勤→再出勤
+  if (cur.endStamp && next.startStamp) return cur.endStamp === next.startStamp;
+  return cur.style !== next.style;
 }
 
 /** 今の勤務形態（勤務中・中断中なら今の区間、それ以外は勤怠記録の勤務形態） */

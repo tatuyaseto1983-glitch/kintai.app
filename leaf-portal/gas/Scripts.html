@@ -380,24 +380,24 @@
     }
     var finished = r.status === STATUS.FINISHED;
 
-    // タイムライン（勤務区間と中断を時刻の順に並べる）
+    // タイムライン：勤務区間と中断を1本の時系列にした「操作の順番」（並べ方はサーバーが決める）
+    //   例：12:05 出社で出勤／12:07 中断／12:08 再開（出社）／12:09 在宅へ切替／12:12 退勤／12:15 在宅で再出勤
     var tl = state.timeline;
-    if (tl && tl.segments && tl.segments.length) {
-      var items = [];
-      tl.segments.forEach(function (sg) {
-        items.push({ at: sg.start, cls: sg.style === '在宅' ? 'style-remote' : 'style-office',
-          text: sg.start + '〜' + (sg.end || '勤務中') + '　' + sg.style + (sg.workTime ? '（' + trimHour(sg.workTime) + '）' : '') });
-      });
-      (tl.breaks || []).forEach(function (b) {
-        items.push({ at: b.start, cls: 'style-break', text: b.start + '〜' + (b.end || '中断中') + '　中断' + (b.minutes ? '（' + trimHour(b.minutes) + '）' : '') });
-      });
-      var base = tl.segments[0].start;
-      var key = function (t) { return t < base ? '1' + t : '0' + t; }; // 日付をまたいだ時刻は後ろに
-      items.sort(function (a, b) { return key(a.at) < key(b.at) ? -1 : key(a.at) > key(b.at) ? 1 : 0; });
+    if (tl && tl.events && tl.events.length) {
       var ul = el('ul', 'timeline');
-      ul.setAttribute('aria-label', '本日のタイムライン');
-      items.forEach(function (it) { ul.appendChild(el('li', 'timeline-item ' + it.cls, it.text)); });
+      ul.setAttribute('aria-label', '本日の操作の順番');
+      tl.events.forEach(function (ev) {
+        var cls = ev.kind === 'break' ? 'style-break' : ev.kind === 'end' ? 'style-end' : ev.style === '在宅' ? 'style-remote' : 'style-office';
+        var li = el('li', 'timeline-item ' + cls);
+        li.appendChild(el('span', 'timeline-time', ev.time));
+        li.appendChild(document.createTextNode(' ' + ev.label));
+        ul.appendChild(li);
+      });
+      if (r.status === STATUS.WORKING || r.status === STATUS.ON_BREAK) {
+        ul.appendChild(el('li', 'timeline-item timeline-now', r.status === STATUS.ON_BREAK ? '（中断中）' : '（' + (currentStyle() || '出社') + 'で勤務中）'));
+      }
       body.appendChild(ul);
+      if (tl.showSeconds) body.appendChild(el('p', 'card-note', 'テスト環境のため、打刻した時刻を秒まで表示しています。'));
     }
 
     var dl = el('dl', 'record-list');

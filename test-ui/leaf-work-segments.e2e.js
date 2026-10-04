@@ -66,7 +66,7 @@ test('勤務区間の画面（切替・別の勤務形態で再開・再出勤�
       assert.equal(await p.locator('#btnSwitchStyle').innerText(), '出社勤務へ切替');
       assert.match(await p.locator('#statusSub').innerText(), /本日の勤務区間 2つ/);
       const tl = await p.locator('#todayBody .timeline').innerText();
-      assert.match(tl, /09:30〜12:00\s+出社[\s\S]*12:00〜勤務中\s+在宅/);
+      assert.match(tl, /09:30\s+出社で出勤\s+12:00\s+在宅へ切替\s+（在宅で勤務中）/, '操作の順番で表示');
       assert.match(await p.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*勤務中（在宅）/);
     });
 
@@ -85,7 +85,7 @@ test('勤務区間の画面（切替・別の勤務形態で再開・再出勤�
       await idle(p);
       assert.match(await lastToast(p), /出社で再開しました（在宅から出社に切り替え／中断 00:30/);
       assert.equal(await p.locator('#statusLabel').innerText(), '出社勤務中');
-      assert.match(await p.locator('#todayBody .timeline').innerText(), /12:00〜15:00\s+在宅[\s\S]*15:00〜15:30\s+中断[\s\S]*15:30〜勤務中\s+出社/);
+      assert.match(await p.locator('#todayBody .timeline').innerText(), /09:30\s+出社で出勤\s+12:00\s+在宅へ切替\s+15:00\s+中断\s+15:30\s+再開（出社）\s+（出社で勤務中）/);
     });
 
     await t.test('退勤 →「出社で再出勤」「在宅で再出勤」→ 在宅で再出勤 → 退勤（タイムラインと内訳）', async () => {
@@ -106,7 +106,9 @@ test('勤務区間の画面（切替・別の勤務形態で再開・再出勤�
       await p.click('#btnConfirmOk');
       await idle(p);
       const body = await p.locator('#todayBody').innerText();
-      assert.match(body, /19:00〜20:00\s+在宅/);
+      assert.match(body, /09:30\s+出社で出勤\s+12:00\s+在宅へ切替\s+15:00\s+中断\s+15:30\s+再開（出社）\s+17:00\s+退勤\s+19:00\s+在宅で再出勤\s+20:00\s+退勤/);
+      assert.match(body, /出勤\s+09:30/, '再出勤しても出勤は最初の開始のまま');
+      assert.match(body, /退勤\s+20:00/);
       assert.match(body, /勤務形態\s+出社＋在宅/);
       assert.match(body, /区間数\s+4つ/);
       assert.match(body, /出社\s+04:00/);

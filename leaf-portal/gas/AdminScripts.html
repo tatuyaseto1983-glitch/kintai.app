@@ -316,6 +316,18 @@
     var cell = el('td', 'left');
     cell.colSpan = 17;
     var box = el('div', 'segment-detail');
+    // 操作の順番（勤務区間と中断を1本の時系列に）
+    if (detail.events && detail.events.length) {
+      box.appendChild(el('p', 'subhead', '操作の順番' + (detail.showSeconds ? '（テスト環境のため秒まで表示）' : '')));
+      var ue = el('ul', 'timeline');
+      detail.events.forEach(function (ev) {
+        var li = el('li', 'timeline-item ' + (ev.kind === 'break' ? 'style-break' : ev.kind === 'end' ? 'style-end' : ev.style === '在宅' ? 'style-remote' : 'style-office'));
+        li.appendChild(el('span', 'timeline-time', ev.time));
+        li.appendChild(document.createTextNode(' ' + ev.label));
+        ue.appendChild(li);
+      });
+      box.appendChild(ue);
+    }
     box.appendChild(el('p', 'subhead', '勤務区間' + (detail.segments.length && detail.segments[0].virtual ? '（以前の記録のため、出勤〜退勤を1区間として表示）' : '')));
     var ul = el('ul', 'timeline');
     detail.segments.forEach(function (s) {

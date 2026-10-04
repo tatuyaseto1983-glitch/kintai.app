@@ -64,7 +64,7 @@ function startBreak_(reason) {
     '中断開始': now.time,
     '理由': reasonText,
   });
-  if (segmentId && hasColumn_(SHEET_NAMES.BREAKS, '勤務区間ID')) updateRecord_(SHEET_NAMES.BREAKS, breakRow, { '勤務区間ID': segmentId });
+  updateRecord_(SHEET_NAMES.BREAKS, breakRow, onlyExistingColumns_(SHEET_NAMES.BREAKS, { '勤務区間ID': segmentId, '中断打刻日時': now.timestamp }));
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, {
     '状態': ATTENDANCE_STATUS.ON_BREAK,
     '更新日時': now.timestamp,
@@ -102,15 +102,17 @@ function resumeWork_(workStyle) {
     if (requestedStyle !== currentStyle) {
       requireWorkSegmentSchema_();
       if (!open) fail_('今の勤務区間が見つかりません。管理者に連絡してください');
-      closeAndStartSegment_(record, open, toClockText_(latest['中断開始']), requestedStyle, now.time, now.timestamp);
+      closeAndStartSegment_(record, open, toClockText_(latest['中断開始']), requestedStyle, now.time, now.timestamp,
+        toPlainText_(latest['中断打刻日時']), now.timestamp);
       switched = currentStyle + 'から' + requestedStyle + 'に切り替え';
     }
   }
 
-  updateRecord_(SHEET_NAMES.BREAKS, latest, {
+  updateRecord_(SHEET_NAMES.BREAKS, latest, onlyExistingColumns_(SHEET_NAMES.BREAKS, {
     '再開': now.time,
     '中断時間': formatMinutes_(minutes),
-  });
+    '再開打刻日時': now.timestamp,
+  }));
 
   const total = sumCompletedBreakMinutes_(attendanceId);
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, {

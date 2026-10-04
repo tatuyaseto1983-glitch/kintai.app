@@ -230,7 +230,11 @@ function applyCorrectionToSegments_(rows, item, segmentNo, after, timestamp) {
     };
   });
   validateSegmentOrder_(planned);
-  updateRecord_(SHEET_NAMES.WORK_SEGMENTS, target, { [column]: value, '更新日時': timestamp });
+  const changes = { [column]: value, '更新日時': timestamp };
+  // 直した時刻は打刻した時刻ではないので、秒までの打刻日時は空にする
+  if (column === '開始時刻') Object.assign(changes, stampClear_('開始打刻日時'));
+  if (column === '終了時刻') Object.assign(changes, stampClear_('終了打刻日時'));
+  updateRecord_(SHEET_NAMES.WORK_SEGMENTS, target, changes);
 }
 
 /**
@@ -251,8 +255,8 @@ function validateSegmentOrder_(segments) {
       cursor = start;
       return;
     }
+    // 同じ分の中で始まって終わった区間（0分）もそのまま認める
     const length = durationBetween_(s.startMinutes, s.endMinutes);
-    if (length === 0) fail_('区間' + s.number + 'の開始と終了が同じ時刻です');
     cursor = start + length;
     if (cursor > dayStart + 1440) fail_('勤務区間が24時間を超えます。時刻を確認してください');
   });
@@ -299,11 +303,15 @@ function applyCorrectionToRecord_(record, item, before, after) {
 function updateBreakTimes_(breakRecord, startText, endText) {
   const start = toMinutes_(startText);
   const end = toMinutes_(endText);
-  updateRecord_(SHEET_NAMES.BREAKS, breakRecord, {
+  const changes = {
     '中断開始': startText,
     '再開': endText,
     '中断時間': start !== null && end !== null ? formatMinutes_(durationBetween_(start, end)) : '',
-  });
+  };
+  // 時刻を直した側の打刻日時（秒まで）は空にする（直した時刻が正）
+  if (toClockText_(breakRecord['中断開始']) !== startText) changes['中断打刻日時'] = '';
+  if (toClockText_(breakRecord['再開']) !== endText) changes['再開打刻日時'] = '';
+  updateRecord_(SHEET_NAMES.BREAKS, breakRecord, onlyExistingColumns_(SHEET_NAMES.BREAKS, changes));
 }
 
 /** 中断開始（item=中断）または再開（item=再開）の時刻で中断履歴を探す */
