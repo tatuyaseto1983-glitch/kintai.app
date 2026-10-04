@@ -538,3 +538,35 @@ test('テスト環境の詳細表示だけ、打刻した時刻を秒まで（HH
   assert.deepEqual(events(gas, id, { showSeconds: true }).slice(-1), ['12:30 退勤']);
   assert.deepEqual(pick(att(gas, id), SEQ), ['12:10', '12:30', '2']);
 });
+
+test('自動休憩の判定：Google実機の記録（区間3つ・数分）を再現。適用開始 00:00 なら引く／06:00 なら引かない。ちょうど6時間は引かない', () => {
+  const gas = ready();
+  // テスト用シート AT-20261004-E001 の勤務区間・中断そのまま
+  const day = { segments: [['在宅', '12:11', '12:11'], ['出社', '12:26', '12:27'], ['在宅', '12:27', '12:27']] };
+  const ints = [['12:10', '12:10'], ['12:10', '12:11'], ['12:27', '12:27']];
+  let c = calc(gas, day.segments, ints, { autoBreakThresholdMinutes: 0 });
+  assert.deepEqual([c.grossMinutes, c.interruptionMinutes, c.workBeforeAutoBreakMinutes, c.autoBreakMinutes, c.netMinutes], [1, 0, 1, 60, 0],
+    '設定が 00:00（＝常に引く）だと、1分の勤務でも自動休憩 1:00・実働は 0:00 で止まる（マイナスにしない）');
+  c = calc(gas, day.segments, ints, { autoBreakThresholdMinutes: 360 });
+  assert.deepEqual([c.workBeforeAutoBreakMinutes, c.autoBreakMinutes, c.netMinutes], [1, 0, 1], '06:00 なら引かない');
+
+  // 境界：判定は「中断を除いた区間の合計 > 適用開始」。ちょうど 6:00 は引かず、6:01 から引く（区間が分かれていても1日で判定）
+  const t = { autoBreakThresholdMinutes: 360 };
+  c = calc(gas, [['出社', '09:00', '12:00'], ['在宅', '13:00', '16:00']], [], t);
+  assert.deepEqual([c.workBeforeAutoBreakMinutes, c.autoBreakMinutes, c.netMinutes], [360, 0, 360], 'ちょうど6時間は引かない');
+  c = calc(gas, [['出社', '09:00', '12:00'], ['在宅', '13:00', '16:01']], [], t);
+  assert.deepEqual([c.workBeforeAutoBreakMinutes, c.autoBreakMinutes, c.netMinutes], [361, 60, 301], '6時間1分なら引く');
+  c = calc(gas, [['出社', '09:00', '15:30']], [['12:00', '12:30']], t);
+  assert.deepEqual([c.workBeforeAutoBreakMinutes, c.autoBreakMinutes], [360, 0], '6:30 − 中断 0:30 ＝ 6:00 なので引かない');
+
+  // 実際の打刻でも同じ（設定シートの値を 06:00 にした場合）
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '自動休憩_適用開始')[1] = '06:00';
+  gas.g.clearTableCache_();
+  gas.loginAs(FIXED);
+  run(gas, '2026-10-04', [['12:26', 'clockIn', '出社'], ['12:27', 'startBreak', ''], ['12:27', 'resumeWork', '在宅'], ['12:28', 'clockOut']]);
+  assert.deepEqual(pick(att(gas, 'AT-20261004-E002'), ['自動休憩', '実働時間', '勤務区間数']), ['00:00', '00:02', '2']);
+  run(gas, '2026-10-05', [['09:00', 'clockIn', '出社'], ['12:00', 'clockOut'], ['13:00', 'clockIn', '在宅'], ['16:00', 'clockOut']]);
+  assert.deepEqual(pick(att(gas, 'AT-20261005-E002'), ['自動休憩', '実働時間']), ['00:00', '06:00'], '再出勤で合計ちょうど6時間 → 引かない');
+  run(gas, '2026-10-06', [['09:00', 'clockIn', '出社'], ['12:00', 'clockOut'], ['13:00', 'clockIn', '在宅'], ['16:01', 'clockOut']]);
+  assert.deepEqual(pick(att(gas, 'AT-20261006-E002'), ['自動休憩', '実働時間']), ['01:00', '05:01']);
+});
