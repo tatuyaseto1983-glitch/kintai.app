@@ -1,5 +1,6 @@
 'use strict';
-// 段階3の画面（有給休暇申請・自分のシフト・管理者の有給承認・日別/月次の区分バッジ）をブラウザ（Chromium）で操作するテスト。
+// 段階3の画面（有給休暇申請・管理者の有給承認・日別/月次の有給）をブラウザ（Chromium）で操作するテスト。
+// 今回はシフト管理を使わない（シフトのカード・シフトの表示は出さない）。
 //   npm run test:ui
 const test = require('node:test');
 const assert = require('node:assert');
@@ -14,7 +15,7 @@ function loadPlaywright() {
 const playwright = loadPlaywright();
 const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
 
-test('段階3の画面（有給休暇申請・シフト・管理者の承認・区分バッジ）', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
+test('段階3の画面（有給休暇申請・管理者の承認・有給のバッジ）', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas, calls } = createServer();
   // 有給申請対象：佐藤・鈴木＝対象、山田（管理者）＝対象外、田中＝空欄（申請できない）
   const sheet = gas.main.getSheetByName('スタッフマスタ');
@@ -48,46 +49,32 @@ test('段階3の画面（有給休暇申請・シフト・管理者の承認・�
     await post('/__test/now', { now: '2026-10-02 10:00' });
     let sato;
 
-    await t.test('対象外・空欄の人には有給のカードを出さない（シフトのカードは全員）', async () => {
+    await t.test('対象外・空欄の人には有給のカードを出さない。シフトのカードは誰にも出さない', async () => {
       const tanaka = await open('tanaka@example.com');
       await idle(tanaka);
       assert.equal(await tanaka.locator('#paidLeaveCard').isHidden(), true);
-      assert.equal(await tanaka.locator('#btnOpenShifts').isVisible(), true);
+      assert.equal(await tanaka.locator('#shiftCard').isHidden(), true);
       await tanaka.close();
     });
 
-    await t.test('自分のシフト：今の20日締め期間を表示（今日は太字）', async () => {
+    await t.test('シフト管理を使わない：シフトのカード・シフトの表示は出さない', async () => {
       sato = await open('sato@example.com');
-      await sato.click('#btnOpenShifts');
-      await sato.waitForSelector('#shiftModal:not([hidden])');
-      await sato.waitForFunction(() => document.querySelectorAll('#shiftList li').length === 30);
-      assert.match(await sato.innerText('#shiftPeriod'), /2026\/09\/21〜2026\/10\/20/);
-      assert.match(await sato.locator('#shiftList li.is-today').innerText(), /10\/2[\s\S]*通常勤務/);
-      assert.match(await sato.locator('#shiftList li', { hasText: '10/4' }).innerText(), /法定休日/);
-      assert.equal(await sato.locator('#shiftList li', { hasText: '10/3' }).locator('.badge-holiday').count(), 1);
-      await shot(sato, 's3-01-shifts');
-      await sato.click('#shiftModal [data-pl-close]');
+      await sato.waitForSelector('#paidLeaveCard:not([hidden])');
+      assert.equal(await sato.locator('#shiftCard').isHidden(), true);
     });
 
-    await t.test('有給の申請：シフトを表示。休日は拒否。1日有給・午前半休を申請 → カードに承認待ち', async () => {
-      await sato.waitForSelector('#paidLeaveCard:not([hidden])');
+    await t.test('有給の申請：シフトがなくても申請できる。1日有給・午前半休（事後申請）→ カードに承認待ち → 取り下げ', async () => {
       assert.deepEqual(await sato.locator('#paidLeaveCard button').allInnerTexts(), ['有給を申請する', '申請状況を見る']);
       await sato.click('#btnOpenPaidLeave');
       await sato.waitForSelector('#plFormModal:not([hidden])');
       assert.equal(await sato.inputValue('#plApplicant'), '佐藤 花子（E002）');
       assert.equal(await sato.getAttribute('#plDate', 'min'), '2026-09-21', '今の締め期間の初日から選べる');
       assert.match(await sato.innerText('#plTypeHelp'), /1日有給 8:00／半休 4:00/);
-      await sato.fill('#plDate', '2026-10-10');
-      await sato.dispatchEvent('#plDate', 'change');
-      await sato.waitForFunction(() => /休日/.test(document.getElementById('plShiftText').innerText));
-      await sato.check('input[name="plType"][value="1日有給"]');
-      await sato.fill('#plReason', '私用のため');
-      await sato.click('#btnSubmitPaidLeave');
-      await idle(sato);
-      assert.match(await lastToast(sato), /休日のため有給申請は不要です/);
       await sato.fill('#plDate', '2026-10-07');
       await sato.dispatchEvent('#plDate', 'change');
-      await sato.waitForFunction(() => /通常勤務/.test(document.getElementById('plShiftText').innerText));
+      await sato.check('input[name="plType"][value="1日有給"]');
+      await sato.fill('#plReason', '私用のため');
+      assert.equal(await sato.innerText('#plShiftText'), '', 'シフトは表示しない');
       await sato.click('#btnSubmitPaidLeave');
       await sato.waitForSelector('#plFormModal', { state: 'hidden' });
       assert.match(await lastToast(sato), /有給を申請しました（2026-10-07・1日有給）/);
@@ -105,6 +92,7 @@ test('段階3の画面（有給休暇申請・シフト・管理者の承認・�
       await sato.waitForSelector('#paidLeaveModal:not([hidden])');
       const c = card(sato, 'plActiveList', '10/1');
       assert.match(await c.innerText(), /午前半休[\s\S]*事後申請[\s\S]*承認待ち[\s\S]*<b>通院<\/b>/);
+      assert.doesNotMatch(await sato.innerText('#paidLeaveModal'), /シフト|未登録/, '申請状況にシフトを出さない');
       assert.equal(await sato.locator('#paidLeaveModal b').count(), 0, '入力はHTMLとして解釈しない');
       assert.deepEqual(await c.locator('button').allInnerTexts(), ['申請を取り下げる']);
       await shot(sato, 's3-02-paid-leave');
@@ -121,7 +109,8 @@ test('段階3の画面（有給休暇申請・シフト・管理者の承認・�
       await yamada.waitForSelector('#admPaidLeave .request');
       assert.match(await yamada.locator('#summaryCards').innerText(), /有給申請待ち\s*1\s*件/);
       const req = yamada.locator('#admPaidLeave .request').first();
-      assert.match(await req.innerText(), /佐藤 花子[\s\S]*承認待ち[\s\S]*通常勤務[\s\S]*10\/7（水）　1日有給/);
+      assert.match(await req.innerText(), /佐藤 花子[\s\S]*承認待ち[\s\S]*10\/7（水）　1日有給/);
+      assert.doesNotMatch(await req.innerText(), /シフト|未登録|承認できません/, 'シフト未登録でも承認できる・シフトの表示なし');
       await req.locator('button', { hasText: '却下' }).click();
       await yamada.click('#btnAdminConfirmOk');
       assert.match(await lastToast(yamada), /却下理由を入力してください/);
@@ -142,7 +131,8 @@ test('段階3の画面（有給休暇申請・シフト・管理者の承認・�
       await yamada.fill('#admMonth', '2026-10');
       await yamada.dispatchEvent('#admMonth', 'change');
       await yamada.waitForFunction(() => /対象期間/.test(document.getElementById('admTableTitle').textContent));
-      assert.match(await yamada.locator('#admTableHead').innerText(), /有給/);
+      assert.match(await yamada.locator('#admTableHead').innerText(), /有給（1日\/午前\/午後）\s+有給時間\s+在宅日数\s+要確認（申請）/);
+      assert.doesNotMatch(await yamada.locator('#admTableHead').innerText(), /休日出勤|法定休日出勤|シフト/);
       assert.match(await yamada.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText(), /8:00/);
       await shot(yamada, 's3-03-admin');
       await yamada.close();
@@ -174,7 +164,8 @@ test('段階3の画面（有給休暇申請・シフト・管理者の承認・�
       assert.doesNotMatch(await s.locator('#paidLeaveModal').innerText(), /予定が変わった|通院/);
       await s.close();
       assert.deepEqual(errors, []);
-      assert.ok(calls.includes('submitPaidLeaveRequest') && calls.includes('getMyShifts') && calls.includes('approvePaidLeaveRequest'));
+      assert.ok(calls.includes('submitPaidLeaveRequest') && calls.includes('approvePaidLeaveRequest'));
+      assert.ok(!calls.includes('getMyShifts') && !calls.includes('getMyShiftOn'), 'シフトの関数は呼ばない');
     });
   } finally {
     await browser.close();

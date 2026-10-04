@@ -493,19 +493,22 @@ function calculateAttendanceFields_(record, ctx) {
  *   午前半休（通常勤務） … 遅刻の基準を「午前半休_勤務開始」（14:30）に
  *   午後半休（通常勤務） … 早退の基準を「午後半休_勤務終了」（13:30）に
  *   未登録など           … これまでどおり（標準出勤・標準退勤）。管理者画面で「シフト未登録」の要確認
+ * ※ 今はシフト管理を使っていない（SHIFT_FEATURE.enabled = false）ので、休日の判定はせず、
+ *    有給だけで決める（1日有給は遅刻・早退なし、午前半休は 14:30、午後半休は 13:30 を基準）。
  */
 function dayJudgeFor_(employeeId, dateKey, rule, settings, shiftMap, paidLeaveMap) {
-  const shiftType = shiftOf_(shiftMap || {}, employeeId, dateKey).type;
+  const useShift = isShiftEnabled_(); // シフト管理を使わない間は、休日の判定をせず、半休はいつも半休の基準で判定する
+  const shiftType = useShift ? shiftOf_(shiftMap || {}, employeeId, dateKey).type : '';
   const leave = (paidLeaveMap || {})[String(employeeId).trim() + '|' + dateKey] || null;
   const out = { shiftType: shiftType, leave: leave, judgeLate: true, judgeEarly: true, judgeExcess: true,
     startBase: rule.standardStartMinutes, endBase: rule.standardEndMinutes };
-  if (isHolidayShift_(shiftType)) {
+  if (useShift && isHolidayShift_(shiftType)) {
     out.judgeLate = false; out.judgeEarly = false; out.judgeExcess = false;
     return out;
   }
   if (!leave) return out;
   if (leave.leaveType === PAID_LEAVE_TYPES.FULL) { out.judgeLate = false; out.judgeEarly = false; return out; }
-  if (shiftType !== SHIFT_TYPES.NORMAL) return out;
+  if (useShift && shiftType !== SHIFT_TYPES.NORMAL) return out;
   if (leave.leaveType === PAID_LEAVE_TYPES.AM && settings.amHalfStartMinutes !== null) out.startBase = settings.amHalfStartMinutes;
   if (leave.leaveType === PAID_LEAVE_TYPES.PM && settings.pmHalfEndMinutes !== null) out.endBase = settings.pmHalfEndMinutes;
   return out;

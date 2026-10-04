@@ -1,5 +1,8 @@
 'use strict';
-// 段階3のテスト（シフト・休日出勤との連携・有給休暇申請・半休の遅刻早退・フレックスの有給・要確認・20日締めの集計・権限）
+// 段階3のテスト（有給休暇申請・半休の遅刻早退・フレックスの有給・要確認・20日締めの集計・休日出勤申請の現場・権限）
+//
+// 今回はシフト管理を使わない（Config.gs の SHIFT_FEATURE.enabled = false）。前半はその状態（今回の運用）のテスト。
+// 後半の「将来用」は、シフト管理を使うとき（enabled = true）の判定が壊れていないかを確かめるテスト（今は画面・運用では使わない）。
 const test = require('node:test');
 const assert = require('node:assert');
 const { createLeafGas } = require('../dev/leaf-gas-mock');
@@ -12,9 +15,13 @@ const KUBO = 'ayumi@example.com';       // 固定勤務
 
 const STAFF = [['E003', '大森紗智子'], ['E005', '中津井祐貴'], ['E006', '久保亜弓']];
 
-/** 管理者2名・一般3名。シフトは shifts で日ごとに指定（指定のない日は未登録） */
+/**
+ * 管理者2名・一般3名。
+ * shifts を渡したときだけ「将来用」：シフト管理を使う状態にして、shifts（日付 → 区分）を登録する（指定のない日は未登録）
+ */
 function office(shifts) {
   const gas = createLeafGas({ email: MITSUYAMA });
+  if (shifts) gas.eval('SHIFT_FEATURE.enabled = true');
   gas.g.setupSystem();
   const base = { '在籍状況': '在籍', '雇用区分': '正社員', '部署': '一般', '休日出勤申請対象': '対象', '有給申請対象': '対象' };
   gas.g.appendRecords_('スタッフマスタ', [
@@ -85,7 +92,7 @@ const dayOf = (gas, id, date) => {
 
 // ============================================================ 準備（setupSystem）
 
-test('setupSystem：シフト・有給休暇申請シートを作り、有給申請対象は勤怠集計対象から初期値。2回目は何も変えない', () => {
+test('setupSystem：有給休暇申請シートを作り、有給申請対象は勤怠集計対象から初期値。シフトシートは作らない。2回目は何も変えない', () => {
   const gas = createLeafGas({ email: MITSUYAMA });
   const staff = gas.main.insertSheet('スタッフマスタ');
   const head = ['社員ID', '氏名', 'メールアドレス', '権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象'];
@@ -96,7 +103,8 @@ test('setupSystem：シフト・有給休暇申請シートを作り、有給申
   const h = staff.data[0];
   assert.deepEqual(h.slice(16), ['休日出勤申請対象', '有給申請対象'], '右端に追加');
   assert.deepEqual(staff.data.slice(1).map((r) => r[17]), ['対象外', '対象', '対象']);
-  assert.deepEqual(gas.main.getSheetByName('シフト').data[0], ['日付', '社員ID', '氏名', 'シフト区分', '予定開始', '予定終了', '備考', '登録日時', '更新日時']);
+  assert.equal(gas.main.getSheetByName('シフト'), null, 'シフト管理を使わない間はシフトシートを作らない');
+  assert.deepEqual(gas.main.getSheetByName('休日出勤申請').data[0].slice(25), ['現場'], '休日出勤申請は「現場」だけ右端に足す');
   assert.deepEqual(gas.main.getSheetByName('有給休暇申請').data[0], ['申請ID', '申請日時', '社員ID', '氏名', '対象日', '有給種別', '理由', '備考',
     '申請時シフト区分', '事後申請', 'ステータス', '承認者ID', '承認者名', '承認日時', '却下理由', '取消申請日時', '取消承認日時', '取消理由',
     '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時']);
@@ -111,9 +119,91 @@ test('setupSystem：シフト・有給休暇申請シートを作り、有給申
   assert.equal(JSON.stringify(gas.main.sheets.map((s) => s.data)), before, '2回目は何も変わらない（冪等）');
 });
 
+// ============================================================ 今回の範囲：シフトなしで申請・承認できる
+
+test('シフト管理を使わない：シフトがなくても休日出勤・有給を申請・承認できる。シフトを理由に要確認にしない', () => {
+  const gas = office();
+  gas.loginAs(NAKATSUI);
+  const hw = gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-07' })); // 平日でも土日でも受け付ける（シフトで判定しない）
+  assert.equal(hw.success, true, hw.message);
+  assert.equal(hw.message, '休日出勤を申請しました（2026-10-07）。管理者の承認をお待ちください', '以前と同じ文言（シフトの案内を出さない）');
+  const leave = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-10' })); // 土曜でも受け付ける
+  assert.equal(leave.success, true, leave.message);
+  assert.doesNotMatch(leave.message, /シフト|未登録/);
+  assert.equal(leave.data.shiftAtRequest, '', '申請時シフト区分は空欄');
+  gas.loginAs(MITSUYAMA);
+  const d = gas.g.getAdminDashboard({ date: '2026-10-02' }).data;
+  assert.equal(d.shiftEnabled, false);
+  assert.deepEqual([d.holidayWork.pending[0].currentShift, d.holidayWork.pending[0].approvable], ['', true]);
+  assert.deepEqual([d.paidLeave.pending[0].currentShift, d.paidLeave.pending[0].approvable], ['', true]);
+  assert.equal(gas.g.approveHolidayWorkRequest(hw.data.requestId).success, true, 'シフト未登録でも承認できる');
+  assert.equal(gas.g.approvePaidLeaveRequest(leave.data.requestId).success, true, 'シフト未登録でも承認できる');
+  // 勤務しても、シフト未登録・未申請休日出勤 などの要確認は出さない。休出・通常のバッジも出さない
+  work(gas, NAKATSUI, '2026-10-07', '09:00', '12:00');
+  work(gas, KUBO, '2026-10-11', '09:00', '12:00');
+  for (const [id, date] of [['E005', '2026-10-07'], ['E006', '2026-10-11']]) {
+    const st = dayOf(gas, id, date);
+    assert.deepEqual([st.shiftType, st.kind, st.holidayWork, st.checks, st.badges], ['', '', null, [], []], id + ' ' + date);
+  }
+  const row = monthlyRow(gas, '久保亜弓').days;
+  assert.deepEqual([row.holidayWorkDays, row.legalHolidayWorkDays, row.checkCount], [0, 0, 0]);
+  // スタッフ画面：シフトの表示はしない
+  gas.loginAs(NAKATSUI);
+  assert.equal(gas.g.getMyPaidLeaveRequests().data.shiftEnabled, false);
+  assert.equal(gas.g.getMyHolidayWorkRequests().data.shiftEnabled, false);
+  assert.deepEqual(gas.g.getMyHolidayWorkRequests().data.requests.map((r) => r.currentShift), ['']);
+  assert.deepEqual([gas.g.getMyShiftOn('2026-10-07').data.enabled, gas.g.getMyShifts().data.enabled], [false, false]);
+});
+
+test('シフト管理を使わない：休日出勤申請は「現場」を保存し、以前の流れ（承認待ち→承認／取消申請→取消済み）のまま', () => {
+  const gas = office();
+  gas.loginAs(NAKATSUI);
+  const a = gas.g.submitHolidayWorkRequest(hwPlan());
+  const row = () => gas.main.rows('休日出勤申請').find((r) => r['申請ID'] === a.data.requestId);
+  assert.deepEqual([row()['現場'], row()['ステータス'], a.data.statusLabel, a.data.site], ['堺市○○様邸', '申請中', '承認待ち', '堺市○○様邸']);
+  assert.equal('申請時シフト区分' in row(), false, '申請時シフト区分の列は作らない');
+  gas.loginAs(MITSUYAMA);
+  gas.g.approveHolidayWorkRequest(a.data.requestId);
+  gas.loginAs(NAKATSUI);
+  gas.g.requestHolidayWorkCancellation(a.data.requestId, '不要になった');
+  gas.loginAs(MITSUYAMA);
+  gas.g.approveHolidayWorkCancellation(a.data.requestId);
+  assert.equal(row()['ステータス'], '取消済み');
+  // 承認しても勤怠記録は変えない。休日の判定はしないので、遅刻・社内超過は以前どおり標準の時刻で計算する
+  gas.loginAs(KUBO);
+  const b = gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-10' })).data.requestId;
+  gas.loginAs(MITSUYAMA);
+  gas.g.approveHolidayWorkRequest(b);
+  work(gas, KUBO, '2026-10-10', '11:00', '20:00');
+  const r = att(gas, 'AT-20261010-E006');
+  assert.deepEqual([r['遅刻'], r['社内超過時間']], ['01:30', '01:30'], '段階2までと同じ計算（休日かどうかはシフト管理を始めてから判定）');
+});
+
+test('シフト管理を使わない：手で作ったシフトシートがあっても読まない・変えない', () => {
+  const gas = office();
+  const sheet = gas.main.insertSheet('シフト');
+  sheet.data = [['日付', '社員ID', '氏名', 'シフト区分'], ['2026-10-07', 'E005', '中津井祐貴', '休日']];
+  const before = JSON.stringify(sheet.data);
+  gas.g.clearTableCache_();
+  gas.loginAs(NAKATSUI);
+  assert.equal(gas.g.submitPaidLeaveRequest(pl()).success, true, 'シフトが休日でも拒否しない（読まない）');
+  gas.loginAs(MITSUYAMA);
+  gas.g.setupSystem();
+  assert.equal(JSON.stringify(sheet.data), before, 'setupSystem でも触らない');
+  assert.deepEqual(dayOf(gas, 'E005', '2026-10-07').checks, []);
+});
+
+// ============================================================ 将来用：シフトの判定（SHIFT_FEATURE.enabled = true のとき。今は使わない）
+
+test('将来用 setupSystem：シフト管理を使うときは シフトシート と 休日出勤申請の「申請時シフト区分」を作る', () => {
+  const gas = office({});
+  assert.deepEqual(gas.main.getSheetByName('シフト').data[0], ['日付', '社員ID', '氏名', 'シフト区分', '予定開始', '予定終了', '備考', '登録日時', '更新日時']);
+  assert.deepEqual(gas.main.getSheetByName('休日出勤申請').data[0].slice(25), ['現場', '申請時シフト区分']);
+});
+
 // ============================================================ シフトの判定
 
-test('シフト：通常勤務・休日・法定休日・未登録・重複・不備。法定休日は曜日ではなくシフトシートだけで決まる', () => {
+test('将来用 シフト：通常勤務・休日・法定休日・未登録・重複・不備。法定休日は曜日ではなくシフトシートだけで決まる', () => {
   const gas = office({ '2026-10-05': '通常勤務', '2026-10-10': '休日', '2026-10-11': '法定休日', '2026-10-04': '通常勤務' });
   gas.g.appendRecords_('シフト', [
     { '日付': '2026-10-06', '社員ID': 'E005', '氏名': '中津井祐貴', 'シフト区分': '通常勤務' },
@@ -135,8 +225,8 @@ test('シフト：通常勤務・休日・法定休日・未登録・重複・�
   assert.deepEqual(dayOf(gas, 'E005', '2026-10-08').checks, ['シフト区分の値が正しくない']);
 });
 
-test('シフト：自分のシフトだけ返す（他の人の行の内容は出ない）', () => {
-  const gas = office();
+test('将来用 シフト：自分のシフトだけ返す（他の人の行の内容は出ない）', () => {
+  const gas = office({});
   gas.g.appendRecords_('シフト', [
     { '日付': '2026-10-05', '社員ID': 'E006', '氏名': '久保亜弓', 'シフト区分': '休日', '備考': '久保さんの私用' },
     { '日付': '2026-10-05', '社員ID': 'E005', '氏名': '中津井祐貴', 'シフト区分': '通常勤務' },
@@ -148,9 +238,9 @@ test('シフト：自分のシフトだけ返す（他の人の行の内容は�
   assert.equal(gas.g.getMyShiftOn('2026-10-05').data.type, '通常勤務');
 });
 
-// ============================================================ 休日出勤との連携
+// ---- 将来用：休日出勤との連携
 
-test('休日出勤：通常勤務日は申請不要で拒否。休日・法定休日は申請でき、現場・申請時シフト区分を保存。表示は承認待ち', () => {
+test('将来用 休日出勤：通常勤務日は申請不要で拒否。休日・法定休日は申請でき、現場・申請時シフト区分を保存。表示は承認待ち', () => {
   const gas = office({ '2026-10-09': '通常勤務', '2026-10-10': '休日', '2026-10-11': '法定休日' });
   gas.loginAs(NAKATSUI);
   assert.match(gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-09' })).message, /通常勤務日のため休日出勤申請は不要です/);
@@ -167,8 +257,8 @@ test('休日出勤：通常勤務日は申請不要で拒否。休日・法定�
   assert.equal(gas.g.approveHolidayWorkRequest(b.data.requestId).success, true);
 });
 
-test('休日出勤：シフト未登録・重複の日は申請を受け付けるが承認できない。シフト登録後に承認できる', () => {
-  const gas = office();
+test('将来用 休日出勤：シフト未登録・重複の日は申請を受け付けるが承認できない。シフト登録後に承認できる', () => {
+  const gas = office({});
   gas.g.appendRecords_('シフト', [
     { '日付': '2026-10-17', '社員ID': 'E005', 'シフト区分': '休日' }, { '日付': '2026-10-17', '社員ID': 'E005', 'シフト区分': '休日' },
   ]);
@@ -194,7 +284,7 @@ test('休日出勤：シフト未登録・重複の日は申請を受け付け�
   assert.deepEqual(gas.main.rows('休日出勤申請').filter((r) => r['申請ID'] === a.data.requestId).map((r) => r['ステータス']), ['承認済み']);
 });
 
-test('休日出勤：実績は予定に丸めず実際の実働。休日・法定休日の区分ごとに日数・時間を数える', () => {
+test('将来用 休日出勤：実績は予定に丸めず実際の実働。休日・法定休日の区分ごとに日数・時間を数える', () => {
   const gas = office(calendarShifts());
   gas.loginAs(NAKATSUI);
   const a = gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-10', plannedStart: '10:00', plannedEnd: '16:00' })).data.requestId;
@@ -215,7 +305,7 @@ test('休日出勤：実績は予定に丸めず実際の実働。休日・法�
     [1, '05:08', 1, '04:15']);
 });
 
-test('休日出勤：休日・法定休日は遅刻・早退・社内超過を判定しない', () => {
+test('将来用 休日出勤：休日・法定休日は遅刻・早退・社内超過を判定しない', () => {
   const gas = office(calendarShifts());
   gas.loginAs(NAKATSUI);
   const id = gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-10' })).data.requestId;
@@ -230,7 +320,7 @@ test('休日出勤：休日・法定休日は遅刻・早退・社内超過を�
   assert.deepEqual([n['遅刻'], n['社内超過時間']], ['01:30', '01:30']);
 });
 
-test('休日出勤：承認済みの申請がない休日の勤務は 要確認（未申請休日出勤）。取消済み＋勤務も要確認', () => {
+test('将来用 休日出勤：承認済みの申請がない休日の勤務は 要確認（未申請休日出勤）。取消済み＋勤務も要確認', () => {
   const gas = office(calendarShifts());
   work(gas, NAKATSUI, '2026-10-10', '09:00', '12:00');
   assert.deepEqual(dayOf(gas, 'E005', '2026-10-10').checks, ['未申請休日出勤']);
@@ -251,13 +341,11 @@ test('休日出勤：承認済みの申請がない休日の勤務は 要確認�
 });
 
 test('休日出勤と有給は同じ日に申請できない（どちらの順でも拒否）', () => {
-  const gas = office({ '2026-10-07': '通常勤務', '2026-10-10': '休日' });
+  const gas = office();
   gas.loginAs(NAKATSUI);
   assert.equal(gas.g.submitPaidLeaveRequest(pl()).success, true);
-  gas.main.getSheetByName('シフト').data.forEach((r) => { if (r[0] === '2026-10-07' && r[1] === 'E005') r[3] = '休日'; });
-  gas.g.clearTableCache_();
-  assert.match(gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-07' })).message, /有給/);
-  // 休日出勤が先：シフト未登録の日に休日出勤を申請 → 同じ日の有給は拒否
+  assert.match(gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-07' })).message, /有給休暇の申請があります.*休日出勤申請はできません/);
+  // 休日出勤が先 → 同じ日の有給は拒否
   assert.equal(gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-08' })).success, true);
   assert.match(gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-08' })).message, /休日出勤の申請があります.*有給申請はできません/);
 });
@@ -265,7 +353,7 @@ test('休日出勤と有給は同じ日に申請できない（どちらの順�
 // ============================================================ 有給休暇申請
 
 test('有給：対象者だけ。対象外・管理者（対象外）・空欄は画面に出さず、直接呼んでも拒否', () => {
-  const gas = office({ '2026-10-07': '通常勤務' });
+  const gas = office();
   gas.loginAs(MITSUYAMA);
   assert.deepEqual([gas.g.getMyPaidLeaveRequests().data.eligible], [false]);
   assert.match(gas.g.submitPaidLeaveRequest(pl()).message, /有給休暇申請の対象外です/);
@@ -278,10 +366,10 @@ test('有給：対象者だけ。対象外・管理者（対象外）・空欄�
   gas.loginAs(NAKATSUI);
   assert.equal(gas.g.getMyPaidLeaveRequests().data.eligible, true);
   gas.loginAs(OMORI);
-  assert.equal(gas.g.submitPaidLeaveRequest(pl()).success, true, 'フレックスも申請できる（シフト未登録でも受け付け）');
+  assert.equal(gas.g.submitPaidLeaveRequest(pl()).success, true, 'フレックスも申請できる');
 });
 
-test('有給：通常勤務の日は申請・承認できる。休日・法定休日は拒否。未登録・重複は受け付けるが承認できない', () => {
+test('将来用 有給：通常勤務の日は申請・承認できる。休日・法定休日は拒否。未登録・重複は受け付けるが承認できない', () => {
   const gas = office({ '2026-10-07': '通常勤務', '2026-10-10': '休日', '2026-10-11': '法定休日' });
   gas.g.appendRecords_('シフト', [{ '日付': '2026-10-13', '社員ID': 'E005', 'シフト区分': '通常勤務' }, { '日付': '2026-10-13', '社員ID': 'E005', 'シフト区分': '通常勤務' }]);
   gas.g.clearTableCache_();
@@ -313,7 +401,7 @@ test('有給：通常勤務の日は申請・承認できる。休日・法定�
 });
 
 test('有給：1日1件。承認待ち・承認済み・取消申請中があれば同じ日は申請できない。取下げ・却下後は申請できる', () => {
-  const gas = office({ '2026-10-07': '通常勤務' });
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const a = gas.g.submitPaidLeaveRequest(pl()).data.requestId;
   assert.match(gas.g.submitPaidLeaveRequest(pl({ leaveType: '午前半休' })).message, /有給申請はすでにあります（1日有給・承認待ち）/);
@@ -331,7 +419,7 @@ test('有給：1日1件。承認待ち・承認済み・取消申請中があれ
 });
 
 test('有給：状態の流れ（取下げ・取消申請・取消承認・取消却下）。取下げは承認待ちだけ、取消申請は承認済みだけ', () => {
-  const gas = office({ '2026-10-07': '通常勤務', '2026-10-08': '通常勤務' });
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const a = gas.g.submitPaidLeaveRequest(pl()).data.requestId;
   const b = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-08' })).data.requestId;
@@ -356,7 +444,7 @@ test('有給：状態の流れ（取下げ・取消申請・取消承認・取�
 });
 
 test('有給：事後申請は今の20日締め期間の中だけ（事後申請=○・要確認）。締めた後の期間は拒否', () => {
-  const gas = office({ '2026-09-21': '通常勤務', '2026-09-18': '通常勤務', '2026-10-01': '通常勤務' });
+  const gas = office();
   gas.loginAs(NAKATSUI);
   assert.match(gas.g.submitPaidLeaveRequest(pl({ date: '2026-09-18' })).message, /締めた後の期間（2026年9月分）のため申請できません/);
   const a = gas.g.submitPaidLeaveRequest(pl({ date: '2026-09-21' }));
@@ -372,12 +460,11 @@ test('有給：事後申請は今の20日締め期間の中だけ（事後申請
   // 締め日の翌日になると、前の期間（10/20まで）は申請できない
   gas.setNow('2026-10-21 08:00');
   gas.loginAs(NAKATSUI);
-  setShifts(gas, { '2026-10-20': '通常勤務' }, [['E005', '中津井祐貴']]);
   assert.match(gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-20' })).message, /締めた後の期間（2026年10月分）/);
 });
 
 test('有給：1日有給は勤怠記録がなくても8:00として表示・集計。勤務実績があれば両方残して要確認', () => {
-  const gas = office(calendarShifts());
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const a = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07' })).data.requestId;
   const b = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-08' })).data.requestId;
@@ -401,7 +488,7 @@ test('有給：1日有給は勤怠記録がなくても8:00として表示・集
 });
 
 test('有給：午前半休は 14:30 を基準に遅刻、18:30 を基準に早退。承認・取消で遅刻だけ計算し直し、打刻・実働は変えない', () => {
-  const gas = office(calendarShifts());
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const id = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07', leaveType: '午前半休' })).data.requestId;
   work(gas, NAKATSUI, '2026-10-07', '14:40', '18:00');
@@ -414,7 +501,7 @@ test('有給：午前半休は 14:30 を基準に遅刻、18:30 を基準に早�
   assert.deepEqual([r['遅刻'], r['早退'], r['社内超過時間']], ['00:10', '00:30', '00:00']);
   assert.deepEqual([r['出勤'], r['退勤'], r['実働時間']], keep, '打刻・実働は変えない');
   const d = dayOf(gas, 'E005', '2026-10-07');
-  assert.deepEqual([d.leave.minutes, d.workMinutes, d.badges.map((x) => x.text)], [240, 200, ['通常', '午前休']], '有給4:00と実働3:20は別々');
+  assert.deepEqual([d.leave.minutes, d.workMinutes, d.badges.map((x) => x.text)], [240, 200, ['午前休']], '有給4:00と実働3:20は別々');
   // 承認後の出勤で、14:30ちょうどなら遅刻なし
   gas.loginAs(KUBO);
   const k = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-09', leaveType: '午前半休' })).data.requestId;
@@ -435,7 +522,7 @@ test('有給：午前半休は 14:30 を基準に遅刻、18:30 を基準に早�
 });
 
 test('有給：午後半休は 13:30 を基準に早退。13:30 まで働けば早退なし', () => {
-  const gas = office(calendarShifts());
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const a = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07', leaveType: '午後半休' })).data.requestId;
   gas.loginAs(KUBO);
@@ -449,11 +536,11 @@ test('有給：午後半休は 13:30 を基準に早退。13:30 まで働けば�
   const k = att(gas, 'AT-20261007-E006');
   assert.deepEqual([n['遅刻'], n['早退']], ['', '00:30']);
   assert.deepEqual([k['遅刻'], k['早退']], ['00:10', '']);
-  assert.equal(dayOf(gas, 'E006', '2026-10-07').badges.map((x) => x.text).join(','), '通常,午後休');
+  assert.equal(dayOf(gas, 'E006', '2026-10-07').badges.map((x) => x.text).join(','), '午後休');
 });
 
 test('有給：半休の基準時刻の設定が正しくないときは通常の基準で判定し、要確認（半休基準等の設定不備）', () => {
-  const gas = office(calendarShifts());
+  const gas = office();
   setSetting(gas, '午前半休_勤務開始', 'お昼');
   gas.loginAs(NAKATSUI);
   const id = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07', leaveType: '午前半休' })).data.requestId;
@@ -465,7 +552,7 @@ test('有給：半休の基準時刻の設定が正しくないときは通常�
 });
 
 test('フレックス：有給算入が未確定のときは実働と有給を別に表示し、138時間には足さない', () => {
-  const gas = office(calendarShifts());
+  const gas = office();
   gas.loginAs(OMORI);
   const id = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07' })).data.requestId;
   gas.loginAs(MITSUYAMA);
@@ -484,8 +571,8 @@ test('フレックス：有給算入が未確定のときは実働と有給を�
   assert.equal(monthlyRow(gas, '大森紗智子').flex.worked, '09:00', '算入しても実働の表示は変えない');
 });
 
-test('月次：20日締めの期間で、休日出勤・法定休日出勤・有給の回数と時間・在宅日数・要確認件数を数える', () => {
-  const gas = office(calendarShifts());
+test('月次：20日締めの期間で、有給の回数と時間・在宅日数・要確認件数を数える（休日出勤の日数はシフト管理を始めてから）', () => {
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const ids = [
     gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07' })).data.requestId,
@@ -498,20 +585,33 @@ test('月次：20日締めの期間で、休日出勤・法定休日出勤・有
   ids.forEach((id) => assert.equal(gas.g.approvePaidLeaveRequest(id).success, true));
   gas.g.approveHolidayWorkRequest(hw);
   work(gas, NAKATSUI, '2026-10-17', '09:00', '12:00');
-  work(gas, NAKATSUI, '2026-10-18', '09:00', '11:00'); // 法定休日・未申請 → 要確認
+  work(gas, NAKATSUI, '2026-10-18', '09:00', '11:00'); // 申請なし：シフトで休日か分からないので要確認にしない
   work(gas, NAKATSUI, '2026-10-13', '09:30', '18:30', '在宅');
   work(gas, NAKATSUI, '2026-10-20', '09:30', '18:30', '在宅');
   work(gas, NAKATSUI, '2026-10-21', '09:30', '18:30', '在宅'); // 次の期間
   const d = monthlyRow(gas, '中津井祐貴').days;
-  assert.deepEqual([d.holidayWorkDays, d.holidayWorkTime, d.legalHolidayWorkDays, d.legalHolidayWorkTime], [1, '03:00', 1, '02:00']);
+  assert.deepEqual([d.holidayWorkDays, d.legalHolidayWorkDays], [0, 0]);
   assert.deepEqual([d.fullLeaveDays, d.amLeaveDays, d.pmLeaveDays, d.leaveTime], [1, 1, 1, '16:00']);
-  assert.deepEqual([d.remoteDays, d.checkCount, d.checks], [2, 1, [{ date: '2026-10-18', reason: '未申請休日出勤' }]]);
+  assert.deepEqual([d.remoteDays, d.checkCount], [2, 0]);
   const nov = monthlyRow(gas, '中津井祐貴', '2026-11').days;
-  assert.deepEqual([nov.fullLeaveDays, nov.remoteDays, nov.checkCount], [1, 1, 1], '10/21 は11月分（10/21の1日有給＋勤務は要確認）');
+  assert.deepEqual([nov.fullLeaveDays, nov.remoteDays, nov.checks], [1, 1, [{ date: '2026-10-21', reason: '1日有給日に勤務実績あり' }]], '10/21 は11月分');
 });
 
-test('CSV：シフト区分・日の区分・有給種別・有給時間・要確認（シフト・申請）を右端に出す', () => {
+test('将来用 月次：シフト管理を使うときは、休日出勤・法定休日出勤の日数・時間と 未申請休日出勤 の要確認も数える', () => {
   const gas = office(calendarShifts());
+  gas.loginAs(NAKATSUI);
+  const hw = gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-17' })).data.requestId;
+  gas.loginAs(MITSUYAMA);
+  gas.g.approveHolidayWorkRequest(hw);
+  work(gas, NAKATSUI, '2026-10-17', '09:00', '12:00');
+  work(gas, NAKATSUI, '2026-10-18', '09:00', '11:00');
+  const d = monthlyRow(gas, '中津井祐貴').days;
+  assert.deepEqual([d.holidayWorkDays, d.holidayWorkTime, d.legalHolidayWorkDays, d.legalHolidayWorkTime], [1, '03:00', 1, '02:00']);
+  assert.deepEqual(d.checks, [{ date: '2026-10-18', reason: '未申請休日出勤' }]);
+});
+
+test('CSV：有給種別・有給時間・要確認（申請）を右端に出す（シフト区分・日の区分の列は出さない）', () => {
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const id = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07', leaveType: '午後半休' })).data.requestId;
   gas.loginAs(MITSUYAMA);
@@ -519,16 +619,25 @@ test('CSV：シフト区分・日の区分・有給種別・有給時間・要�
   work(gas, NAKATSUI, '2026-10-07', '09:30', '13:30');
   work(gas, NAKATSUI, '2026-10-10', '09:00', '12:00');
   gas.loginAs(MITSUYAMA);
-  const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv.replace(/^﻿/, '').trim().split(/\r?\n/);
+  const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
+  assert.match(csv[0], /,交通費合計,有給種別,有給時間,要確認（申請）$/);
+  assert.ok(csv.some((l) => /^2026-10-07,E005/.test(l) && /,午後半休,04:00,$/.test(l)), csv.join('\n'));
+  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,,,$/.test(l) && !/休日|未申請|未登録/.test(l)), '土曜の勤務でも区分・要確認は出さない');
+});
+
+test('将来用 CSV：シフト管理を使うときは シフト区分・日の区分 も出す', () => {
+  const gas = office(calendarShifts());
+  work(gas, NAKATSUI, '2026-10-10', '09:00', '12:00');
+  gas.loginAs(MITSUYAMA);
+  const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
   assert.match(csv[0], /,シフト区分,日の区分,有給種別,有給時間,要確認（シフト・申請）$/);
-  assert.ok(csv.some((l) => /^2026-10-07,E005/.test(l) && /,通常勤務,通常,午後半休,04:00,$/.test(l)), csv.join('\n'));
   assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,休日,休日出勤,,,未申請休日出勤$/.test(l)), csv.join('\n'));
 });
 
 // ============================================================ 権限・安全
 
-test('権限：一般社員は有給・休日出勤の承認系とシフト以外の人のデータを使えない。自分の申請の承認もできない', () => {
-  const gas = office({ '2026-10-07': '通常勤務' });
+test('権限：一般社員は有給の承認系と他の人のデータを使えない。自分の申請の承認もできない', () => {
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const id = gas.g.submitPaidLeaveRequest(pl()).data.requestId;
   for (const fn of ['approvePaidLeaveRequest', 'rejectPaidLeaveRequest', 'approvePaidLeaveCancellation', 'rejectPaidLeaveCancellation']) {
@@ -554,7 +663,7 @@ test('権限：一般社員は有給・休日出勤の承認系とシフト以�
 });
 
 test('安全：書き込みは LockService の中で行い、同時の二重申請は1件だけ通る', () => {
-  const gas = office({ '2026-10-07': '通常勤務' });
+  const gas = office();
   gas.loginAs(NAKATSUI);
   const first = gas.g.submitPaidLeaveRequest(pl());
   const second = gas.g.submitPaidLeaveRequest(pl());
@@ -568,23 +677,21 @@ test('安全：書き込みは LockService の中で行い、同時の二重申�
   }
 });
 
-test('setupSystem 前：有給のカードは出さず、申請は setupSystem を案内。シフトシートがなければ全員「未登録」', () => {
+test('setupSystem 前：有給のカードは出さず、申請は setupSystem を案内。打刻はそのまま使える', () => {
   const gas = office();
   gas.main.deleteSheet(gas.main.getSheetByName('有給休暇申請'));
-  gas.main.deleteSheet(gas.main.getSheetByName('シフト'));
   gas.g.clearTableCache_();
   gas.loginAs(NAKATSUI);
   const d = gas.g.getMyPaidLeaveRequests().data;
   assert.deepEqual([d.eligible, d.setupRequired], [false, true]);
   assert.match(gas.g.submitPaidLeaveRequest(pl()).message, /setupSystem\(\) を実行してください/);
-  assert.equal(gas.g.getMyShiftOn('2026-10-07').data.type, '未登録');
   assert.equal(gas.g.clockIn('出社').success, true, '打刻はそのまま使える');
   gas.loginAs(MITSUYAMA);
   const admin = gas.g.getAdminDashboard({}).data;
   assert.deepEqual([admin.paidLeave.setupRequired, admin.summary.pendingPaidLeave], [true, 0]);
 });
 
-test('画面：有給・シフトの画面から呼ぶ関数はサーバーにあり、管理者用の関数を含まない。innerHTML を使わない', () => {
+test('画面：有給の画面から呼ぶ関数はサーバーにあり、管理者用の関数を含まない。innerHTML を使わない', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const dir = path.join(__dirname, '../leaf-portal/gas');
@@ -597,4 +704,5 @@ test('画面：有給・シフトの画面から呼ぶ関数はサーバーに�
   const index = fs.readFileSync(path.join(dir, 'Index.html'), 'utf8');
   for (const id of ['paidLeaveCard', 'paidLeaveMiniList', 'btnOpenPaidLeave', 'btnOpenPaidLeaveHistory', 'btnOpenShifts']) assert.match(index, new RegExp('id="' + id + '"'), id);
   assert.match(index, /includeHtml_\('PaidLeaveView'\)[\s\S]*includeHtml_\('PaidLeaveScripts'\)/);
+  assert.match(index, /<div class="card link-card" id="shiftCard" hidden>/, 'シフトのカードは最初から隠す（シフト管理を使うときだけ出す）');
 });

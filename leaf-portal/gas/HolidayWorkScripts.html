@@ -110,7 +110,7 @@
 
     var dl = el('dl', 'hw-card-info');
     addInfo(dl, '予定時間帯', rangeText(r) + '（予定拘束 ' + App.trimHour(r.plannedSpan) + '）');
-    addInfo(dl, 'シフト', r.currentShift + (r.status === STATUS.PENDING && r.currentShift !== '休日' && r.currentShift !== '法定休日' ? '（シフトが休日・法定休日に決まるまで承認されません）' : ''));
+    if (r.currentShift) addInfo(dl, 'シフト', r.currentShift + (r.status === STATUS.PENDING && r.currentShift !== '休日' && r.currentShift !== '法定休日' ? '（シフトが休日・法定休日に決まるまで承認されません）' : ''));
     if (r.site) addInfo(dl, '現場', r.site);
     addInfo(dl, '振替休日', compText(r));
     addInfo(dl, '休日出勤理由', r.reason);
@@ -226,9 +226,9 @@
     var box = $('hwShiftText');
     box.textContent = '';
     box.classList.remove('is-error');
-    if (!date) return;
+    if (!date || !H.data || !H.data.shiftEnabled) return; // シフト管理を使わない間は出さない
     call('getMyShiftOn', [date]).then(function (res) {
-      if (!res.success || $('hwDate').value !== date) return;
+      if (!res.success || !res.data.enabled || $('hwDate').value !== date) return;
       var t = res.data.type;
       box.textContent = 'この日のシフト：' + t + (t === '通常勤務' ? '（通常勤務日のため休日出勤申請は不要です）'
         : t === '休日' || t === '法定休日' ? '' : '（申請はできますが、シフトが休日・法定休日に決まるまで承認されません）');

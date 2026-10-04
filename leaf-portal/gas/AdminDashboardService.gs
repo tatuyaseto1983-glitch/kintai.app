@@ -50,7 +50,7 @@ function getAdminDashboard(params) {
     const ctx = buildAdminContext_(settings, now.date);
     const has = function (name) { return parts.indexOf(name) !== -1; };
 
-    const data = { date: date, month: month, today: now.date };
+    const data = { date: date, month: month, today: now.date, shiftEnabled: isShiftEnabled_() };
     if (has('admin')) data.admin = { name: admin.name, department: admin.department, employeeId: admin.employeeId };
     if (has('summary')) data.summary = buildAdminSummary_(ctx);
     if (has('daily')) data.daily = buildAdminDaily_(ctx, date);
@@ -97,8 +97,9 @@ function exportAdminAttendanceCsv(params) {
       '勤務場所', '勤務区間数', '出社時間', '在宅時間',
       // 段階2：付帯情報と交通費（現場は勤務場所ではなく付帯情報。業務走行距離・交通費合計は交通費明細から集計。削除済みは入れない）
       '日備考', '出張', '直行', '直帰', '現場', '業務走行距離', '交通費合計',
-      // 段階3：シフト・1日の区分・有給（有給時間は実働とは別の列）・要確認（シフト・申請に関するもの。残業の要確認とは別）
-      'シフト区分', '日の区分', '有給種別', '有給時間', '要確認（シフト・申請）'];
+      // 段階3：有給（有給時間は実働とは別の列）・要確認（申請に関するもの。残業の要確認とは別）
+      // シフト管理を使うときだけ、その前に シフト区分・日の区分 を入れる
+    ].concat(dayStatusCsvHeaders_());
     const dctx = buildDayStatusContext_(settings);
     const transportByDay = {};
     listTransportRows_('', range.from, range.to).forEach(function (r) {
@@ -204,9 +205,15 @@ function detectPunchIssues_(record, ctx) {
 }
 
 /** 勤怠1件を管理者画面の行にする（部署・打刻漏れを追加） */
-/** CSV の「シフト区分」「日の区分」「有給種別」「有給時間」「要確認（シフト・申請）」の欄 */
+/** CSV の段階3の見出し（シフト管理を使わない間は 有給種別・有給時間・要確認（申請） の3列） */
+function dayStatusCsvHeaders_() {
+  return isShiftEnabled_() ? ['シフト区分', '日の区分', '有給種別', '有給時間', '要確認（シフト・申請）'] : ['有給種別', '有給時間', '要確認（申請）'];
+}
+
+/** CSV の段階3の欄（見出しは dayStatusCsvHeaders_） */
 function dayStatusCsvCells_(st) {
-  return [st.shiftType, st.kind, st.leave ? st.leave.type : '', st.leave ? formatMinutes_(st.leave.minutes) : '', st.checks.join('・')];
+  const leave = [st.leave ? st.leave.type : '', st.leave ? formatMinutes_(st.leave.minutes) : '', st.checks.join('・')];
+  return isShiftEnabled_() ? [st.shiftType, st.kind].concat(leave) : leave;
 }
 
 /** CSV の「業務走行距離」「交通費合計」の欄（その日の交通費明細から） */

@@ -26,6 +26,7 @@ function setupSystem() {
   }
 
   SHEET_DEFINITIONS.forEach(function (definition) {
+    if (definition.requiresShift && !isShiftEnabled_()) return; // シフト管理を使わない間は作らない（あるシートもそのまま）
     lines.push('・' + definition.name + '：' + ensureSheet_(ss, definition));
   });
 
@@ -102,7 +103,7 @@ function ensureColumnCount_(sheet, count) {
 function withAllHeaders_(definition) {
   const copy = {};
   Object.keys(definition).forEach(function (k) { copy[k] = definition[k]; });
-  copy.headers = definition.headers.concat(definition.optionalHeaders || []);
+  copy.headers = definition.headers.concat(definition.optionalHeaders || [], isShiftEnabled_() ? (definition.shiftOptionalHeaders || []) : []);
   return copy;
 }
 

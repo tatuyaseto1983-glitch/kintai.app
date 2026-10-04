@@ -9,6 +9,9 @@
  *   シフト不備               … 「シフト区分」が上の3つ以外
  *
  * 法定休日は曜日では決めず、シフトシートの「法定休日」だけで決めます。
+ *
+ * ※ 今はシフト管理を使っていません（Config.gs の SHIFT_FEATURE.enabled = false）。
+ *    その間は、シフトを読まず（すべて「シフトなし」）、申請の受付・承認や遅刻・早退の判定にもシフトを使いません。
  * 入力は今のところ管理者がシートに直接入力します。将来の管理画面・CSV取込・一括登録は、
  * このファイルに書き込みの関数を足せば、読み取り側（判定）はそのまま使えます。
  */
@@ -17,6 +20,7 @@
 function getMyShifts(month) {
   return runApi_(function () {
     const staff = getCurrentStaff_();
+    if (!isShiftEnabled_()) return { message: 'シフト管理は使っていません', data: { enabled: false, days: [] } };
     const now = getNowInfo_();
     const period = isBlank_(month) ? getPayrollPeriodForDate_(now.date) : getPayrollPeriodByMonthKey_(requireMonthKey_(month, '対象月'));
     const map = buildShiftMap_(period.from, period.to, staff.employeeId);
@@ -26,7 +30,7 @@ function getMyShifts(month) {
     });
     return {
       message: period.periodText + ' のシフトを取得しました',
-      data: { month: period.monthKey, from: period.from, to: period.to, periodText: period.periodText, today: now.date, available: hasShiftSchema_(), days: days },
+      data: { enabled: true, month: period.monthKey, from: period.from, to: period.to, periodText: period.periodText, today: now.date, available: hasShiftSchema_(), days: days },
     };
   });
 }
@@ -36,12 +40,19 @@ function getMyShiftOn(date) {
   return runApi_(function () {
     const staff = getCurrentStaff_();
     const dateKey = requireDateKey_(date, '日付');
+    if (!isShiftEnabled_()) return { message: 'シフト管理は使っていません', data: { enabled: false, date: dateKey, type: '', plannedStart: '', plannedEnd: '' } };
     const s = shiftOf_(buildShiftMap_(dateKey, dateKey, staff.employeeId), staff.employeeId, dateKey);
-    return { message: dateKey + ' のシフト：' + s.type, data: { date: dateKey, type: s.type, plannedStart: s.plannedStart, plannedEnd: s.plannedEnd } };
+    return { message: dateKey + ' のシフト：' + s.type, data: { enabled: true, date: dateKey, type: s.type, plannedStart: s.plannedStart, plannedEnd: s.plannedEnd } };
   });
 }
 
+/** シフト管理を使うか（Config.gs の SHIFT_FEATURE）。false の間はシフトを読まない */
+function isShiftEnabled_() {
+  return !!SHIFT_FEATURE.enabled;
+}
+
 function hasShiftSchema_() {
+  if (!isShiftEnabled_()) return false;
   if (!getSpreadsheet_().getSheetByName(SHEET_NAMES.SHIFTS)) return false;
   try {
     readTable_(SHEET_NAMES.SHIFTS);
@@ -155,7 +166,8 @@ function buildDayStatus_(employeeId, dateKey, record, dctx) {
   const id = String(employeeId).trim();
   const key = id + '|' + dateKey;
   const settings = dctx.settings;
-  const shiftType = shiftOf_(dctx.shiftMap, id, dateKey).type;
+  const useShift = isShiftEnabled_(); // シフト管理を使わない間は、シフトに関する区分・要確認を出さない
+  const shiftType = useShift ? shiftOf_(dctx.shiftMap, id, dateKey).type : '';
   const worked = !!record && !isBlank_(record['出勤']);
   const workMinutes = worked ? (toMinutes_(record['実働時間']) || 0) : 0;
   const leaveView = dctx.leaveMap[key] || null;
@@ -163,26 +175,28 @@ function buildDayStatus_(employeeId, dateKey, record, dctx) {
   const checks = [];
   const out = { shiftType: shiftType, worked: worked, workMinutes: workMinutes, kind: '', holidayWork: null, leave: null, place: '', badges: [], checks: checks };
 
-  if (shiftType === SHIFT_STATE.DUPLICATE) checks.push(DAY_CHECKS.SHIFT_DUPLICATE);
-  if (shiftType === SHIFT_STATE.INVALID) checks.push(DAY_CHECKS.SHIFT_INVALID);
-  if (worked && shiftType === SHIFT_STATE.UNREGISTERED) checks.push(DAY_CHECKS.UNREGISTERED_WORK);
+  if (useShift) {
+    if (shiftType === SHIFT_STATE.DUPLICATE) checks.push(DAY_CHECKS.SHIFT_DUPLICATE);
+    if (shiftType === SHIFT_STATE.INVALID) checks.push(DAY_CHECKS.SHIFT_INVALID);
+    if (worked && shiftType === SHIFT_STATE.UNREGISTERED) checks.push(DAY_CHECKS.UNREGISTERED_WORK);
+  }
 
-  if (worked && isHolidayShift_(shiftType)) {
+  if (useShift && worked && isHolidayShift_(shiftType)) {
     out.kind = shiftType === SHIFT_TYPES.LEGAL_HOLIDAY ? '法定休日出勤' : '休日出勤';
     out.holidayWork = { kind: out.kind, minutes: workMinutes, approved: !!hwApproved }; // 実績の実働（予定時間に丸めない）
     if (!hwApproved) {
       const statuses = dctx.hwStatusByKey[key] || [];
       checks.push(statuses.indexOf(HOLIDAY_WORK_STATUS.CANCELLED) !== -1 ? DAY_CHECKS.CANCELLED_HOLIDAY_WORK : DAY_CHECKS.NO_HOLIDAY_REQUEST);
     }
-  } else if (worked) {
+  } else if (useShift && worked) {
     out.kind = '通常';
   }
-  if (hwApproved && !isHolidayShift_(shiftType)) checks.push(DAY_CHECKS.HW_SHIFT_MISMATCH);
+  if (useShift && hwApproved && !isHolidayShift_(shiftType)) checks.push(DAY_CHECKS.HW_SHIFT_MISMATCH);
 
   if (leaveView) {
     const minutes = paidLeaveMinutesOf_(leaveView.leaveType, settings);
     out.leave = { type: leaveView.leaveType, minutes: minutes || 0, requestId: leaveView.requestId };
-    if (shiftType !== SHIFT_TYPES.NORMAL) checks.push(DAY_CHECKS.LEAVE_SHIFT_MISMATCH);
+    if (useShift && shiftType !== SHIFT_TYPES.NORMAL) checks.push(DAY_CHECKS.LEAVE_SHIFT_MISMATCH);
     if (leaveView.leaveType === PAID_LEAVE_TYPES.FULL && worked) checks.push(DAY_CHECKS.FULL_LEAVE_WORK);
     const halfBad = (leaveView.leaveType === PAID_LEAVE_TYPES.AM && settings.amHalfStartMinutes === null) ||
       (leaveView.leaveType === PAID_LEAVE_TYPES.PM && settings.pmHalfEndMinutes === null);

@@ -138,6 +138,14 @@ const HOLIDAY_WORK_STATUS = {
 const SHIFT_TYPES = { NORMAL: '通常勤務', HOLIDAY: '休日', LEGAL_HOLIDAY: '法定休日' };
 const SHIFT_STATE = { UNREGISTERED: '未登録', DUPLICATE: 'シフト重複', INVALID: 'シフト不備' };
 
+/**
+ * シフト管理を使うか（今は使わない）。
+ * false の間は、シフトシートを作らず、シフトを読まず、シフトで申請の受付・承認や遅刻・早退の判定を変えません
+ * （休日出勤申請・有給休暇申請は、シフトの登録がなくても申請・承認できます）。
+ * シフトの判定のコード（ShiftService.gs など）は、後の段階で使うために残しています。使うときは true にして setupSystem() を実行します。
+ */
+const SHIFT_FEATURE = { enabled: false };
+
 /** 有給の種別 */
 const PAID_LEAVE_TYPES = { FULL: '1日有給', AM: '午前半休', PM: '午後半休' };
 
@@ -309,8 +317,9 @@ const SHEET_DEFINITIONS = [
     headers: ['申請ID', '申請日時', '社員ID', '氏名', '休日出勤日', '開始予定時刻', '終了予定時刻', '予定勤務時間',
       '休日出勤理由', '業務内容', '振替休日区分', '振替休日予定日', '備考', 'ステータス', '承認者ID', '承認者名', '承認日時',
       '却下理由', '取消申請日時', '取消承認日時', '取消理由', '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時'],
-    // 段階3：現場（任意）と、申請したときのシフト区分（承認は「今の」シフトで判定する）
-    optionalHeaders: ['現場', '申請時シフト区分'],
+    // 段階3：現場（任意）。申請したときのシフト区分はシフト管理を使うときだけ列を作る（承認は「今の」シフトで判定する）
+    optionalHeaders: ['現場'],
+    shiftOptionalHeaders: ['申請時シフト区分'],
     choices: {
       'ステータス': [HOLIDAY_WORK_STATUS.PENDING, HOLIDAY_WORK_STATUS.APPROVED, HOLIDAY_WORK_STATUS.REJECTED,
         HOLIDAY_WORK_STATUS.CANCEL_REQUESTED, HOLIDAY_WORK_STATUS.CANCELLED],
@@ -336,8 +345,9 @@ const SHEET_DEFINITIONS = [
   },
   {
     // 社員×日付のシフト。管理者がシートに直接入力する（行がない日＝未登録。通常勤務とはみなさない）
-    // 予定開始・予定終了は表示だけ（今は計算に使わない）
+    // 予定開始・予定終了は表示だけ（今は計算に使わない）。シフト管理を使うとき（SHIFT_FEATURE.enabled）だけ作る
     name: SHEET_NAMES.SHIFTS,
+    requiresShift: true,
     headers: ['日付', '社員ID', '氏名', 'シフト区分', '予定開始', '予定終了', '備考', '登録日時', '更新日時'],
     choices: { 'シフト区分': [SHIFT_TYPES.NORMAL, SHIFT_TYPES.HOLIDAY, SHIFT_TYPES.LEGAL_HOLIDAY] },
   },

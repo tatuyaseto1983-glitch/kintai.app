@@ -96,13 +96,16 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
 
     await t.test('申請 → 申請状況の「申請中・承認済み」に、休日出勤日・予定時間帯・ステータス・振替休日と［申請を取り下げる］', async () => {
       await sato.fill('#hwDate', '2026-10-10');
+      await sato.dispatchEvent('#hwDate', 'change');
+      assert.equal(await sato.innerText('#hwShiftText'), '', 'シフト管理を使わない間はシフトを表示しない');
+      await sato.fill('#hwSite', '堺市○○様邸');
       await sato.click('#btnSubmitHolidayWork');
       assert.match(await lastToast(sato), /休日出勤理由を入力してください/);
       await sato.fill('#hwReason', '<img src=x onerror="window.__xss=1">現場立ち会い');
       await sato.fill('#hwContent', '配筋検査');
       await sato.click('#btnSubmitHolidayWork');
       await sato.waitForSelector('#hwFormModal', { state: 'hidden' });
-      assert.match(await lastToast(sato), /休日出勤を申請しました（2026-10-10・休日）/);
+      assert.match(await lastToast(sato), /休日出勤を申請しました（2026-10-10）/);
       await sato.waitForFunction(() => /10\/10[\s\S]*承認待ち/.test(document.getElementById('holidayWorkMiniList').innerText));
       await openHub(sato);
       assert.deepEqual(await sato.locator('#holidayWorkModal .hw-section-title').allInnerTexts(), ['新しく申請する', '承認待ち・承認済み', '過去の申請']);

@@ -41,10 +41,12 @@ const SHIM = `<script>
 
 function createServer(options = {}) {
   const gas = createLeafGas({ email: options.email || 'sato@example.com' });
+  // シフト管理は今は使わない（SHIFT_FEATURE.enabled = false）。options.shifts: true のときだけ、将来用の画面確認としてシフトを使う
+  if (options.shifts === true) gas.eval('SHIFT_FEATURE.enabled = true');
   gas.g.setupSystem();
   gas.g.appendRecords_('スタッフマスタ', SAMPLE_STAFF);
-  // 段階3：シフト（2026年5月〜12月）。平日＝通常勤務、土曜＝休日、日曜＝法定休日（画面テスト用の例。実際は曜日固定ではない）
-  if (options.shifts !== false) {
+  // 将来用：シフト（2026年5月〜12月）。平日＝通常勤務、土曜＝休日、日曜＝法定休日（画面テスト用の仮の例。実際のシフトは曜日で決まらない）
+  if (options.shifts === true) {
     const rows = [];
     for (let t = Date.UTC(2026, 4, 1); t <= Date.UTC(2026, 11, 31); t += 86400000) {
       const d = new Date(t);

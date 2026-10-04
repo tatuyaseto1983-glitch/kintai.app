@@ -39,6 +39,7 @@ function getMyPaidLeaveRequests() {
       eligible: false, today: now.date, periodFrom: period.from, periodText: period.periodText,
       leaveTypes: paidLeaveTypeList_(), requests: [],
       hours: { full: formatMinutes_(settings.paidLeaveDayMinutes), half: formatMinutes_(settings.paidLeaveHalfMinutes) },
+      shiftEnabled: isShiftEnabled_(),
     };
     if (!hasPaidLeaveSchema_()) return { message: '有給休暇申請はまだ準備中です', data: Object.assign(base, { setupRequired: true }) };
     if (!canApplyPaidLeave_(staff)) return { message: '有給休暇申請の対象外です', data: base };
@@ -46,7 +47,7 @@ function getMyPaidLeaveRequests() {
     const list = findRecords_(SHEET_NAMES.PAID_LEAVE, function (r) { return String(r['社員ID']).trim() === staff.employeeId; })
       .map(function (r) {
         const v = toPaidLeaveView_(r);
-        v.currentShift = shiftOf_(shiftMap, staff.employeeId, v.date).type;
+        v.currentShift = isShiftEnabled_() ? shiftOf_(shiftMap, staff.employeeId, v.date).type : '';
         return v;
       })
       .sort(function (a, b) {
@@ -138,9 +139,10 @@ function submitPaidLeaveRequest_(input) {
   const hw = findActiveHolidayWork_(staff.employeeId, date);
   if (hw) fail_(date + ' には休日出勤の申請があります（' + requestStatusLabel_(hw['ステータス']) + '）。有給申請はできません');
 
-  // 対象日のシフト：休日・法定休日は有給不要。未登録・シフト重複は受け付けるが、シフトが通常勤務に決まるまで承認できない
-  const shiftType = getShiftType_(staff.employeeId, date);
-  if (isHolidayShift_(shiftType)) fail_('休日のため有給申請は不要です（' + date + ' のシフト：' + shiftType + '）');
+  // 対象日のシフト（シフト管理を使うときだけ）：休日・法定休日は有給不要。未登録・シフト重複は受け付けるが、シフトが通常勤務に決まるまで承認できない
+  const useShift = isShiftEnabled_();
+  const shiftType = useShift ? getShiftType_(staff.employeeId, date) : '';
+  if (useShift && isHolidayShift_(shiftType)) fail_('休日のため有給申請は不要です（' + date + ' のシフト：' + shiftType + '）');
   const late = date < now.date;
 
   const record = appendRecord_(SHEET_NAMES.PAID_LEAVE, {
@@ -158,7 +160,7 @@ function submitPaidLeaveRequest_(input) {
     '更新日時': now.timestamp,
   });
   let message = '有給を申請しました（' + date + '・' + leaveType + (late ? '・事後申請' : '') + '）。管理者の承認をお待ちください';
-  if (shiftType !== SHIFT_TYPES.NORMAL) message += '\n※ ' + date + ' は' + shiftType + 'のため、シフトが通常勤務に決まるまで承認されません';
+  if (useShift && shiftType !== SHIFT_TYPES.NORMAL) message += '\n※ ' + date + ' は' + shiftType + 'のため、シフトが通常勤務に決まるまで承認されません';
   return { message: message, data: toPaidLeaveView_(record) };
 }
 
@@ -175,7 +177,7 @@ function decidePaidLeave_(requestId, action, reason) {
   const expected = isCancel ? HOLIDAY_WORK_STATUS.CANCEL_REQUESTED : HOLIDAY_WORK_STATUS.PENDING;
   if (status !== expected) fail_('この申請は「' + requestStatusLabel_(expected) + '」ではないため処理できません（今のステータス：' + requestStatusLabel_(status) + '）');
 
-  if (action === 'approve') {
+  if (action === 'approve' && isShiftEnabled_()) {
     const shiftType = getShiftType_(employeeId, date);
     if (shiftType !== SHIFT_TYPES.NORMAL) {
       fail_(shiftType === SHIFT_STATE.UNREGISTERED ? 'シフト未登録のため承認できません。先にシフトシートで通常勤務を登録してください'
@@ -362,8 +364,8 @@ function buildAdminPaidLeave_(ctx) {
     const view = toPaidLeaveView_(r);
     const staff = ctx.staffById[view.employeeId];
     view.department = staff ? staff.department : '';
-    view.currentShift = shiftOf_(ctx.shiftMap || {}, view.employeeId, view.date).type;
-    view.approvable = view.currentShift === SHIFT_TYPES.NORMAL;
+    view.currentShift = isShiftEnabled_() ? shiftOf_(ctx.shiftMap || {}, view.employeeId, view.date).type : '';
+    view.approvable = isShiftEnabled_() ? view.currentShift === SHIFT_TYPES.NORMAL : true;
     const att = ctx.attendanceByKey[view.employeeId + '|' + view.date];
     view.actualWorkTime = att ? toDurationText_(att['実働時間']) : '';
     view.hasAttendance = !!att;

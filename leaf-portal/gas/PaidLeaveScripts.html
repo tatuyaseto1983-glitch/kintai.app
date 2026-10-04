@@ -38,6 +38,7 @@
     var seq = ++P.seq;
     return call('getMyPaidLeaveRequests', []).then(function (res) {
       if (seq !== P.seq) return res;
+      $('shiftCard').hidden = !(res.success && res.data && res.data.shiftEnabled); // シフトのカードはシフト管理を使うときだけ
       if (!res.success || !res.data || !res.data.eligible) {
         P.data = res.success ? res.data : null;
         $('paidLeaveCard').hidden = true; // 対象外・準備中はカードを出さない
@@ -89,7 +90,7 @@
     head.appendChild(badges);
     card.appendChild(head);
     var dl = el('dl', 'hw-card-info');
-    addInfo(dl, 'シフト', r.currentShift + (r.status === STATUS.PENDING && r.currentShift !== '通常勤務' ? '（シフトが通常勤務に決まるまで承認されません）' : ''));
+    if (r.currentShift) addInfo(dl, 'シフト', r.currentShift + (r.status === STATUS.PENDING && r.currentShift !== '通常勤務' ? '（シフトが通常勤務に決まるまで承認されません）' : ''));
     addInfo(dl, '理由', r.reason);
     if (r.status === STATUS.REJECTED && r.rejectReason) addInfo(dl, '却下理由', r.rejectReason);
     if (r.status === STATUS.CANCEL_REQUESTED) addInfo(dl, '取消理由', r.cancelReason);
@@ -156,9 +157,9 @@
     var box = $('plShiftText');
     box.textContent = '';
     box.classList.remove('is-error');
-    if (!date) return;
+    if (!date || !P.data || !P.data.shiftEnabled) return; // シフト管理を使わない間は出さない
     call('getMyShiftOn', [date]).then(function (res) {
-      if (!res.success || $('plDate').value !== date) return;
+      if (!res.success || !res.data.enabled || $('plDate').value !== date) return;
       var t = res.data.type;
       box.textContent = 'この日のシフト：' + t + (t === '休日' || t === '法定休日' ? '（休日のため有給申請は不要です）'
         : t === '通常勤務' ? '' : '（申請はできますが、シフトが通常勤務に決まるまで承認されません）');
