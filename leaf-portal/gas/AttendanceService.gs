@@ -118,8 +118,9 @@ function clockIn_(workStyle, options) {
   const extras = normalizeSegmentExtras_(options, { direct: !existing });
   if (existing) return reClockIn_(existing, style, now, extras);
 
-  // 固定勤務だけ遅刻を判定する（フレックスは出勤時刻が自由なので判定しない）
-  const lateMinutes = rule.isFixed ? Math.max(0, now.minutes - rule.standardStartMinutes) : 0;
+  // 固定勤務だけ遅刻を判定する（フレックスは出勤時刻が自由なので判定しない）。休日は判定せず、午前半休は基準を変える
+  const judge = dayJudgeFor_(staff.employeeId, now.date, rule, settings, buildShiftMap_(now.date, now.date, staff.employeeId), buildPaidLeaveMap_());
+  const lateMinutes = rule.isFixed && judge.judgeLate ? Math.max(0, now.minutes - judge.startBase) : 0;
 
   const record = appendRecord_(SHEET_NAMES.ATTENDANCE, {
     '勤怠ID': makeAttendanceId_(now.date, staff.employeeId),
@@ -143,7 +144,7 @@ function clockIn_(workStyle, options) {
   }
 
   let message = '出勤しました（' + workPlaceLabel_(style) + '・' + now.time + '）';
-  if (lateMinutes > 0) message += '\n標準出勤 ' + minutesToClock_(rule.standardStartMinutes) + ' から ' + formatMinutes_(lateMinutes) + ' の遅れとして記録しました';
+  if (lateMinutes > 0) message += '\n' + (judge.startBase === rule.standardStartMinutes ? '標準出勤' : '午前半休の勤務開始') + ' ' + minutesToClock_(judge.startBase) + ' から ' + formatMinutes_(lateMinutes) + ' の遅れとして記録しました';
   const unfinished = findRecords_(SHEET_NAMES.ATTENDANCE, function (r) {
     return String(r['社員ID']).trim() === staff.employeeId && toDateKey_(r['日付']) < now.date && isOpenStatus_(r['状態']);
   });
@@ -313,6 +314,9 @@ function buildCalcContext_() {
     breakIntervalsByAttendance: breakIntervalsByAttendance,
     openBreakByAttendance: openBreakByAttendance,
     segmentsByAttendance: buildSegmentMap_(),
+    // 段階3：シフトと承認済みの有給（休日の勤務・半休の日は遅刻・早退・社内超過の判定を変える）
+    shiftMap: buildShiftMap_(),
+    paidLeaveMap: buildPaidLeaveMap_(),
     attendanceColumns: readTable_(SHEET_NAMES.ATTENDANCE).columnIndex,
     overtimeStatusByKey: buildOvertimeStatusMap_(),
   };
@@ -386,9 +390,10 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     optional['直行'] = summary.direct ? MARKS.YES : '';
     optional['直帰'] = summary.directReturn ? MARKS.YES : '';
   }
+  const judge = dayJudgeFor_(employeeId, toDateKey_(record['日付']), rule, settings, ctx.shiftMap, ctx.paidLeaveMap);
   if (rule.isFixed) {
     fields['所定終了'] = minutesToClock_(rule.standardEndMinutes);
-    fields['遅刻'] = formatMinutesOrBlank_(Math.max(0, summary.clockInMinutes - rule.standardStartMinutes));
+    fields['遅刻'] = judge.judgeLate ? formatMinutesOrBlank_(Math.max(0, summary.clockInMinutes - judge.startBase)) : '';
   }
   if (open) {
     fields['状態'] = ctx.openBreakByAttendance[attendanceId] ? ATTENDANCE_STATUS.ON_BREAK : ATTENDANCE_STATUS.WORKING;
@@ -399,8 +404,9 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     segments: segments,
     interruptions: ctx.breakIntervalsByAttendance[attendanceId] || [],
     isFixed: rule.isFixed,
-    standardStartMinutes: rule.standardStartMinutes,
-    standardEndMinutes: rule.standardEndMinutes,
+    standardStartMinutes: judge.startBase,
+    standardEndMinutes: judge.endBase,
+    excessBaseMinutes: rule.standardEndMinutes, // 社内超過は半休の日も標準退勤（18:30）より後
     autoBreakMinutes: settings.autoBreakMinutes,
     autoBreakThresholdMinutes: settings.autoBreakThresholdMinutes,
     overtimeFreeLimitMinutes: settings.overtimeFreeLimitMinutes,
@@ -416,6 +422,11 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     if (seg.row && toPlainText_(seg.row['区間実働']) !== workTime) changeOf(seg.row)['区間実働'] = workTime;
   });
 
+  if (rule.isFixed && !judge.judgeExcess) {
+    // 休日・法定休日の勤務：遅刻・早退・社内超過は判定しない（勤務時間は「休日出勤／法定休日出勤」として別に表示する）
+    fields['遅刻'] = '';
+    return finish();
+  }
   if (rule.isFixed) {
     // 勤務実績（社内超過時間）と申請状況は別々に保存する。実績を申請に合わせて丸めることはしない
     const requestStatus = ctx.overtimeStatusByKey[employeeId + '|' + toDateKey_(record['日付'])] || '';
@@ -423,7 +434,8 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     fields['30分以上'] = result.requiresPreApproval ? MARKS.YES : '';
     fields['事前残業申請'] = requestStatus || (result.requiresPreApproval ? OVERTIME_REQUEST_LABEL.NONE : OVERTIME_REQUEST_LABEL.NOT_REQUIRED);
     fields['要確認'] = result.requiresPreApproval && requestStatus !== REQUEST_STATUS.APPROVED ? MARKS.NEEDS_CHECK : '';
-    fields['早退'] = formatMinutesOrBlank_(result.earlyLeaveMinutes);
+    fields['早退'] = judge.judgeEarly ? formatMinutesOrBlank_(result.earlyLeaveMinutes) : '';
+    if (!judge.judgeLate) fields['遅刻'] = '';
   }
   return finish();
 }
@@ -472,6 +484,31 @@ function stampClear_(column) {
 /** 勤怠記録1件の「計算で決まる列」（以前からの関数名。戻り値は { 列名: 新しい値 }） */
 function calculateAttendanceFields_(record, ctx) {
   return calculateAttendanceDetail_(record, ctx).fields;
+}
+
+/**
+ * その日の遅刻・早退・社内超過の判定の仕方（シフトと承認済みの有給で決める）。
+ *   休日・法定休日       … 遅刻・早退・社内超過を判定しない
+ *   1日有給              … 遅刻・早退を判定しない（勤務があれば管理者画面で要確認）
+ *   午前半休（通常勤務） … 遅刻の基準を「午前半休_勤務開始」（14:30）に
+ *   午後半休（通常勤務） … 早退の基準を「午後半休_勤務終了」（13:30）に
+ *   未登録など           … これまでどおり（標準出勤・標準退勤）。管理者画面で「シフト未登録」の要確認
+ */
+function dayJudgeFor_(employeeId, dateKey, rule, settings, shiftMap, paidLeaveMap) {
+  const shiftType = shiftOf_(shiftMap || {}, employeeId, dateKey).type;
+  const leave = (paidLeaveMap || {})[String(employeeId).trim() + '|' + dateKey] || null;
+  const out = { shiftType: shiftType, leave: leave, judgeLate: true, judgeEarly: true, judgeExcess: true,
+    startBase: rule.standardStartMinutes, endBase: rule.standardEndMinutes };
+  if (isHolidayShift_(shiftType)) {
+    out.judgeLate = false; out.judgeEarly = false; out.judgeExcess = false;
+    return out;
+  }
+  if (!leave) return out;
+  if (leave.leaveType === PAID_LEAVE_TYPES.FULL) { out.judgeLate = false; out.judgeEarly = false; return out; }
+  if (shiftType !== SHIFT_TYPES.NORMAL) return out;
+  if (leave.leaveType === PAID_LEAVE_TYPES.AM && settings.amHalfStartMinutes !== null) out.startBase = settings.amHalfStartMinutes;
+  if (leave.leaveType === PAID_LEAVE_TYPES.PM && settings.pmHalfEndMinutes !== null) out.endBase = settings.pmHalfEndMinutes;
+  return out;
 }
 
 /** 勤怠記録1件を再計算してシートに書き込む */

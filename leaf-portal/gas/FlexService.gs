@@ -36,9 +36,11 @@ function getFlexSummary(employeeId) {
     const monthKey = month.monthKey;
     const records = getAttendanceOfEmployee_(target.employeeId);
 
-    const weekSummary = summarizeFlexPeriod_(records, week.from, week.to, rule.weeklyMinutes);
+    const weekSummary = summarizeFlexPeriod_(records, week.from, week.to, rule.weeklyMinutes,
+      paidLeaveMinutesInRange_(target.employeeId, week.from, week.to, settings), settings);
     weekSummary.restDayCheck = checkWeeklyRest_(records, week.from, today, settings.weeklyFullRestDays);
-    const monthSummary = summarizeFlexPeriod_(records, month.from, month.to, rule.monthlyMinutes);
+    const monthSummary = summarizeFlexPeriod_(records, month.from, month.to, rule.monthlyMinutes,
+      paidLeaveMinutesInRange_(target.employeeId, month.from, month.to, settings), settings);
     monthSummary.month = monthKey;
     monthSummary.periodLabel = month.label;
     monthSummary.periodText = month.periodText;
@@ -63,8 +65,28 @@ function getAttendanceOfEmployee_(employeeId) {
   return findRecords_(SHEET_NAMES.ATTENDANCE, function (r) { return String(r['社員ID']).trim() === employeeId; });
 }
 
+/**
+ * フレックスの所定（138時間など）に算入する有給の時間（設定「フレックス_有給算入」）。
+ * 未確定・算入しない → 0（実働と有給を別々に表示するだけ）。算入する → 有給の時間をそのまま足す。
+ */
+function flexLeaveMinutes_(leaveMinutes, settings) {
+  return settings.flexPaidLeaveMode === FLEX_PAID_LEAVE_MODES.INCLUDE ? leaveMinutes : 0;
+}
+
+/** 社員・期間の承認済み有給の時間（分）。実働とは別に数える */
+function paidLeaveMinutesInRange_(employeeId, from, to, settings) {
+  const map = buildPaidLeaveMap_();
+  let total = 0;
+  Object.keys(map).forEach(function (key) {
+    const v = map[key];
+    if (v.employeeId !== employeeId || v.date < from || v.date > to) return;
+    total += paidLeaveMinutesOf_(v.leaveType, settings) || 0;
+  });
+  return total;
+}
+
 /** 期間内の実働を合計し、所定・残り・超過を計算する */
-function summarizeFlexPeriod_(records, from, to, scheduledMinutes) {
+function summarizeFlexPeriod_(records, from, to, scheduledMinutes, leaveMinutes, settings) {
   let worked = 0;
   let workDays = 0;
   records.forEach(function (r) {
@@ -73,8 +95,17 @@ function summarizeFlexPeriod_(records, from, to, scheduledMinutes) {
     worked += toMinutes_(r['実働時間']) || 0;
     workDays += 1;
   });
-  const result = calculateFlexBalance_(scheduledMinutes, worked);
+  // 有給は実働とは別に数える。所定に算入するかは設定「フレックス_有給算入」（未確定の間は足さない）
+  const leave = leaveMinutes || 0;
+  const mode = settings ? settings.flexPaidLeaveMode : FLEX_PAID_LEAVE_MODES.UNDECIDED;
+  const counted = settings ? flexLeaveMinutes_(leave, settings) : 0;
+  const result = calculateFlexBalance_(scheduledMinutes, worked + counted);
+  result.workedMinutes = worked;
   return {
+    paidLeave: formatMinutes_(leave),
+    paidLeaveMinutes: leave,
+    paidLeaveMode: mode,
+    paidLeaveNote: leave ? (mode === FLEX_PAID_LEAVE_MODES.INCLUDE ? '所定に算入しています' : mode === FLEX_PAID_LEAVE_MODES.EXCLUDE ? '所定には算入しません' : '138時間への算入は未確定') : '',
     from: from,
     to: to,
     workDays: workDays,

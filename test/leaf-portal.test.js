@@ -27,7 +27,7 @@ test('setupSystem：7シートを作り、2回目以降は何も壊さない', (
   const names = gas.main.getSheets().map((s) => s.getName());
   for (const n of ['スタッフマスタ', '勤怠記録', '中断履歴', '打刻修正申請', '残業申請', '日報', '設定']) assert.ok(names.includes(n), n);
   assert.ok(names.includes('シート1'), '最初からあるシートも削除しない');
-  assert.equal(gas.main.rows('設定').length, 13);
+  assert.equal(gas.main.rows('設定').length, 18, '段階3の5項目（有給・半休・フレックスの有給）を含む');
   assert.equal(gas.main.getSpreadsheetTimeZone(), 'Asia/Tokyo');
 
   // 利用者が設定値を変更し、データも入れた後にもう一度実行
@@ -54,14 +54,14 @@ test('setupSystem：既存シートの足りない見出しだけを右端に足
   assert.deepEqual(sheet.data[1].slice(0, 4), ['E009', '既存', 'x@example.com', 'メモ'], '既存のデータは動かさない');
   assert.equal(sheet.data[1][sheet.data[0].indexOf('休日出勤申請対象')], '対象', '新しく作った「休日出勤申請対象」列にだけ初期値が入る');
   assert.deepEqual(sheet.data[0].slice(0, 4), ['社員ID', '氏名', 'メールアドレス', '自分で足した列']);
-  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象', '休日出勤申請対象']);
+  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象', '休日出勤申請対象', '有給申請対象']);
   assert.ok(sheet.maxColumns >= 17, '列が足りなければシートの列を増やす');
   assert.equal(empty.data[0][0], '中断ID');
   assert.deepEqual(noHeader.data, [[], ['データだけある行']]);
   assert.match(log, /日報：⚠ 1行目（見出し）が空/);
   const rows = gas.main.rows('設定');
   assert.equal(rows.find((r) => r['項目'] === '自動休憩')['値'], '00:45', '既存の設定値は上書きしない');
-  assert.equal(rows.length, 13, '無い項目だけ追加');
+  assert.equal(rows.length, 18, '無い項目だけ追加');
 });
 
 test('Apps Script のファイルの並び順が違っても動く', () => {
@@ -612,7 +612,7 @@ test('管理者画面 1・2：一般スタッフは管理者データを取得�
   gas.loginAs(ADMIN);
   const r = gas.g.getAdminDashboard({ date: '2026-06-01' });
   assert.equal(r.success, true, r.message);
-  assert.deepEqual(Object.keys(r.data).sort(), ['admin', 'corrections', 'daily', 'date', 'flex', 'holidayWork', 'month', 'monthly', 'overtime', 'reports', 'restDays', 'summary', 'today']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['admin', 'corrections', 'daily', 'date', 'flex', 'holidayWork', 'month', 'monthly', 'overtime', 'paidLeave', 'reports', 'restDays', 'summary', 'today']);
   assert.equal(r.data.admin.name, '山田');
   // 取得したい情報だけ返す（不要な大量データを返さない）
   const part = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['summary', 'setupSystem'] });
@@ -669,7 +669,7 @@ test('管理者画面 4：月別一覧（固定の合計・フレックスの残
   assert.deepEqual([sato.workDays, sato.workTime, sato.lateTotal, sato.lateCount, sato.internalExcessTotal, sato.needsCheckCount, sato.correctionCount, sato.flex],
     [1, '08:32', '00:10', 1, '00:42', 1, 1, null]);
   const suzuki = m.rows.find((x) => x.name === '鈴木');
-  assert.deepEqual(suzuki.flex, { scheduled: '138:00', worked: '08:00', remaining: '130:00', excess: '00:00' });
+  assert.deepEqual(suzuki.flex, { scheduled: '138:00', worked: '08:00', remaining: '130:00', excess: '00:00', paidLeave: '00:00', paidLeaveMode: '未確定' });
   assert.equal(suzuki.internalExcessTotal, '00:00');
 });
 
@@ -745,9 +745,9 @@ test('管理者画面 10：CSV（日別・月別。部署入り・BOM付き・�
   assert.equal(r.success, true);
   assert.equal(r.data.fileName, 'kintai_monthly_2026-06.csv');
   const lines = r.data.csv.split('\r\n');
-  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態,勤務場所,勤務区間数,出社時間,在宅時間,日備考,出張,直行,直帰,現場,業務走行距離,交通費合計'));
+  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態,勤務場所,勤務区間数,出社時間,在宅時間,日備考,出張,直行,直帰,現場,業務走行距離,交通費合計,シフト区分,日の区分,有給種別,有給時間,要確認（シフト・申請）'));
   assert.equal(lines.length, 3);
-  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み,会社,1,09:32,00:00,,,,,,,$/, '勤務区間・付帯情報・交通費の列は右端に足す（勤務場所は会社と表示）');
+  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み,会社,1,09:32,00:00,,,,,,,,未登録,通常,,,シフト未登録日に勤務$/, '勤務区間・付帯情報・交通費の列は右端に足す（勤務場所は会社と表示）');
   r = gas.g.exportAdminAttendanceCsv({ type: 'daily', date: '2026-06-02' });
   assert.equal(r.data.csv.split('\r\n').length, 1, 'その日の記録がなければ見出しだけ');
 });

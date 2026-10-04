@@ -43,6 +43,17 @@ function createServer(options = {}) {
   const gas = createLeafGas({ email: options.email || 'sato@example.com' });
   gas.g.setupSystem();
   gas.g.appendRecords_('スタッフマスタ', SAMPLE_STAFF);
+  // 段階3：シフト（2026年5月〜12月）。平日＝通常勤務、土曜＝休日、日曜＝法定休日（画面テスト用の例。実際は曜日固定ではない）
+  if (options.shifts !== false) {
+    const rows = [];
+    for (let t = Date.UTC(2026, 4, 1); t <= Date.UTC(2026, 11, 31); t += 86400000) {
+      const d = new Date(t);
+      const date = d.toISOString().slice(0, 10);
+      const type = d.getUTCDay() === 0 ? '法定休日' : d.getUTCDay() === 6 ? '休日' : '通常勤務';
+      SAMPLE_STAFF.forEach((s) => rows.push({ '日付': date, '社員ID': s['社員ID'], '氏名': s['氏名'], 'シフト区分': type }));
+    }
+    gas.g.appendRecords_('シフト', rows);
+  }
   const calls = [];
   const delayMs = { value: options.delayMs || 0 };
 

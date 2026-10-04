@@ -252,7 +252,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
 
     await t.test('画面から管理者用の関数・社員IDの指定を使っていない', async () => {
       const used = [...new Set(calls)].sort();
-      assert.deepEqual(used, ['clockIn', 'clockOut', 'getMyCorrectionRequests', 'getMyHolidayWorkRequests', 'getReportDetail', 'getReportEditor', 'getStaffDashboard', 'resumeWork', 'saveReportDraft', 'startBreak', 'submitCorrectionRequest', 'submitReport']);
+      assert.deepEqual(used, ['clockIn', 'clockOut', 'getMyCorrectionRequests', 'getMyHolidayWorkRequests', 'getMyPaidLeaveRequests', 'getReportDetail', 'getReportEditor', 'getStaffDashboard', 'resumeWork', 'saveReportDraft', 'startBreak', 'submitCorrectionRequest', 'submitReport']);
       assert.deepEqual(errors, [], 'ブラウザで JavaScript のエラーが出ていない');
     });
   } finally {

@@ -92,6 +92,8 @@ function getAllStaff_() {
         attendanceTarget: r['勤怠集計対象'] === undefined || String(r['勤怠集計対象']).trim() !== ATTENDANCE_TARGET.NO,
         // 休日出勤申請対象：「対象」と書かれた人だけ true（空欄・列なし＝申請できない）
         holidayWorkTarget: r['休日出勤申請対象'] !== undefined && String(r['休日出勤申請対象']).trim() === HOLIDAY_WORK_TARGET.YES,
+        // 有給申請対象：「対象」と書かれた人だけ true（空欄・列なし＝申請できない）
+        paidLeaveTarget: r['有給申請対象'] !== undefined && String(r['有給申請対象']).trim() === PAID_LEAVE_TARGET.YES,
       };
     });
 }

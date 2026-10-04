@@ -20,7 +20,7 @@
   var el = App.el;
 
   /** 休日出勤申請の画面から呼んでよいサーバーの関数（管理者用の関数は入れない） */
-  var HW_FUNCTIONS = ['getMyHolidayWorkRequests', 'submitHolidayWorkRequest', 'withdrawHolidayWorkRequest', 'requestHolidayWorkCancellation'];
+  var HW_FUNCTIONS = ['getMyHolidayWorkRequests', 'submitHolidayWorkRequest', 'withdrawHolidayWorkRequest', 'requestHolidayWorkCancellation', 'getMyShiftOn'];
   var STATUS = { PENDING: '申請中', APPROVED: '承認済み', REJECTED: '却下', CANCEL_REQUESTED: '取消申請中', CANCELLED: '取消済み' };
   var COMP_PLANNED = '取得予定';
   var MODALS = ['holidayWorkModal', 'hwFormModal', 'hwWithdrawModal', 'hwCancelModal'];
@@ -72,7 +72,7 @@
   function statusBadge(status) {
     var cls = status === STATUS.PENDING ? 'badge-warn' : status === STATUS.APPROVED ? 'badge-ok' : status === STATUS.REJECTED ? 'badge-ng'
       : status === STATUS.CANCEL_REQUESTED ? 'badge-warn' : 'badge-notstarted';
-    return el('span', 'badge ' + cls, status);
+    return el('span', 'badge ' + cls, status === STATUS.PENDING ? '承認待ち' : status); // 内部の値「申請中」は画面では「承認待ち」
   }
 
   function render() {
@@ -90,7 +90,7 @@
       mini.appendChild(li);
     });
 
-    fillCards($('hwActiveList'), active, '申請中・承認済みの申請はありません');
+    fillCards($('hwActiveList'), active, '承認待ち・承認済みの申請はありません');
     fillCards($('hwPastList'), past, '過去の申請はありません');
   }
 
@@ -110,6 +110,8 @@
 
     var dl = el('dl', 'hw-card-info');
     addInfo(dl, '予定時間帯', rangeText(r) + '（予定拘束 ' + App.trimHour(r.plannedSpan) + '）');
+    addInfo(dl, 'シフト', r.currentShift + (r.status === STATUS.PENDING && r.currentShift !== '休日' && r.currentShift !== '法定休日' ? '（シフトが休日・法定休日に決まるまで承認されません）' : ''));
+    if (r.site) addInfo(dl, '現場', r.site);
     addInfo(dl, '振替休日', compText(r));
     addInfo(dl, '休日出勤理由', r.reason);
     if (r.status === STATUS.REJECTED && r.rejectReason) addInfo(dl, '却下理由', r.rejectReason);
@@ -161,6 +163,7 @@
     $('hwCompDate').min = today();
     $('hwStart').value = '09:00';
     $('hwEnd').value = '';
+    $('hwShiftText').textContent = '';
     updateCompDate();
     updateSpan();
     App.openModal('hwFormModal');
@@ -213,7 +216,24 @@
       compDayType: $('hwCompType').value,
       compDayDate: $('hwCompType').value === COMP_PLANNED ? $('hwCompDate').value : '',
       note: $('hwNote').value.trim(),
+      site: $('hwSite').value.trim(),
     };
+  }
+
+  /** 選んだ日の自分のシフトを表示する（申請できるかの最終判定はサーバー） */
+  function showShift() {
+    var date = $('hwDate').value;
+    var box = $('hwShiftText');
+    box.textContent = '';
+    box.classList.remove('is-error');
+    if (!date) return;
+    call('getMyShiftOn', [date]).then(function (res) {
+      if (!res.success || $('hwDate').value !== date) return;
+      var t = res.data.type;
+      box.textContent = 'この日のシフト：' + t + (t === '通常勤務' ? '（通常勤務日のため休日出勤申請は不要です）'
+        : t === '休日' || t === '法定休日' ? '' : '（申請はできますが、シフトが休日・法定休日に決まるまで承認されません）');
+      box.classList.toggle('is-error', t === '通常勤務');
+    });
   }
 
   /** 送る前の確認（最終的なチェックはサーバー側で必ず行う） */
@@ -346,6 +366,7 @@
       $(id).addEventListener('change', updateSpan);
     });
     $('hwCompType').addEventListener('change', updateCompDate);
+    $('hwDate').addEventListener('change', showShift);
     $('holidayWorkForm').addEventListener('submit', onSubmit);
     $('btnHwWithdrawOk').addEventListener('click', onWithdraw);
     $('btnHwWithdrawBack').addEventListener('click', function () { closeDialog('hwWithdrawModal'); });

@@ -36,6 +36,9 @@ const SHEET_NAMES = {
   WORK_SEGMENTS: '勤務区間履歴',
   // 通勤以外の交通費と、自家用車の業務走行距離（走行距離はここだけに保存する）
   TRANSPORT: '交通費明細',
+  // 段階3：シフト（管理者がシートに直接入力。行がない日＝未登録）と有給休暇申請
+  SHIFTS: 'シフト',
+  PAID_LEAVE: '有給休暇申請',
 };
 
 /** 権限 */
@@ -131,6 +134,21 @@ const HOLIDAY_WORK_STATUS = {
   CANCELLED: '取消済み',
 };
 
+/** シフト区分（シートに入れる値）と、判定の結果（行がない＝未登録、同じ日に2行以上＝シフト重複、区分の値が正しくない＝シフト不備） */
+const SHIFT_TYPES = { NORMAL: '通常勤務', HOLIDAY: '休日', LEGAL_HOLIDAY: '法定休日' };
+const SHIFT_STATE = { UNREGISTERED: '未登録', DUPLICATE: 'シフト重複', INVALID: 'シフト不備' };
+
+/** 有給の種別 */
+const PAID_LEAVE_TYPES = { FULL: '1日有給', AM: '午前半休', PM: '午後半休' };
+
+/** スタッフマスタ「有給申請対象」：「対象」の人だけ有給申請できる */
+const PAID_LEAVE_TARGET = { YES: '対象', NO: '対象外' };
+
+/** 申請のステータスの画面での表示（内部の値「申請中」は変えずに「承認待ち」と表示する） */
+function requestStatusLabel_(status) {
+  return status === HOLIDAY_WORK_STATUS.PENDING ? '承認待ち' : status;
+}
+
 /** 休日出勤の振替休日区分 */
 const COMP_DAY_TYPES = { PLANNED: '取得予定', NONE: '取得予定なし', UNDECIDED: '未定' };
 
@@ -161,7 +179,16 @@ const SETTING_KEYS = {
   WEEK_START_DAY: '週_起算曜日',
   MONTH_CLOSING_DAY: '月_締め日',
   AUTO_BREAK_THRESHOLD: '自動休憩_適用開始',
+  // 段階3：有給・半休
+  PAID_LEAVE_DAY: '有給_1日時間',
+  PAID_LEAVE_HALF: '有給_半日時間',
+  AM_HALF_START: '午前半休_勤務開始',
+  PM_HALF_END: '午後半休_勤務終了',
+  FLEX_PAID_LEAVE: 'フレックス_有給算入',
 };
+
+/** フレックスの有給の扱い（138時間などの所定への算入）。社労士の確認が済むまで「未確定」 */
+const FLEX_PAID_LEAVE_MODES = { UNDECIDED: '未確定', EXCLUDE: '算入しない', INCLUDE: '算入する' };
 
 /**
  * 「設定」シートへ最初に登録する値。
@@ -180,6 +207,11 @@ const DEFAULT_SETTINGS = [
   { key: SETTING_KEYS.HOLIDAY_CATEGORY, value: 'なし', note: '土日祝の特別区分。現在は「なし」（曜日に関係なく勤務できるシフト制）' },
   { key: SETTING_KEYS.WEEK_START_DAY, value: '月', note: '週の集計を始める曜日（日・月・火・水・木・金・土）。就業規則に合わせてください' },
   { key: SETTING_KEYS.MONTH_CLOSING_DAY, value: '20', note: '月の締め日。「末日」または 1〜27 の数字（20＝前月21日〜当月20日を「当月分」として集計。例：9月分＝8/21〜9/20）' },
+  { key: SETTING_KEYS.PAID_LEAVE_DAY, value: '08:00', note: '1日有給で記録する有給時間（実働とは別に記録します）' },
+  { key: SETTING_KEYS.PAID_LEAVE_HALF, value: '04:00', note: '午前半休・午後半休で記録する有給時間（実働とは別に記録します）' },
+  { key: SETTING_KEYS.AM_HALF_START, value: '14:30', note: '午前半休の日の勤務開始の基準（固定勤務・通常勤務日だけ。これより遅い開始を遅刻として記録します）' },
+  { key: SETTING_KEYS.PM_HALF_END, value: '13:30', note: '午後半休の日の勤務終了の基準（固定勤務・通常勤務日だけ。これより早い終了を早退として記録します）' },
+  { key: SETTING_KEYS.FLEX_PAID_LEAVE, value: '未確定', note: 'フレックスの有給を月の所定（138時間など）に算入するか：未確定／算入しない／算入する。社労士に確認してから変えてください（未確定の間は実働と有給を別々に表示し、所定には足しません）' },
   { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD, value: '00:00', note: '中断を除いた勤務時間（退勤−出勤−中断合計）がこの時間を超えた日だけ自動休憩を差し引きます。00:00＝常に差し引く／06:00＝6時間以下の日は引かない' },
 ];
 
@@ -195,16 +227,19 @@ const SHEET_DEFINITIONS = [
     headers: ['社員ID', '氏名', 'メールアドレス', '権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤',
       '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考'],
     // 任意の列：setupSystem() が右端に追加する。無くても動く（空欄＝勤怠集計の対象）
-    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象'],
+    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象', '有給申請対象'],
     choices: {
       '権限': [ROLES.STAFF, ROLES.ADMIN],
       '勤務区分': [WORK_TYPES.FIXED, WORK_TYPES.FLEX],
       '在籍状況': [EMPLOYMENT_STATUS.ACTIVE, EMPLOYMENT_STATUS.ON_LEAVE, EMPLOYMENT_STATUS.RETIRED],
       '勤怠集計対象': [ATTENDANCE_TARGET.YES, ATTENDANCE_TARGET.NO],
       '休日出勤申請対象': [HOLIDAY_WORK_TARGET.YES, HOLIDAY_WORK_TARGET.NO],
+      '有給申請対象': [PAID_LEAVE_TARGET.YES, PAID_LEAVE_TARGET.NO],
     },
-    // 列を新しく作ったときだけ、初期値を入れる（既存の値は変えない）。中身は HolidayWorkService.gs
-    onColumnsAdded: function (sheet, added) { return initHolidayWorkTargetColumn_(sheet, added); },
+    // 列を新しく作ったときだけ、初期値を入れる（既存の値は変えない）。中身は HolidayWorkService.gs・PaidLeaveService.gs
+    onColumnsAdded: function (sheet, added) {
+      return [initHolidayWorkTargetColumn_(sheet, added), initPaidLeaveTargetColumn_(sheet, added)].filter(function (x) { return x; }).join('。');
+    },
     freeChoices: { '雇用区分': EMPLOYMENT_TYPES },
   },
   {
@@ -274,6 +309,8 @@ const SHEET_DEFINITIONS = [
     headers: ['申請ID', '申請日時', '社員ID', '氏名', '休日出勤日', '開始予定時刻', '終了予定時刻', '予定勤務時間',
       '休日出勤理由', '業務内容', '振替休日区分', '振替休日予定日', '備考', 'ステータス', '承認者ID', '承認者名', '承認日時',
       '却下理由', '取消申請日時', '取消承認日時', '取消理由', '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時'],
+    // 段階3：現場（任意）と、申請したときのシフト区分（承認は「今の」シフトで判定する）
+    optionalHeaders: ['現場', '申請時シフト区分'],
     choices: {
       'ステータス': [HOLIDAY_WORK_STATUS.PENDING, HOLIDAY_WORK_STATUS.APPROVED, HOLIDAY_WORK_STATUS.REJECTED,
         HOLIDAY_WORK_STATUS.CANCEL_REQUESTED, HOLIDAY_WORK_STATUS.CANCELLED],
@@ -296,6 +333,25 @@ const SHEET_DEFINITIONS = [
     headers: ['明細ID', '日付', '社員ID', '氏名', '交通手段', '出発地', '到着地', '目的・現場', '金額', '自家用車使用',
       '業務走行距離', '備考', '削除フラグ', '登録日時', '更新日時'],
     choices: { '交通手段': TRANSPORT_MODES },
+  },
+  {
+    // 社員×日付のシフト。管理者がシートに直接入力する（行がない日＝未登録。通常勤務とはみなさない）
+    // 予定開始・予定終了は表示だけ（今は計算に使わない）
+    name: SHEET_NAMES.SHIFTS,
+    headers: ['日付', '社員ID', '氏名', 'シフト区分', '予定開始', '予定終了', '備考', '登録日時', '更新日時'],
+    choices: { 'シフト区分': [SHIFT_TYPES.NORMAL, SHIFT_TYPES.HOLIDAY, SHIFT_TYPES.LEGAL_HOLIDAY] },
+  },
+  {
+    // 有給休暇申請（休日出勤申請と同じ構造・同じステータス。画面では「申請中」を「承認待ち」と表示）
+    name: SHEET_NAMES.PAID_LEAVE,
+    headers: ['申請ID', '申請日時', '社員ID', '氏名', '対象日', '有給種別', '理由', '備考', '申請時シフト区分', '事後申請',
+      'ステータス', '承認者ID', '承認者名', '承認日時', '却下理由', '取消申請日時', '取消承認日時', '取消理由',
+      '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時'],
+    choices: {
+      '有給種別': [PAID_LEAVE_TYPES.FULL, PAID_LEAVE_TYPES.AM, PAID_LEAVE_TYPES.PM],
+      'ステータス': [HOLIDAY_WORK_STATUS.PENDING, HOLIDAY_WORK_STATUS.APPROVED, HOLIDAY_WORK_STATUS.REJECTED,
+        HOLIDAY_WORK_STATUS.CANCEL_REQUESTED, HOLIDAY_WORK_STATUS.CANCELLED],
+    },
   },
   {
     name: SHEET_NAMES.SETTINGS,

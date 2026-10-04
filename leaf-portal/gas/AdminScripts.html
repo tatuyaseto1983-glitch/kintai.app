@@ -21,8 +21,9 @@
     'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
     'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
     'getAttendanceDetail', 'getAdminDayDetail',
+    'approvePaidLeaveRequest', 'rejectPaidLeaveRequest', 'approvePaidLeaveCancellation', 'rejectPaidLeaveCancellation',
   ];
-  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'flex', 'restDays', 'reports'];
+  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports'];
 
   var S = {
     loaded: false,  // 一度でも管理者データを表示できたか
@@ -94,6 +95,7 @@
     if (d.corrections) renderCorrections();
     if (d.overtime) renderOvertime();
     if (d.holidayWork) renderHolidayWork();
+    if (d.paidLeave) renderPaidLeave();
     if (d.flex) renderFlex();
     if (d.restDays) renderRestDays();
     if (d.reports) renderReports();
@@ -119,6 +121,7 @@
       ['修正申請待ち', s.pendingCorrections, '件', s.pendingCorrections ? 'orange' : 'gray', ''],
       ['残業申請待ち', s.pendingOvertime, '件', s.pendingOvertime ? 'orange' : 'gray', ''],
       ['休日出勤申請待ち', s.pendingHolidayWork || 0, '件', s.pendingHolidayWork ? 'orange' : 'gray', '取消申請を含む'],
+      ['有給申請待ち', s.pendingPaidLeave || 0, '件', s.pendingPaidLeave ? 'orange' : 'gray', '取消申請を含む'],
     ];
     var box = $('summaryCards');
     box.textContent = '';
@@ -180,11 +183,11 @@
     if (S.mode === 'daily') {
       var daily = S.data.daily;
       $('admTableTitle').textContent = '全スタッフ勤怠（日別：' + (daily ? App.formatDateShort(daily.date) : '') + '）';
-      setHead(['氏名', '部署', '勤務区分', '勤務場所', '直行・直帰・現場', '勤務区間', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
+      setHead(['氏名', '部署', '勤務区分', '区分', '勤務場所', '直行・直帰・現場', '勤務区間', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
       var rows = daily ? daily.rows : [];
       total = rows.length;
       rows.forEach(function (r) {
-        var alert = r.needsCheck === '要確認' || (r.issues && r.issues.length);
+        var alert = r.needsCheck === '要確認' || (r.issues && r.issues.length) || (r.day && r.day.checks.length);
         if (!matchesCommon(r, f)) return;
         if (f.workStyle && r.workStyle !== f.workStyle && (r.workStyleCategory || '').split('＋').indexOf(f.workStyle) === -1) return;
         if (f.status && r.status !== f.status) return;
@@ -195,6 +198,7 @@
         tr.appendChild(td(r.name, 'sticky-col'));
         tr.appendChild(td(r.department, 'left'));
         tr.appendChild(td(r.workType));
+        tr.appendChild(dayBadgesCell(r.day)); // 通常・休出・法休出・有給・午前休・午後休・在宅・要確認（シフト・申請から）
         tr.appendChild(td(r.workPlace || '')); // 会社＋在宅 など（勤務場所だけ。現場・直行直帰は次の列）
         tr.appendChild(td([r.direct ? '直行' : '', r.directReturn ? '直帰' : '', r.sites && r.sites.length ? '現場：' + r.sites.join('・') : '']
           .filter(function (x) { return x; }).join('／') || '—', 'left'));
@@ -237,11 +241,12 @@
       var monthly = S.data.monthly;
       // 「2026年9月分 対象期間：2026/08/21〜2026/09/20」（締め日の設定による期間をそのまま表示）
       $('admTableTitle').textContent = '全スタッフ勤怠（月別：' + (monthly ? (monthly.periodText || App.formatMonth(monthly.month) + '　' + App.formatDateShort(monthly.from) + '〜' + App.formatDateShort(monthly.to)) : '') + '）';
-      setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過', '業務走行距離', '交通費（通勤以外）']);
+      setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過', '業務走行距離', '交通費（通勤以外）',
+        '休日出勤', '法定休日出勤', '有給（1日/午前/午後）', '有給時間', '在宅日数', '要確認（シフト・申請）']);
       var mrows = monthly ? monthly.rows : [];
       total = mrows.length;
       mrows.forEach(function (r) {
-        var alert = r.missingPunchCount > 0 || r.needsCheckCount > 0;
+        var alert = r.missingPunchCount > 0 || r.needsCheckCount > 0 || (r.days && r.days.checkCount > 0);
         if (!matchesCommon(r, f)) return;
         if (f.alertOnly && !alert) return;
         shown += 1;
@@ -259,22 +264,48 @@
         tr.appendChild(td(r.correctionCount ? r.correctionCount + '件' : '—'));
         tr.appendChild(td(r.needsCheckCount ? r.needsCheckCount + '件' : '—', r.needsCheckCount ? 'cell-alert' : ''));
         tr.appendChild(td(r.flex ? r.flex.scheduled : '—'));
-        tr.appendChild(td(r.flex ? r.flex.worked : '—'));
+        var fw = td(r.flex ? r.flex.worked : '—');
+        if (r.flex && r.flex.paidLeave && r.flex.paidLeave !== '00:00') fw.appendChild(el('span', 'cell-sub', '有給 ' + App.trimHour(r.flex.paidLeave) + (r.flex.paidLeaveMode === '未確定' ? '（138時間への算入は未確定）' : r.flex.paidLeaveMode === '算入する' ? '（算入済み）' : '（算入しない）')));
+        tr.appendChild(fw);
         tr.appendChild(td(r.flex ? r.flex.remaining : '—'));
         tr.appendChild(td(r.flex ? r.flex.excess : '—', r.flex && r.flex.excess !== '00:00' ? 'cell-alert' : ''));
         tr.appendChild(td(r.mileageKm ? r.mileageText : '—'));
         tr.appendChild(td(r.transportAmount ? r.transportAmountText : '—'));
+        var dd = r.days || {};
+        tr.appendChild(td(dd.holidayWorkDays ? dd.holidayWorkDays + '日・' + App.trimHour(dd.holidayWorkTime) : '—'));
+        tr.appendChild(td(dd.legalHolidayWorkDays ? dd.legalHolidayWorkDays + '日・' + App.trimHour(dd.legalHolidayWorkTime) : '—'));
+        tr.appendChild(td((dd.fullLeaveDays || dd.amLeaveDays || dd.pmLeaveDays) ? (dd.fullLeaveDays || 0) + '/' + (dd.amLeaveDays || 0) + '/' + (dd.pmLeaveDays || 0) : '—'));
+        tr.appendChild(td(dd.leaveMinutes ? App.trimHour(dd.leaveTime) : '—'));
+        tr.appendChild(td(dd.remoteDays ? dd.remoteDays + '日' : '—'));
+        var chk = td(dd.checkCount ? dd.checkCount + '件' : '—', dd.checkCount ? 'cell-alert' : '');
+        if (dd.checkCount) chk.title = dd.checks.map(function (c) { return App.formatDateShort(c.date) + ' ' + c.reason; }).join('\n');
+        tr.appendChild(chk);
         body.appendChild(tr);
       });
     }
     if (!shown) {
       var empty = document.createElement('tr');
       var cell = el('td', 'empty', total ? '条件に合うスタッフはいません' : 'データがありません');
-      cell.colSpan = 18;
+      cell.colSpan = 24;
       empty.appendChild(cell);
       body.appendChild(empty);
     }
     $('admTableCount').textContent = shown + '名 / ' + total + '名';
+  }
+
+  /** 1日の区分のバッジ（色は 休日系・有給系・要確認 だけ。理由はマウスを重ねると出る） */
+  function dayBadgesCell(day) {
+    var cell = el('td');
+    if (!day || !day.badges.length) { cell.textContent = '—'; return cell; }
+    var box = el('div', 'badges');
+    day.badges.forEach(function (b) {
+      var badge = el('span', 'badge ' + (b.tone === 'ng' ? 'badge-ng' : b.tone === 'holiday' ? 'badge-holiday' : b.tone === 'leave' ? 'badge-leave' : 'badge-notstarted'), b.text);
+      if (b.tone === 'ng') badge.title = day.checks.join('\n');
+      box.appendChild(badge);
+    });
+    if (day.checks.length) box.appendChild(el('span', 'cell-sub', day.checks.join('／')));
+    cell.appendChild(box);
+    return cell;
   }
 
   /** 勤務区間の数と「開く」ボタン（押すとその日の勤務区間と中断を下に表示） */
@@ -323,7 +354,7 @@
   function detailRow(detail) {
     var tr = el('tr', 'detail-row');
     var cell = el('td', 'left');
-    cell.colSpan = 18;
+    cell.colSpan = 24;
     var box = el('div', 'segment-detail');
     // 操作の順番（勤務区間と中断を1本の時系列に）
     if (detail.events && detail.events.length) {
@@ -338,6 +369,19 @@
       box.appendChild(ue);
     }
     var dd = detail.detail || { segments: [], transports: [], car: { count: 0 } };
+    // シフト・1日の区分・有給・要確認（勤務場所とは別の項目）
+    if (detail.day) {
+      var dayInfo = el('dl', 'record-list record-list-compact');
+      var hw = detail.day.holidayWork;
+      [['シフト', detail.day.shiftType], ['区分', detail.day.kind || (detail.day.leave ? '有給' : 'なし')],
+        ['休日出勤', hw ? hw.kind + ' ' + App.trimHour(formatHm(hw.minutes)) + (hw.approved ? '（承認済み申請あり）' : '（承認済み申請なし）') : 'なし'],
+        ['有給', detail.day.leave ? detail.day.leave.type + ' ' + App.trimHour(formatHm(detail.day.leave.minutes)) + '（実働とは別）' : 'なし'],
+        ['要確認（シフト・申請）', detail.day.checks.length ? detail.day.checks.join('／') : 'なし']].forEach(function (x) {
+        dayInfo.appendChild(el('dt', '', x[0]));
+        dayInfo.appendChild(el('dd', x[0].indexOf('要確認') === 0 && detail.day.checks.length ? 'cell-alert' : '', x[1]));
+      });
+      box.appendChild(dayInfo);
+    }
     if (!detail.record) box.appendChild(el('p', 'muted', 'この日は勤怠記録がありません。'));
     box.appendChild(el('p', 'subhead', '勤務区間' + (detail.segments.length && detail.segments[0].virtual ? '（以前の記録のため、出勤〜退勤を1区間として表示）' : '')));
     var ul = el('ul', 'timeline');
@@ -385,6 +429,11 @@
     cell.appendChild(box);
     tr.appendChild(cell);
     return tr;
+  }
+
+  function formatHm(minutes) {
+    var m = Math.max(0, Math.round(minutes || 0));
+    return (m < 600 ? '0' : '') + Math.floor(m / 60) + ':' + (m % 60 < 10 ? '0' : '') + (m % 60);
   }
 
   function setMode(mode) {
@@ -485,12 +534,13 @@
       var name = el('span', 'request-name', r.name);
       if (r.department) name.appendChild(el('span', 'section-sub', '　' + r.department));
       head.appendChild(name);
-      head.appendChild(el('span', 'badge ' + (waiting ? 'badge-pending' : r.status === '承認済み' ? 'badge-ok' : r.status === '却下' ? 'badge-ng' : 'badge-notstarted'), r.status));
+      head.appendChild(el('span', 'badge ' + (waiting ? 'badge-pending' : r.status === '承認済み' ? 'badge-ok' : r.status === '却下' ? 'badge-ng' : 'badge-notstarted'), r.statusLabel || r.status));
       item.appendChild(head);
+      item.appendChild(shiftLine(r.currentShift, r.shiftAtRequest, r.status === '申請中' && !r.approvable, '休日・法定休日'));
       var span = App.trimHour(r.plannedSpan);
       item.appendChild(el('div', 'request-main', App.formatDateShort(r.workDate) + '　' + r.plannedStart + '〜' + r.plannedEnd + '（予定拘束 ' + span + '）'));
       var comp = r.compDayType + (r.compDayType === '取得予定' ? '（' + (r.compDayDate ? App.formatDateShort(r.compDayDate) : '日付未定') + '）' : '');
-      var meta = '理由：' + r.reason + '\n業務内容：' + r.content + '\n振替休日：' + comp;
+      var meta = '理由：' + r.reason + '\n業務内容：' + r.content + (r.site ? '\n現場：' + r.site : '') + '\n振替休日：' + comp;
       if (r.note) meta += '\n備考：' + r.note;
       meta += '\n申請日時：' + r.requestedAt;
       if (r.approvedAt) meta += '\n処理：' + (r.approverName || '—') + '（' + r.approvedAt + '）';
@@ -507,8 +557,9 @@
       if (r.status === '申請中') {
         item.appendChild(requestActions(
           function () {
+            if (!r.approvable) { App.showToast('warn', '今のシフトが「' + r.currentShift + '」のため承認できません。シフトシートで休日・法定休日を登録してください'); return; }
             confirmAction({
-              title: '休日出勤申請を承認しますか？', text: who + '\n\n承認しても勤怠記録は変わりません。',
+              title: '休日出勤申請を承認しますか？', text: who + '（シフト：' + r.currentShift + '）\n\n承認しても勤怠記録は変わりません。',
               okLabel: '承認する', okClass: 'btn-primary',
               run: function (btn) { return adminAction(btn, 'approveHolidayWorkRequest', [r.requestId]); },
             });
@@ -534,6 +585,90 @@
               title: '取消申請を却下しますか？', text: who + '\n却下すると「承認済み」のままになります。',
               okLabel: '取消を却下する', okClass: 'btn-danger', needReason: true,
               run: function (btn, reason) { return adminAction(btn, 'rejectHolidayWorkCancellation', [r.requestId, reason]); },
+            });
+          }, '取消を承認', '取消を却下'));
+      }
+      return item;
+    });
+  }
+
+  /** 申請の「今のシフト」と、承認できないときの注意（申請時のシフトと違えば両方出す） */
+  function shiftLine(current, atRequest, blocked, okWhat) {
+    var line = el('div', 'request-shift');
+    line.appendChild(el('span', 'badge ' + (current === '未登録' || current === 'シフト重複' || current === 'シフト不備' ? 'badge-ng' : 'badge-notstarted'), 'シフト：' + (current || '—')));
+    if (atRequest && atRequest !== current) line.appendChild(el('span', 'section-sub', '　申請時：' + atRequest));
+    if (blocked) line.appendChild(el('span', 'cell-alert', '　承認できません（' + okWhat + 'の日だけ承認できます）'));
+    return line;
+  }
+
+  /** 有給休暇申請（申請中・取消申請中が処理待ち）。承認は今のシフトが通常勤務の日だけ */
+  function renderPaidLeave() {
+    var list = S.data.paidLeave;
+    var box = $('admPaidLeave');
+    if (list.setupRequired) {
+      $('plPendingBadge').hidden = true;
+      box.textContent = '';
+      box.appendChild(el('p', 'empty', '有給休暇申請シートまたはスタッフマスタの「有給申請対象」列がまだありません。Apps Script で setupSystem() を実行してください。'));
+      return;
+    }
+    renderPendingBadge('plPendingBadge', list.pendingCount);
+    $('plPendingBadge').textContent = '処理待ち ' + list.pendingCount + '件';
+    renderRequestList(box, list, $('plShowDone').checked, function (r) {
+      var waiting = r.status === '申請中' || r.status === '取消申請中';
+      var item = el('div', 'request' + (waiting ? ' is-pending' : ''));
+      item.setAttribute('data-request-id', r.requestId);
+      var head = el('div', 'request-head');
+      var name = el('span', 'request-name', r.name);
+      if (r.department) name.appendChild(el('span', 'section-sub', '　' + r.department));
+      head.appendChild(name);
+      var badges = el('span', 'badges');
+      if (r.late) badges.appendChild(el('span', 'badge badge-ng', '要確認（事後申請）'));
+      badges.appendChild(el('span', 'badge ' + (waiting ? 'badge-pending' : r.status === '承認済み' ? 'badge-ok' : r.status === '却下' ? 'badge-ng' : 'badge-notstarted'), r.statusLabel || r.status));
+      head.appendChild(badges);
+      item.appendChild(head);
+      item.appendChild(shiftLine(r.currentShift, r.shiftAtRequest, r.status === '申請中' && !r.approvable, '通常勤務'));
+      item.appendChild(el('div', 'request-main', App.formatDateShort(r.date) + '　' + r.leaveType));
+      var meta = '理由：' + r.reason + (r.note ? '\n備考：' + r.note : '') + '\n申請日時：' + r.requestedAt;
+      if (r.approvedAt) meta += '\n処理：' + (r.approverName || '—') + '（' + r.approvedAt + '）';
+      if (r.rejectReason) meta += '\n却下理由：' + r.rejectReason;
+      if (r.cancelRequestedAt) meta += '\n取消申請：' + r.cancelRequestedAt + '　理由：' + (r.cancelReason || '—');
+      if (r.cancelApprovedAt) meta += '\n取消済み：' + (r.cancelHandlerName || '—') + '（' + r.cancelApprovedAt + '）';
+      if (r.cancelRejectReason) meta += '\n取消却下：' + (r.cancelHandlerName || '—') + '　理由：' + r.cancelRejectReason;
+      if (r.hasAttendance) meta += '\nその日の勤怠：実働 ' + (r.actualWorkTime ? App.trimHour(r.actualWorkTime) : '—') + (r.leaveType === '1日有給' ? '（1日有給の日に勤務実績あり）' : '');
+      item.appendChild(el('div', 'request-meta', meta));
+      var who = r.name + 'さん　' + App.formatDateShort(r.date) + '　' + r.leaveType;
+      if (r.status === '申請中') {
+        item.appendChild(requestActions(
+          function () {
+            if (!r.approvable) { App.showToast('warn', '今のシフトが「' + r.currentShift + '」のため承認できません。シフトシートで通常勤務を登録してください'); return; }
+            confirmAction({
+              title: '有給申請を承認しますか？', text: who + '（シフト：' + r.currentShift + '）' + (r.late ? '\n※ 事後申請です' : '') +
+                '\n\nその日の勤怠があれば、遅刻・早退を計算し直します（打刻・実働は変わりません）。',
+              okLabel: '承認する', okClass: 'btn-primary',
+              run: function (btn) { return adminAction(btn, 'approvePaidLeaveRequest', [r.requestId]); },
+            });
+          },
+          function () {
+            confirmAction({
+              title: '有給申請を却下しますか？', text: who,
+              okLabel: '却下する', okClass: 'btn-danger', needReason: true,
+              run: function (btn, reason) { return adminAction(btn, 'rejectPaidLeaveRequest', [r.requestId, reason]); },
+            });
+          }));
+      } else if (r.status === '取消申請中') {
+        item.appendChild(requestActions(
+          function () {
+            confirmAction({
+              title: '取消申請を承認しますか？', text: who + '\n取消の理由：' + (r.cancelReason || '—') + '\n\n承認すると「取消済み」になります。',
+              okLabel: '取消を承認する', okClass: 'btn-primary',
+              run: function (btn) { return adminAction(btn, 'approvePaidLeaveCancellation', [r.requestId]); },
+            });
+          },
+          function () {
+            confirmAction({
+              title: '取消申請を却下しますか？', text: who + '\n却下すると「承認済み」のままになります。',
+              okLabel: '取消を却下する', okClass: 'btn-danger', needReason: true,
+              run: function (btn, reason) { return adminAction(btn, 'rejectPaidLeaveCancellation', [r.requestId, reason]); },
             });
           }, '取消を承認', '取消を却下'));
       }
@@ -807,6 +942,7 @@
     $('corShowDone').addEventListener('change', function () { if (S.data.corrections) renderCorrections(); });
     $('otShowDone').addEventListener('change', function () { if (S.data.overtime) renderOvertime(); });
     $('hwShowDone').addEventListener('change', function () { if (S.data.holidayWork) renderHolidayWork(); });
+    $('plShowDone').addEventListener('change', function () { if (S.data.paidLeave) renderPaidLeave(); });
     $('admReportFilter').addEventListener('change', function () { if (S.data.reports) renderReports(); });
     $('btnAdminReload').addEventListener('click', function () {
       if (S.busy) return;

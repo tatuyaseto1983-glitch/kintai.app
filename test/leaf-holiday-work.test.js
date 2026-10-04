@@ -24,6 +24,14 @@ function office() {
     { ...base, '社員ID': 'E005', '氏名': '中津井祐貴', 'メールアドレス': NAKATSUI, '権限': 'staff', '勤務区分': '固定勤務', '部署': '一般', '休日出勤申請対象': '対象' },
     { ...base, '社員ID': 'E006', '氏名': '久保亜弓', 'メールアドレス': KUBO, '権限': 'staff', '勤務区分': '固定勤務', '部署': '一般', '休日出勤申請対象': '対象' },
   ]);
+  // 段階3：休日出勤はシフトが休日・法定休日の日だけ承認できる。テストで使う10月の日を一般4名の「休日」にしておく
+  const shifts = [];
+  for (let d = 1; d <= 31; d++) {
+    for (const [id, name] of [['E003', '大森紗智子'], ['E004', '村田清子'], ['E005', '中津井祐貴'], ['E006', '久保亜弓']]) {
+      shifts.push({ '日付': '2026-10-' + String(d).padStart(2, '0'), '社員ID': id, '氏名': name, 'シフト区分': '休日' });
+    }
+  }
+  gas.g.appendRecords_('シフト', shifts);
   gas.setNow('2026-10-02 10:00');
   return gas;
 }
@@ -47,7 +55,7 @@ test('setupSystem：「休日出勤申請対象」列を右端に追加し、勤
     row('E005', '中津井祐貴', ''), row('E006', '久保亜弓', '')];
   const before = JSON.stringify(staff.data.map((r) => r.slice(0, 16)));
   const log = gas.g.setupSystem();
-  assert.match(log, /スタッフマスタ：足りない列を右端に追加しました（休日出勤申請対象）。休日出勤申請対象の初期値を入れました（対象 4名・対象外 2名/);
+  assert.match(log, /スタッフマスタ：足りない列を右端に追加しました（休日出勤申請対象、有給申請対象）。休日出勤申請対象の初期値を入れました（対象 4名・対象外 2名/);
   assert.equal(staff.data[0][16], '休日出勤申請対象', '右端（Q列）に追加');
   assert.deepEqual(staff.data.slice(1).map((r) => r[16]), ['対象外', '対象外', '対象', '対象', '対象', '対象']);
   assert.equal(JSON.stringify(staff.data.map((r) => r.slice(0, 16))), before, '既存の列・値は変えない');
@@ -60,7 +68,7 @@ test('setupSystem：「休日出勤申請対象」列を右端に追加し、勤
   assert.deepEqual(gas.main.getSheetByName('休日出勤申請').data[0].slice(0, 20), ['申請ID', '申請日時', '社員ID', '氏名', '休日出勤日', '開始予定時刻',
     '終了予定時刻', '予定勤務時間', '休日出勤理由', '業務内容', '振替休日区分', '振替休日予定日', '備考', 'ステータス', '承認者ID', '承認者名', '承認日時',
     '却下理由', '取消申請日時', '取消承認日時']);
-  assert.deepEqual(gas.main.getSheetByName('休日出勤申請').data[0].slice(20), ['取消理由', '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時']);
+  assert.deepEqual(gas.main.getSheetByName('休日出勤申請').data[0].slice(20), ['取消理由', '取消処理者ID', '取消処理者名', '取消却下理由', '更新日時', '現場', '申請時シフト区分'], '段階3の2列は右端に');
 });
 
 // ============================================================ 対象者
@@ -127,7 +135,7 @@ test('入力：申請者はサーバーが決める・過去日不可（当日�
   assert.equal(submit({ workDate: '2026-10-11', compDayDate: '' }).data.compDayDate, '');
   assert.equal(submit({ workDate: '2026-10-12', compDayType: '未定', compDayDate: '2026-10-20' }).data.compDayDate, '');
   // 二重申請（申請中・承認済み・取消申請中）は不可。却下・取消済みのあとは申請し直せる
-  assert.match(submit({ workDate: '2026-10-12' }).message, /2026-10-12 の休日出勤申請はすでにあります（ステータス：申請中）/);
+  assert.match(submit({ workDate: '2026-10-12' }).message, /2026-10-12 の休日出勤申請はすでにあります（ステータス：承認待ち）/);
   const id = gas.main.rows('休日出勤申請').find((x) => x['休日出勤日'] === '2026-10-12')['申請ID'];
   gas.g.withdrawHolidayWorkRequest(id);
   assert.equal(submit({ workDate: '2026-10-12' }).success, true, '取消済みのあとは申請し直せる');

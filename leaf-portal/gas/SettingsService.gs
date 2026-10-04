@@ -41,6 +41,12 @@ function getSettings_() {
     holidayCategory: String(values[SETTING_KEYS.HOLIDAY_CATEGORY]).trim(),
     weekStartDay: parseSettingWeekday_(values, SETTING_KEYS.WEEK_START_DAY),
     monthClosingDay: parseSettingClosingDay_(values, SETTING_KEYS.MONTH_CLOSING_DAY),
+    // 段階3：有給・半休（設定の値が正しくないときは、その機能だけを止めて要確認にする＝打刻などは止めない）
+    paidLeaveDayMinutes: softSettingDuration_(values, SETTING_KEYS.PAID_LEAVE_DAY),
+    paidLeaveHalfMinutes: softSettingDuration_(values, SETTING_KEYS.PAID_LEAVE_HALF),
+    amHalfStartMinutes: softSettingClock_(values, SETTING_KEYS.AM_HALF_START),
+    pmHalfEndMinutes: softSettingClock_(values, SETTING_KEYS.PM_HALF_END),
+    flexPaidLeaveMode: parseFlexPaidLeaveMode_(values),
   };
   if (settings.overtimeUnitMinutes < 1) invalidSetting_(SETTING_KEYS.OVERTIME_UNIT, values, '00:01 以上');
   if (settings.fixedEndMinutes <= settings.fixedStartMinutes) {
@@ -49,6 +55,20 @@ function getSettings_() {
 
   SETTINGS_CACHE_ = settings;
   return settings;
+}
+
+/** 段階3の設定：読めなければ null（エラーにしない。使うところで「設定不備」として要確認にする） */
+function softSettingDuration_(values, key) {
+  const m = toMinutes_(values[key]);
+  return m === null || m < 0 ? null : m;
+}
+function softSettingClock_(values, key) {
+  const m = toMinutes_(values[key]);
+  return m === null || m < 0 || m >= 1440 ? null : m;
+}
+function parseFlexPaidLeaveMode_(values) {
+  const v = String(values[SETTING_KEYS.FLEX_PAID_LEAVE] || '').trim();
+  return objectValues_(FLEX_PAID_LEAVE_MODES).indexOf(v) !== -1 ? v : FLEX_PAID_LEAVE_MODES.UNDECIDED;
 }
 
 function invalidSetting_(key, values, example) {

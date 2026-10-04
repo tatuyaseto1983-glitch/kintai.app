@@ -268,8 +268,9 @@ function calculateSegmentedWorkTime_(p) {
     gross += length;
     deducted += cut;
     styleMinutes[s.style] = (styleMinutes[s.style] || 0) + net;
-    // 標準退勤より後に、中断を除いて実際に働いた時間
-    const afterStart = Math.max(s.start, p.standardEndMinutes);
+    // 標準退勤より後に、中断を除いて実際に働いた時間（半休で早退の基準を変えても、社内超過は標準退勤＝excessBaseMinutes から）
+    const excessBase = p.excessBaseMinutes === undefined ? p.standardEndMinutes : p.excessBaseMinutes;
+    const afterStart = Math.max(s.start, excessBase);
     if (s.end > afterStart) {
       excessRaw += (s.end - afterStart) - overlapWithIntervals_(afterStart, s.end, timeline.interruptions);
     }

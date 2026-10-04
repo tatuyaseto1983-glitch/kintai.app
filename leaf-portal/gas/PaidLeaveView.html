@@ -1,0 +1,121 @@
+<!--
+  PaidLeaveView.html — 有給休暇申請と自分のシフトの画面（スタッフ画面）。Index.html の中に読み込まれます。
+    paidLeaveModal   … 申請状況（「新しく申請する」「承認待ち・承認済み」「過去の申請」の3区分）
+    plFormModal      … 新規申請のフォーム（取消の項目は出さない）
+    plWithdrawModal  … 承認前の「申請を取り下げる」の確認
+    plCancelModal    … 承認後の「取消申請」（取消理由は必須）
+    shiftModal       … 自分のシフト（今の20日締め期間）
+  申請者・社員IDは表示だけで、サーバーへは送りません（サーバーがログイン中の社員で決めます）。
+-->
+
+<!-- ================= 有給：申請状況 ================= -->
+<div class="modal" id="paidLeaveModal" role="dialog" aria-modal="true" aria-labelledby="paidLeaveTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="paidLeaveTitle">有給休暇申請</h2>
+      <button type="button" class="modal-close" data-pl-close aria-label="閉じる">×</button>
+    </div>
+    <section class="hw-section" aria-labelledby="plNewTitle">
+      <h3 class="hw-section-title" id="plNewTitle">新しく申請する</h3>
+      <p class="form-lead">有給は原則として事前に申請してください。急病などのときは、今の締め期間の中なら後から申請できます（事後申請）。</p>
+      <button type="button" class="btn btn-primary" id="btnPlNew">＋有給を申請</button>
+    </section>
+    <section class="hw-section" aria-labelledby="plActiveTitle">
+      <h3 class="hw-section-title" id="plActiveTitle">承認待ち・承認済み</h3>
+      <p class="hw-section-note">承認前は「申請を取り下げる」、承認後は「取消申請」（管理者が確認します）で取り消せます。</p>
+      <div class="hw-cards" id="plActiveList"><p class="empty">読み込み中...</p></div>
+    </section>
+    <section class="hw-section" aria-labelledby="plPastTitle">
+      <h3 class="hw-section-title" id="plPastTitle">過去の申請</h3>
+      <p class="hw-section-note">却下・取消済みの申請と、対象日が過ぎた申請です。</p>
+      <div class="hw-cards" id="plPastList"><p class="empty">読み込み中...</p></div>
+    </section>
+  </div>
+</div>
+
+<!-- ================= 有給：新規申請のフォーム ================= -->
+<div class="modal" id="plFormModal" role="dialog" aria-modal="true" aria-labelledby="plFormTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="plFormTitle">有給を申請する</h2>
+      <button type="button" class="modal-close" id="btnPlFormClose" aria-label="閉じる">×</button>
+    </div>
+    <form id="paidLeaveForm" novalidate>
+      <p class="form-lead">管理者が承認すると「承認済み」になります。有給の時間は実働とは別に記録します。</p>
+      <div class="form-row">
+        <label for="plApplicant">申請者</label>
+        <input type="text" id="plApplicant" readonly aria-readonly="true" class="readonly-input">
+      </div>
+      <div class="form-row">
+        <label for="plDate">対象日 <span class="req">必須</span></label>
+        <input type="date" id="plDate" required>
+        <p class="form-help" id="plShiftText" aria-live="polite"></p>
+        <p class="form-help" id="plLateText" hidden>今日より前の日は「事後申請」になります（管理者が確認します）。</p>
+      </div>
+      <div class="form-row">
+        <span class="label-like">有給種別 <span class="req">必須</span></span>
+        <div class="style-select" role="radiogroup" aria-label="有給種別" id="plTypeGroup">
+          <label class="check-inline"><input type="radio" name="plType" value="1日有給"> 1日有給</label>
+          <label class="check-inline"><input type="radio" name="plType" value="午前半休"> 午前半休</label>
+          <label class="check-inline"><input type="radio" name="plType" value="午後半休"> 午後半休</label>
+        </div>
+        <p class="form-help" id="plTypeHelp"></p>
+      </div>
+      <div class="form-row">
+        <label for="plReason">理由 <span class="req">必須</span></label>
+        <textarea id="plReason" rows="2" maxlength="2000" placeholder="例：私用のため"></textarea>
+      </div>
+      <div class="form-row">
+        <label for="plNote">備考 <span class="optional">任意</span></label>
+        <textarea id="plNote" rows="2" maxlength="2000"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="btnPlFormBack">戻る</button>
+        <button type="submit" class="btn btn-primary" id="btnSubmitPaidLeave">申請する</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ================= 有給：申請を取り下げる（承認前） ================= -->
+<div class="modal" id="plWithdrawModal" role="dialog" aria-modal="true" aria-labelledby="plWithdrawTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="plWithdrawTitle">申請を取り下げますか？</h2>
+    <dl class="hw-target" id="plWithdrawTarget"></dl>
+    <p class="confirm-text">まだ承認されていないため、管理者の確認なしで、すぐに「取消済み」になります。</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnPlWithdrawBack">戻る</button>
+      <button type="button" class="btn btn-danger" id="btnPlWithdrawOk">申請を取り下げる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 有給：取消申請（承認後） ================= -->
+<div class="modal" id="plCancelModal" role="dialog" aria-modal="true" aria-labelledby="plCancelTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="plCancelTitle">有給の取消申請</h2>
+    <p class="confirm-text">承認済みの有給を取り消すには、管理者の確認が必要です。管理者が承認すると「取消済み」になります。</p>
+    <dl class="hw-target" id="plCancelTarget"></dl>
+    <div class="form-row">
+      <label for="plCancelReason">取消理由 <span class="req">必須</span></label>
+      <textarea id="plCancelReason" rows="3" maxlength="2000"></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnPlCancelBack">戻る</button>
+      <button type="button" class="btn btn-primary" id="btnPlCancelOk">取消を申請する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 自分のシフト ================= -->
+<div class="modal" id="shiftModal" role="dialog" aria-modal="true" aria-labelledby="shiftTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="shiftTitle">自分のシフト</h2>
+      <button type="button" class="modal-close" data-pl-close aria-label="閉じる">×</button>
+    </div>
+    <p class="form-help" id="shiftPeriod"></p>
+    <p class="form-help">シフトは管理者が登録します。「未登録」の日は、管理者に確認してください（通常勤務とはみなしません）。</p>
+    <ul class="recent-list" id="shiftList"><li class="empty">読み込み中...</li></ul>
+  </div>
+</div>

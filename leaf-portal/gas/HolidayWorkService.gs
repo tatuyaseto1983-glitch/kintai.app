@@ -55,8 +55,13 @@ function getMyHolidayWorkRequests() {
     const base = { eligible: false, today: getNowInfo_().date, requests: [], compDayTypes: holidayCompDayTypeList_() };
     if (!hasHolidayWorkSchema_()) return { message: '休日出勤申請はまだ準備中です', data: Object.assign(base, { setupRequired: true }) };
     if (!canApplyHolidayWork_(staff)) return { message: '休日出勤申請の対象外です', data: base };
+    const shiftMap = buildShiftMap_('', '', staff.employeeId); // 自分のシフトだけ
     const list = findRecords_(SHEET_NAMES.HOLIDAY_WORK, function (r) { return String(r['社員ID']).trim() === staff.employeeId; })
-      .map(toHolidayWorkView_)
+      .map(function (r) {
+        const v = toHolidayWorkView_(r);
+        v.currentShift = shiftOf_(shiftMap, staff.employeeId, v.workDate).type;
+        return v;
+      })
       .sort(function (a, b) {
         if (a.workDate !== b.workDate) return a.workDate < b.workDate ? 1 : -1;
         return a.requestedAt < b.requestedAt ? 1 : -1;
@@ -156,7 +161,13 @@ function submitHolidayWorkRequest_(input) {
     return String(r['社員ID']).trim() === staff.employeeId && toDateKey_(r['休日出勤日']) === plan.workDate &&
       holidayWorkActiveStatuses_().indexOf(String(r['ステータス']).trim()) !== -1;
   })[0];
-  if (duplicate) fail_(plan.workDate + ' の休日出勤申請はすでにあります（ステータス：' + duplicate['ステータス'] + '）');
+  if (duplicate) fail_(plan.workDate + ' の休日出勤申請はすでにあります（ステータス：' + requestStatusLabel_(duplicate['ステータス']) + '）');
+  // 同じ日に有効な有給申請があれば、矛盾するので受け付けない
+  const leave = findActivePaidLeave_(staff.employeeId, plan.workDate);
+  if (leave) fail_(plan.workDate + ' には有給休暇の申請があります（' + toPlainText_(leave['有給種別']) + '・' + requestStatusLabel_(leave['ステータス']) + '）。休日出勤申請はできません');
+  // 対象日のシフトを確認：通常勤務の日は申請不要。未登録・シフト重複は受け付けるが、シフトが決まるまで承認できない
+  const shiftType = getShiftType_(staff.employeeId, plan.workDate);
+  if (shiftType === SHIFT_TYPES.NORMAL) fail_('通常勤務日のため休日出勤申請は不要です（' + plan.workDate + '）');
 
   const record = appendRecord_(SHEET_NAMES.HOLIDAY_WORK, {
     '申請ID': makeUniqueId_(SHEET_NAMES.HOLIDAY_WORK, '申請ID', 'HW-' + compactTimestamp_() + '-' + staff.employeeId),
@@ -175,7 +186,9 @@ function submitHolidayWorkRequest_(input) {
     'ステータス': HOLIDAY_WORK_STATUS.PENDING,
     '更新日時': now.timestamp,
   });
-  return { message: '休日出勤を申請しました（' + plan.workDate + '）。管理者の承認をお待ちください', data: toHolidayWorkView_(record) };
+  updateRecord_(SHEET_NAMES.HOLIDAY_WORK, record, onlyExistingColumns_(SHEET_NAMES.HOLIDAY_WORK, { '現場': plan.site, '申請時シフト区分': shiftType }));
+  const shiftNote = isHolidayShift_(shiftType) ? '' : '\n※ ' + plan.workDate + ' は' + shiftType + 'のため、シフトが休日・法定休日に決まるまで承認されません';
+  return { message: '休日出勤を申請しました（' + plan.workDate + '・' + shiftType + '）。管理者の承認をお待ちください' + shiftNote, data: toHolidayWorkView_(record) };
 }
 
 /**
@@ -199,8 +212,9 @@ function validateHolidayWorkPlan_(input, today) {
     if (compDayDate < today) fail_('振替休日予定日に過去の日付は指定できません');
   }
   const note = requireText_(input.note, '備考', { required: false, max: TEXT_LIMITS.LONG });
+  const site = requireText_(input.site, '現場', { required: false, max: TEXT_LIMITS.SHORT });
   return { workDate: workDate, start: start, end: end, span: end - start, reason: reason, content: content,
-    compDayType: compDayType, compDayDate: compDayDate, note: note };
+    compDayType: compDayType, compDayDate: compDayDate, note: note, site: site };
 }
 
 function decideHolidayWork_(requestId, action, reason) {
@@ -214,6 +228,16 @@ function decideHolidayWork_(requestId, action, reason) {
   const isCancel = action === 'approveCancel' || action === 'rejectCancel';
   const expected = isCancel ? HOLIDAY_WORK_STATUS.CANCEL_REQUESTED : HOLIDAY_WORK_STATUS.PENDING;
   if (status !== expected) fail_('この申請は「' + expected + '」ではないため処理できません（今のステータス：' + status + '）');
+
+  // 承認するときは「今の」シフトで判定する（申請時に未登録でも、シフトが休日・法定休日に決まれば承認できる）
+  if (action === 'approve') {
+    const shiftType = getShiftType_(String(record['社員ID']).trim(), toDateKey_(record['休日出勤日']));
+    if (!isHolidayShift_(shiftType)) {
+      fail_(shiftType === SHIFT_STATE.UNREGISTERED ? 'シフト未登録のため承認できません。先にシフトシートで休日・法定休日を登録してください'
+        : shiftType === SHIFT_TYPES.NORMAL ? '対象日のシフトが通常勤務のため、休日出勤として承認できません'
+          : '対象日のシフトが「' + shiftType + '」のため承認できません。シフトシートを確認してください');
+    }
+  }
 
   let changes;
   let message;
@@ -319,7 +343,10 @@ function toHolidayWorkView_(r) {
     compDayType: toPlainText_(r['振替休日区分']),
     compDayDate: toDateKey_(r['振替休日予定日']),
     note: toPlainText_(r['備考']),
+    site: toPlainText_(r['現場']),
+    shiftAtRequest: toPlainText_(r['申請時シフト区分']),
     status: toPlainText_(r['ステータス']),
+    statusLabel: requestStatusLabel_(toPlainText_(r['ステータス'])), // 画面の表示（申請中 → 承認待ち）
     approverId: toPlainText_(r['承認者ID']),
     approverName: toPlainText_(r['承認者名']),
     approvedAt: toPlainText_(r['承認日時']),
@@ -368,6 +395,9 @@ function buildAdminHolidayWork_(ctx) {
     const view = toHolidayWorkView_(r);
     const staff = ctx.staffById[view.employeeId];
     view.department = staff ? staff.department : '';
+    // 今のシフトと、承認できるか（休日・法定休日のときだけ）
+    view.currentShift = shiftOf_(ctx.shiftMap || {}, view.employeeId, view.workDate).type;
+    view.approvable = isHolidayShift_(view.currentShift);
     return attachHolidayWorkActual_(view, ctx.attendanceByKey);
   });
   const waiting = function (v) { return v.status === HOLIDAY_WORK_STATUS.PENDING || v.status === HOLIDAY_WORK_STATUS.CANCEL_REQUESTED; };

@@ -67,6 +67,7 @@ function getAttendanceDetail(attendanceId) {
     const timeline = buildAttendanceTimeline_(record);
     timeline.record = toAttendanceView_(record);
     timeline.detail = buildDayDetailForEmployee_(String(record['社員ID']).trim(), toDateKey_(record['日付']), record, getNowInfo_());
+    timeline.day = buildDayStatus_(String(record['社員ID']).trim(), toDateKey_(record['日付']), record, buildDayStatusContext_());
     return { message: toDateKey_(record['日付']) + ' ' + toPlainText_(record['氏名']) + ' の勤務区間を取得しました', data: timeline };
   });
 }
@@ -86,6 +87,7 @@ function getAdminDayDetail(employeeId, date) {
     const data = record ? buildAttendanceTimeline_(record) : { events: [], segments: [], breaks: [], currentStyle: '', segmentCount: 0, showSeconds: false };
     data.record = record ? toAttendanceView_(record) : null;
     data.detail = buildDayDetailForEmployee_(id, dateKey, record, getNowInfo_());
+    data.day = buildDayStatus_(id, dateKey, record, buildDayStatusContext_()); // シフト・有給・休日出勤と要確認の理由
     return { message: dateKey + ' ' + staff.name + ' の詳細を取得しました', data: data };
   });
 }

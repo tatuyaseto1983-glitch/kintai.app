@@ -18,7 +18,7 @@
  */
 
 /** getAdminDashboard() で取得できる情報の種類 */
-const ADMIN_DASHBOARD_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'flex', 'restDays', 'reports'];
+const ADMIN_DASHBOARD_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports'];
 
 /** 申請一覧で返す「処理済み」の件数（承認待ちは全件返す） */
 const ADMIN_RECENT_REQUEST_LIMIT = 30;
@@ -58,6 +58,7 @@ function getAdminDashboard(params) {
     if (has('corrections')) data.corrections = listRequestsForAdmin_(SHEET_NAMES.CORRECTIONS, toCorrectionView_, ctx);
     if (has('overtime')) data.overtime = listRequestsForAdmin_(SHEET_NAMES.OVERTIME, toOvertimeView_, ctx);
     if (has('holidayWork')) data.holidayWork = buildAdminHolidayWork_(ctx);
+    if (has('paidLeave')) data.paidLeave = buildAdminPaidLeave_(ctx);
     if (has('flex')) data.flex = buildAdminFlex_(ctx, date, month);
     if (has('restDays')) data.restDays = buildAdminRestDays_(ctx, date);
     if (has('reports')) data.reports = buildAdminReports_(ctx, date);
@@ -95,7 +96,10 @@ function exportAdminAttendanceCsv(params) {
       // 勤務区間の列（以前の列の右に足す。以前の記録で計算していない日は空欄）。勤務場所は 会社・在宅（出社→会社と表示）
       '勤務場所', '勤務区間数', '出社時間', '在宅時間',
       // 段階2：付帯情報と交通費（現場は勤務場所ではなく付帯情報。業務走行距離・交通費合計は交通費明細から集計。削除済みは入れない）
-      '日備考', '出張', '直行', '直帰', '現場', '業務走行距離', '交通費合計'];
+      '日備考', '出張', '直行', '直帰', '現場', '業務走行距離', '交通費合計',
+      // 段階3：シフト・1日の区分・有給（有給時間は実働とは別の列）・要確認（シフト・申請に関するもの。残業の要確認とは別）
+      'シフト区分', '日の区分', '有給種別', '有給時間', '要確認（シフト・申請）'];
+    const dctx = buildDayStatusContext_(settings);
     const transportByDay = {};
     listTransportRows_('', range.from, range.to).forEach(function (r) {
       const key = String(r['社員ID']).trim() + '|' + toDateKey_(r['日付']);
@@ -109,7 +113,8 @@ function exportAdminAttendanceCsv(params) {
         row.autoBreak, row.breakTotal, row.workTime, row.late, row.earlyLeave, row.internalExcess, row.preOvertimeRequest,
         row.needsCheck, row.issues.join('・'), row.correctionStatus, row.status,
         row.workPlace, row.segmentCount, row.officeTime, row.remoteTime,
-        row.dayNote, row.businessTrip, row.direct, row.directReturn, row.sites.join('・')].concat(transportCsvCells_(transportByDay[row.employeeId + '|' + row.date])).map(csvCell_).join(','));
+        row.dayNote, row.businessTrip, row.direct, row.directReturn, row.sites.join('・')].concat(transportCsvCells_(transportByDay[row.employeeId + '|' + row.date]))
+        .concat(dayStatusCsvCells_(buildDayStatus_(row.employeeId, row.date, record, dctx))).map(csvCell_).join(','));
     });
     return {
       message: (range.periodText || label) + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
@@ -148,6 +153,8 @@ function buildAdminContext_(settings, today) {
     settings: settings,
     today: today,
     calc: calc,
+    shiftMap: calc.shiftMap,
+    day: buildDayStatusContext_(settings), // 1日の区分と要確認（シフト・有給・休日出勤から）
     staffList: staffList,
     staffById: calc.staffById,
     attendanceByEmployee: attendanceByEmployee,
@@ -197,6 +204,11 @@ function detectPunchIssues_(record, ctx) {
 }
 
 /** 勤怠1件を管理者画面の行にする（部署・打刻漏れを追加） */
+/** CSV の「シフト区分」「日の区分」「有給種別」「有給時間」「要確認（シフト・申請）」の欄 */
+function dayStatusCsvCells_(st) {
+  return [st.shiftType, st.kind, st.leave ? st.leave.type : '', st.leave ? formatMinutes_(st.leave.minutes) : '', st.checks.join('・')];
+}
+
 /** CSV の「業務走行距離」「交通費合計」の欄（その日の交通費明細から） */
 function transportCsvCells_(items) {
   if (!items || !items.length) return ['', ''];
@@ -214,6 +226,7 @@ function toAdminAttendanceRow_(record, ctx) {
   const staff = ctx.staffById[view.employeeId] || null;
   view.department = staff ? staff.department : '';
   view.issues = detectPunchIssues_(record, ctx);
+  if (ctx.day) view.day = buildDayStatus_(view.employeeId, view.date, record, ctx.day);
   return view;
 }
 
@@ -226,7 +239,7 @@ function buildAdminSummary_(ctx) {
     date: ctx.today, monthFrom: range.from, monthTo: range.to,
     present: 0, remote: 0, working: 0, onBreak: 0, finished: 0, notStarted: 0,
     missingPunchStaff: 0, missingPunchRecords: 0, overtimeNeedsCheck: 0,
-    pendingCorrections: 0, pendingOvertime: 0, pendingHolidayWork: 0,
+    pendingCorrections: 0, pendingOvertime: 0, pendingHolidayWork: 0, pendingPaidLeave: 0,
   };
   ctx.staffList.filter(isAttendanceTarget_).forEach(function (s) {
     const record = currentAttendanceFromContext_(ctx, s.employeeId);
@@ -260,6 +273,12 @@ function buildAdminSummary_(ctx) {
       return s === HOLIDAY_WORK_STATUS.PENDING || s === HOLIDAY_WORK_STATUS.CANCEL_REQUESTED;
     }).length;
   }
+  if (hasPaidLeaveSchema_()) {
+    summary.pendingPaidLeave = findRecords_(SHEET_NAMES.PAID_LEAVE, function (r) {
+      const s = String(r['ステータス']).trim();
+      return s === HOLIDAY_WORK_STATUS.PENDING || s === HOLIDAY_WORK_STATUS.CANCEL_REQUESTED;
+    }).length;
+  }
   return summary;
 }
 
@@ -278,6 +297,7 @@ function buildAdminDaily_(ctx, date) {
       date: date, employeeId: s.employeeId, name: s.name, department: s.department, workType: s.workType,
       workStyle: '', clockIn: '', clockOut: '', autoBreak: '', breakTotal: '', workTime: '', late: '', earlyLeave: '',
       internalExcess: '', preOvertimeRequest: '', needsCheck: '', correctionStatus: '', status: ATTENDANCE_STATUS.NOT_STARTED, issues: [],
+      day: buildDayStatus_(s.employeeId, date, null, ctx.day), // 打刻がない日も有給・シフトの要確認を出す
     });
   });
   // スタッフマスタから外れた人の記録も、その日にあれば表示する
@@ -326,16 +346,51 @@ function buildAdminMonthly_(ctx, month) {
       transportAmount: transport[s.employeeId] ? transport[s.employeeId].amount : 0,
       transportAmountText: (transport[s.employeeId] ? transport[s.employeeId].amount : 0).toLocaleString('ja-JP') + '円',
     };
+    // 段階3：1日の区分（シフト・休日出勤・有給）を期間の全日で数える（20日締め）
+    const days = summarizeDaysForEmployee_(s.employeeId, range.from, range.to, ctx);
+    row.days = days;
     if (s.workType === WORK_TYPES.FLEX) {
-      const balance = calculateFlexBalance_(buildWorkRule_(s.workType, s, settings).monthlyMinutes, worked);
+      const leaveForFlex = flexLeaveMinutes_(days.leaveMinutes, settings);
+      const balance = calculateFlexBalance_(buildWorkRule_(s.workType, s, settings).monthlyMinutes, worked + leaveForFlex);
       row.flex = {
-        scheduled: formatMinutes_(balance.scheduledMinutes), worked: formatMinutes_(balance.workedMinutes),
+        scheduled: formatMinutes_(balance.scheduledMinutes), worked: formatMinutes_(worked),
         remaining: formatMinutes_(balance.remainingMinutes), excess: formatMinutes_(balance.excessMinutes),
+        paidLeave: formatMinutes_(days.leaveMinutes), paidLeaveMode: settings.flexPaidLeaveMode,
       };
     }
     return row;
   });
   return { month: month, from: range.from, to: range.to, periodLabel: range.label, periodText: range.periodText, rows: rows };
+}
+
+/**
+ * 社員1人の期間の区分ごとの日数と時間（20日締めの期間で呼ぶ）。
+ * 休日出勤・法定休日出勤の時間は実績の実働。有給の時間は実働とは別に数える（同じ時間を二重に足さない）。
+ */
+function summarizeDaysForEmployee_(employeeId, from, to, ctx) {
+  const out = { holidayWorkDays: 0, holidayWorkMinutes: 0, legalHolidayWorkDays: 0, legalHolidayWorkMinutes: 0,
+    fullLeaveDays: 0, amLeaveDays: 0, pmLeaveDays: 0, leaveMinutes: 0, remoteDays: 0, checkCount: 0, checks: [] };
+  listDates_(from, to).forEach(function (date) {
+    const record = ctx.attendanceByKey[employeeId + '|' + date] || null;
+    const st = buildDayStatus_(employeeId, date, record, ctx.day);
+    if (st.kind === '休日出勤') { out.holidayWorkDays += 1; out.holidayWorkMinutes += st.workMinutes; }
+    if (st.kind === '法定休日出勤') { out.legalHolidayWorkDays += 1; out.legalHolidayWorkMinutes += st.workMinutes; }
+    if (st.leave) {
+      if (st.leave.type === PAID_LEAVE_TYPES.FULL) out.fullLeaveDays += 1;
+      if (st.leave.type === PAID_LEAVE_TYPES.AM) out.amLeaveDays += 1;
+      if (st.leave.type === PAID_LEAVE_TYPES.PM) out.pmLeaveDays += 1;
+      out.leaveMinutes += st.leave.minutes;
+    }
+    if (st.place === '在宅' || st.place === '会社＋在宅') out.remoteDays += 1;
+    if (st.checks.length) {
+      out.checkCount += st.checks.length;
+      st.checks.forEach(function (c) { out.checks.push({ date: date, reason: c }); });
+    }
+  });
+  out.holidayWorkTime = formatMinutes_(out.holidayWorkMinutes);
+  out.legalHolidayWorkTime = formatMinutes_(out.legalHolidayWorkMinutes);
+  out.leaveTime = formatMinutes_(out.leaveMinutes);
+  return out;
 }
 
 // ============================================================ 申請
@@ -370,8 +425,10 @@ function buildAdminFlex_(ctx, date, month) {
       const records = ctx.attendanceByEmployee[s.employeeId] || [];
       return {
         employeeId: s.employeeId, name: s.name, department: s.department,
-        week: summarizeFlexPeriod_(records, week.from, week.to, rule.weeklyMinutes),
-        month: summarizeFlexPeriod_(records, monthRange.from, monthRange.to, rule.monthlyMinutes),
+        week: summarizeFlexPeriod_(records, week.from, week.to, rule.weeklyMinutes,
+          paidLeaveMinutesInRange_(s.employeeId, week.from, week.to, settings), settings),
+        month: summarizeFlexPeriod_(records, monthRange.from, monthRange.to, rule.monthlyMinutes,
+          paidLeaveMinutesInRange_(s.employeeId, monthRange.from, monthRange.to, settings), settings),
       };
     });
   return { weekFrom: week.from, weekTo: week.to, month: month, monthFrom: monthRange.from, monthTo: monthRange.to, rows: rows };

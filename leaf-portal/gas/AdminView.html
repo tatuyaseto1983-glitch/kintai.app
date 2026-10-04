@@ -105,8 +105,9 @@
       </p>
     </section>
 
-    <!-- ============ 申請 ============ -->
-    <section class="grid grid-2">
+    <!-- ============ 申請（打刻修正・残業・休日出勤・有給） ============ -->
+    <h2 class="section-title" id="requestsTitle">申請 <span class="section-sub">打刻修正・残業・休日出勤・有給</span></h2>
+    <section class="grid grid-2" aria-labelledby="requestsTitle">
       <div class="card">
         <div class="card-head">
           <h2 class="card-title">打刻修正申請 <span class="badge badge-warn" id="corPendingBadge" hidden></span></h2>
@@ -126,8 +127,16 @@
           <h2 class="card-title">休日出勤申請 <span class="badge badge-warn" id="hwPendingBadge" hidden></span></h2>
           <label class="control-check small"><input type="checkbox" id="hwShowDone"> 処理済みも表示</label>
         </div>
-        <p class="card-note">申請は「予定」です。承認しても勤怠記録は変わりません（実績は参考として表示）。</p>
+        <p class="card-note">申請は「予定」です。承認しても勤怠記録は変わりません（実績は参考として表示）。承認できるのは、今のシフトが休日・法定休日の日だけです。</p>
         <div class="request-list" id="admHolidayWork"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">有給休暇申請 <span class="badge badge-warn" id="plPendingBadge" hidden></span></h2>
+          <label class="control-check small"><input type="checkbox" id="plShowDone"> 処理済みも表示</label>
+        </div>
+        <p class="card-note">承認できるのは、今のシフトが通常勤務の日だけです。有給時間は実働とは別に記録します。承認・取消のあと、その日の勤怠の遅刻・早退を計算し直します（打刻・実働は変わりません）。</p>
+        <div class="request-list" id="admPaidLeave"></div>
       </div>
     </section>
 

@@ -102,13 +102,13 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
       await sato.fill('#hwContent', '配筋検査');
       await sato.click('#btnSubmitHolidayWork');
       await sato.waitForSelector('#hwFormModal', { state: 'hidden' });
-      assert.match(await lastToast(sato), /休日出勤を申請しました（2026-10-10）/);
-      await sato.waitForFunction(() => /10\/10[\s\S]*申請中/.test(document.getElementById('holidayWorkMiniList').innerText));
+      assert.match(await lastToast(sato), /休日出勤を申請しました（2026-10-10・休日）/);
+      await sato.waitForFunction(() => /10\/10[\s\S]*承認待ち/.test(document.getElementById('holidayWorkMiniList').innerText));
       await openHub(sato);
-      assert.deepEqual(await sato.locator('#holidayWorkModal .hw-section-title').allInnerTexts(), ['新しく申請する', '申請中・承認済み', '過去の申請']);
+      assert.deepEqual(await sato.locator('#holidayWorkModal .hw-section-title').allInnerTexts(), ['新しく申請する', '承認待ち・承認済み', '過去の申請']);
       assert.equal(await sato.innerText('#btnHwNew'), '＋休日出勤を申請');
       const card = hubCard(sato, 'hwActiveList', '10/10');
-      assert.match(await card.innerText(), /10\/10（土）[\s\S]*申請中[\s\S]*予定時間帯\s+09:00〜17:30（予定拘束 8:30）[\s\S]*振替休日\s+取得予定（日付未定）[\s\S]*<img src=x onerror="window.__xss=1">現場立ち会い/);
+      assert.match(await card.innerText(), /10\/10（土）[\s\S]*承認待ち[\s\S]*予定時間帯\s+09:00〜17:30（予定拘束 8:30）[\s\S]*振替休日\s+取得予定（日付未定）[\s\S]*<img src=x onerror="window.__xss=1">現場立ち会い/);
       assert.deepEqual(await card.locator('button').allInnerTexts(), ['申請を取り下げる'], '申請中は取り下げだけ');
       assert.equal(await sato.locator('#holidayWorkModal img').count(), 0);
       assert.equal(await sato.evaluate(() => window.__xss), undefined, '入力した文字はHTMLとして解釈しない');
@@ -160,7 +160,7 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
       assert.match(await yamada.locator('#summaryCards').innerText(), /休日出勤申請待ち\s*1\s*件/);
       assert.equal(await yamada.innerText('#hwPendingBadge'), '処理待ち 1件');
       const req = yamada.locator('#admHolidayWork .request').first();
-      assert.match(await req.innerText(), /佐藤 花子[\s\S]*申請中[\s\S]*10\/10（土）　09:00〜17:30（予定拘束 8:30）[\s\S]*業務内容：配筋検査/);
+      assert.match(await req.innerText(), /佐藤 花子[\s\S]*承認待ち[\s\S]*10\/10（土）　09:00〜17:30（予定拘束 8:30）[\s\S]*業務内容：配筋検査/);
       await req.locator('button', { hasText: '却下' }).click();
       await yamada.click('#btnAdminConfirmOk');
       assert.match(await lastToast(yamada), /却下理由を入力してください/);
@@ -216,7 +216,7 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
       await sato.waitForSelector('#holidayWorkCard:not([hidden])');
       await openHub(sato);
       await sato.waitForFunction(() => /10\/10[\s\S]*取消済み/.test(document.getElementById('hwPastList').innerText));
-      assert.match(await sato.innerText('#hwActiveList'), /申請中・承認済みの申請はありません/);
+      assert.match(await sato.innerText('#hwActiveList'), /承認待ち・承認済みの申請はありません/);
       await sato.close();
     });
 

@@ -1,0 +1,312 @@
+<script>
+/* ============================================================
+ * PaidLeaveScripts.html — 有給休暇申請と自分のシフトの動き（スタッフ画面）
+ *
+ * 休日出勤申請（HolidayWorkScripts.html）と同じ操作感：
+ *   申請状況（新しく申請する／承認待ち・承認済み／過去の申請）・新規申請・取り下げ（承認前）・取消申請（承認後）
+ * ・申請できるか（有給申請対象か）とシフトの確認は、サーバーが判定します（対象外ならカードを出さない）
+ * ・社員ID・氏名は画面から送りません
+ * ・表示する文字はすべて textContent で入れています
+ * ・処理中は全ボタンを無効化し、連打しても1回だけ送ります
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var App = window.LeafApp;
+  var el = App.el;
+
+  /** この画面から呼んでよいサーバーの関数（管理者用の関数は入れない） */
+  var PL_FUNCTIONS = ['getMyPaidLeaveRequests', 'submitPaidLeaveRequest', 'withdrawPaidLeaveRequest', 'requestPaidLeaveCancellation', 'getMyShiftOn', 'getMyShifts'];
+  var STATUS = { PENDING: '申請中', APPROVED: '承認済み', REJECTED: '却下', CANCEL_REQUESTED: '取消申請中', CANCELLED: '取消済み' };
+  var MODALS = ['paidLeaveModal', 'plFormModal', 'plWithdrawModal', 'plCancelModal', 'shiftModal'];
+
+  var P = { busy: false, data: null, seq: 0, formFromHub: false, target: null };
+
+  function $(id) { return document.getElementById(id); }
+  function call(fn, args) { return App.callAllowed(PL_FUNCTIONS, fn, args); }
+  function today() { return (P.data && P.data.today) || App.getServerDate() || App.jstDateKey(new Date()); }
+  function label(status) { return status === STATUS.PENDING ? '承認待ち' : status; }
+
+  function isActive(r) {
+    if (r.status === STATUS.PENDING || r.status === STATUS.CANCEL_REQUESTED) return true;
+    return r.status === STATUS.APPROVED && r.date >= today();
+  }
+
+  // ============================================================ 取得・表示
+
+  function load() {
+    var seq = ++P.seq;
+    return call('getMyPaidLeaveRequests', []).then(function (res) {
+      if (seq !== P.seq) return res;
+      if (!res.success || !res.data || !res.data.eligible) {
+        P.data = res.success ? res.data : null;
+        $('paidLeaveCard').hidden = true; // 対象外・準備中はカードを出さない
+        return res;
+      }
+      P.data = res.data;
+      $('paidLeaveCard').hidden = false;
+      render();
+      return res;
+    });
+  }
+
+  function statusBadge(status) {
+    var cls = status === STATUS.PENDING ? 'badge-warn' : status === STATUS.APPROVED ? 'badge-ok' : status === STATUS.REJECTED ? 'badge-ng'
+      : status === STATUS.CANCEL_REQUESTED ? 'badge-warn' : 'badge-notstarted';
+    return el('span', 'badge ' + cls, label(status));
+  }
+
+  function render() {
+    var requests = (P.data && P.data.requests) || [];
+    var active = requests.filter(isActive).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    var past = requests.filter(function (r) { return !isActive(r); });
+    var mini = $('paidLeaveMiniList');
+    mini.textContent = '';
+    active.slice(0, 3).forEach(function (r) {
+      var li = document.createElement('li');
+      li.appendChild(el('span', '', App.formatDateShort(r.date) + '　' + r.leaveType));
+      li.appendChild(statusBadge(r.status));
+      mini.appendChild(li);
+    });
+    fillCards($('plActiveList'), active, '承認待ち・承認済みの申請はありません');
+    fillCards($('plPastList'), past, '過去の申請はありません');
+  }
+
+  function fillCards(box, list, emptyText) {
+    box.textContent = '';
+    if (!list.length) { box.appendChild(el('p', 'empty', emptyText)); return; }
+    list.forEach(function (r) { box.appendChild(requestCard(r)); });
+  }
+
+  function requestCard(r) {
+    var card = el('div', 'hw-card');
+    card.setAttribute('data-request-id', r.requestId);
+    var head = el('div', 'hw-card-head');
+    head.appendChild(el('span', 'hw-card-date', App.formatDateShort(r.date) + '　' + r.leaveType));
+    var badges = el('span', 'badges');
+    if (r.late) badges.appendChild(el('span', 'badge badge-notstarted', '事後申請'));
+    badges.appendChild(statusBadge(r.status));
+    head.appendChild(badges);
+    card.appendChild(head);
+    var dl = el('dl', 'hw-card-info');
+    addInfo(dl, 'シフト', r.currentShift + (r.status === STATUS.PENDING && r.currentShift !== '通常勤務' ? '（シフトが通常勤務に決まるまで承認されません）' : ''));
+    addInfo(dl, '理由', r.reason);
+    if (r.status === STATUS.REJECTED && r.rejectReason) addInfo(dl, '却下理由', r.rejectReason);
+    if (r.status === STATUS.CANCEL_REQUESTED) addInfo(dl, '取消理由', r.cancelReason);
+    if (r.status === STATUS.CANCELLED) addInfo(dl, '取消', (r.cancelApprovedAt || '').slice(0, 16) + '　' + (r.cancelReason || ''));
+    card.appendChild(dl);
+    if (r.status === STATUS.CANCEL_REQUESTED) card.appendChild(el('p', 'hw-card-note', '取消を申請中です（管理者の確認待ち）。'));
+    if (r.status === STATUS.APPROVED && r.cancelRejectReason) card.appendChild(el('p', 'hw-card-note is-error', '取消申請は却下されました：' + r.cancelRejectReason));
+    var actions = el('div', 'hw-actions');
+    if (r.status === STATUS.PENDING) actions.appendChild(actionButton('申請を取り下げる', 'btn-outline', function () { openWithdraw(r); }));
+    if (r.status === STATUS.APPROVED && r.date >= today()) actions.appendChild(actionButton('取消申請', 'btn-outline', function () { openCancel(r); }));
+    if (actions.children.length) card.appendChild(actions);
+    return card;
+  }
+
+  function addInfo(dl, labelText, value) {
+    dl.appendChild(el('dt', '', labelText));
+    dl.appendChild(el('dd', '', value || '—'));
+  }
+
+  function actionButton(text, cls, onClick) {
+    var b = el('button', 'btn btn-sm ' + cls, text);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function openHub() {
+    if (!P.data || !P.data.eligible) return;
+    render();
+    App.openModal('paidLeaveModal');
+  }
+
+  // ============================================================ 新規申請
+
+  function openForm(fromHub) {
+    if (!P.data || !P.data.eligible) return;
+    P.formFromHub = !!fromHub;
+    if (fromHub) $('paidLeaveModal').hidden = true;
+    var user = App.getUser();
+    $('paidLeaveForm').reset();
+    $('plApplicant').value = user ? user.name + '（' + user.employeeId + '）' : '';
+    $('plDate').min = P.data.periodFrom; // 今の締め期間より前は選べない（サーバーでも拒否）
+    $('plShiftText').textContent = '';
+    $('plLateText').hidden = true;
+    $('plTypeHelp').textContent = '1日有給 ' + App.trimHour(P.data.hours.full) + '／半休 ' + App.trimHour(P.data.hours.half) + '（午前半休は14:30から、午後半休は13:30までの勤務が基準です）';
+    App.openModal('plFormModal');
+    $('plDate').focus();
+  }
+
+  function closeForm() {
+    App.closeModal('plFormModal');
+    if (P.formFromHub) openHub();
+    P.formFromHub = false;
+  }
+
+  function selectedType() {
+    var checked = document.querySelector('input[name="plType"]:checked');
+    return checked ? checked.value : '';
+  }
+
+  function onDateChange() {
+    var date = $('plDate').value;
+    $('plLateText').hidden = !(date && date < today());
+    var box = $('plShiftText');
+    box.textContent = '';
+    box.classList.remove('is-error');
+    if (!date) return;
+    call('getMyShiftOn', [date]).then(function (res) {
+      if (!res.success || $('plDate').value !== date) return;
+      var t = res.data.type;
+      box.textContent = 'この日のシフト：' + t + (t === '休日' || t === '法定休日' ? '（休日のため有給申請は不要です）'
+        : t === '通常勤務' ? '' : '（申請はできますが、シフトが通常勤務に決まるまで承認されません）');
+      box.classList.toggle('is-error', t === '休日' || t === '法定休日');
+    });
+  }
+
+  function onSubmit(event) {
+    event.preventDefault();
+    var req = { date: $('plDate').value, leaveType: selectedType(), reason: $('plReason').value.trim(), note: $('plNote').value.trim() };
+    if (!req.date) return App.showToast('warn', '対象日を入力してください');
+    if (req.date < P.data.periodFrom) return App.showToast('warn', '締めた後の期間の日は申請できません');
+    if (!req.leaveType) return App.showToast('warn', '有給種別を選んでください');
+    if (!req.reason) return App.showToast('warn', '理由を入力してください');
+    act($('btnSubmitPaidLeave'), 'submitPaidLeaveRequest', [req], '申請中...').then(function (res) {
+      if (!res || !res.success) return;
+      load().then(closeForm);
+    });
+  }
+
+  // ============================================================ 取り下げ／取消申請
+
+  function fillTarget(dl, r) {
+    dl.textContent = '';
+    addInfo(dl, '対象日', App.formatDateShort(r.date));
+    addInfo(dl, '有給種別', r.leaveType);
+    addInfo(dl, '理由', r.reason);
+  }
+
+  function openWithdraw(r) {
+    if (P.busy) return;
+    P.target = r;
+    fillTarget($('plWithdrawTarget'), r);
+    App.openModal('plWithdrawModal');
+  }
+
+  function onWithdraw() {
+    var r = P.target;
+    if (!r || P.busy) return;
+    act($('btnPlWithdrawOk'), 'withdrawPaidLeaveRequest', [r.requestId], '処理中...').then(function (res) {
+      if (!res || !res.success) return;
+      P.target = null;
+      App.closeModal('plWithdrawModal');
+      load();
+    });
+  }
+
+  function openCancel(r) {
+    if (P.busy) return;
+    P.target = r;
+    fillTarget($('plCancelTarget'), r);
+    $('plCancelReason').value = '';
+    App.openModal('plCancelModal');
+    $('plCancelReason').focus();
+  }
+
+  function onCancelRequest() {
+    var r = P.target;
+    if (!r || P.busy) return;
+    var reason = $('plCancelReason').value.trim();
+    if (!reason) { App.showToast('warn', '取消理由を入力してください'); return; }
+    act($('btnPlCancelOk'), 'requestPaidLeaveCancellation', [r.requestId, reason], '申請中...').then(function (res) {
+      if (!res || !res.success) return;
+      P.target = null;
+      App.closeModal('plCancelModal');
+      load();
+    });
+  }
+
+  // ============================================================ 自分のシフト
+
+  function openShifts() {
+    App.openModal('shiftModal');
+    var list = $('shiftList');
+    list.textContent = '';
+    list.appendChild(el('li', 'empty', '読み込み中...'));
+    call('getMyShifts', []).then(function (res) {
+      list.textContent = '';
+      if (!res.success) { list.appendChild(el('li', 'error-text', res.message)); return; }
+      $('shiftPeriod').textContent = res.data.periodText;
+      if (!res.data.available) { list.appendChild(el('li', 'empty', 'シフトはまだ準備中です')); return; }
+      res.data.days.forEach(function (d) {
+        var li = document.createElement('li');
+        if (d.date === res.data.today) li.className = 'is-today';
+        li.appendChild(el('span', '', App.formatDateShort(d.date) + (d.plannedStart ? '　' + d.plannedStart + '〜' + (d.plannedEnd || '') : '') + (d.note ? '　' + d.note : '')));
+        var cls = d.type === '通常勤務' ? 'badge-notstarted' : d.type === '休日' || d.type === '法定休日' ? 'badge-holiday' : 'badge-ng';
+        li.appendChild(el('span', 'badge ' + cls, d.type));
+        list.appendChild(li);
+      });
+    });
+  }
+
+  // ============================================================ 共通
+
+  function setBusy(isBusy, button, busyText) {
+    P.busy = isBusy;
+    document.body.classList.toggle('is-busy', isBusy);
+    var selector = ['#paidLeaveCard'].concat(MODALS.map(function (id) { return '#' + id; })).map(function (s) { return s + ' button'; }).join(', ');
+    var buttons = document.querySelectorAll(selector);
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (isBusy) {
+        if (!b.hasAttribute('data-was-disabled')) b.setAttribute('data-was-disabled', b.disabled ? '1' : '');
+        b.disabled = true;
+        if (b === button) { b.setAttribute('data-original-label', b.textContent); b.textContent = busyText || '処理中...'; }
+      } else {
+        if (b.hasAttribute('data-original-label')) { b.textContent = b.getAttribute('data-original-label'); b.removeAttribute('data-original-label'); }
+        b.disabled = b.getAttribute('data-was-disabled') === '1';
+        b.removeAttribute('data-was-disabled');
+      }
+    }
+  }
+
+  function act(button, fn, args, busyText) {
+    if (P.busy) return Promise.resolve(null);
+    setBusy(true, button, busyText);
+    return call(fn, args).then(function (res) {
+      setBusy(false);
+      App.showToast(res.success ? (/※/.test(res.message) ? 'warn' : 'success') : 'error', res.message);
+      return res;
+    }, function (error) {
+      setBusy(false);
+      App.showToast('error', '画面の処理でエラーが発生しました：' + (error && error.message ? error.message : error));
+      return null;
+    });
+  }
+
+  function bind() {
+    $('btnOpenPaidLeave').addEventListener('click', function () { openForm(false); });
+    $('btnOpenPaidLeaveHistory').addEventListener('click', openHub);
+    $('btnOpenShifts').addEventListener('click', openShifts);
+    $('btnPlNew').addEventListener('click', function () { openForm(true); });
+    $('btnPlFormBack').addEventListener('click', closeForm);
+    $('btnPlFormClose').addEventListener('click', closeForm);
+    $('plDate').addEventListener('change', onDateChange);
+    $('paidLeaveForm').addEventListener('submit', onSubmit);
+    $('btnPlWithdrawOk').addEventListener('click', onWithdraw);
+    $('btnPlWithdrawBack').addEventListener('click', function () { if (!P.busy) { P.target = null; App.closeModal('plWithdrawModal'); } });
+    $('btnPlCancelOk').addEventListener('click', onCancelRequest);
+    $('btnPlCancelBack').addEventListener('click', function () { if (!P.busy) { P.target = null; App.closeModal('plCancelModal'); } });
+    var closers = document.querySelectorAll('[data-pl-close]');
+    for (var i = 0; i < closers.length; i++) {
+      closers[i].addEventListener('click', function (e) { if (!P.busy) App.closeModal(e.currentTarget.closest('.modal').id); });
+    }
+  }
+
+  bind();
+  load();
+  window.LeafPaidLeave = { reload: load };
+})();
+</script>

@@ -32,10 +32,13 @@ const REQUIRED_FILES = [
   'DailyReportShareService.gs', 'ReportView.html', 'ReportStyles.html', 'ReportScripts.html',
   // 休日出勤申請
   'HolidayWorkService.gs', 'HolidayWorkView.html', 'HolidayWorkScripts.html',
+  'PaidLeaveView.html', 'PaidLeaveScripts.html',
   // 勤務区間（出社⇄在宅の切替・再出勤）
   'WorkSegmentService.gs',
   // 段階2：交通費明細・1日の付帯情報
   'TransportService.gs', 'DayDetailService.gs', 'DetailView.html', 'DetailScripts.html',
+  // 段階3：シフト・有給休暇申請
+  'ShiftService.gs', 'PaidLeaveService.gs',
 ];
 
 const PROD_CONFIG = '.clasp.json';

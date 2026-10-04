@@ -23,7 +23,7 @@
     </section>
 
     <section class="hw-section" aria-labelledby="hwActiveTitle">
-      <h3 class="hw-section-title" id="hwActiveTitle">申請中・承認済み</h3>
+      <h3 class="hw-section-title" id="hwActiveTitle">承認待ち・承認済み</h3>
       <p class="hw-section-note">承認前は「申請を取り下げる」、承認後は「取消申請」（管理者が確認します）で取り消せます。</p>
       <div class="hw-cards" id="hwActiveList"><p class="empty">読み込み中...</p></div>
     </section>
@@ -52,6 +52,7 @@
       <div class="form-row">
         <label for="hwDate">休日出勤日 <span class="req">必須</span></label>
         <input type="date" id="hwDate" required>
+        <p class="form-help" id="hwShiftText" aria-live="polite"></p>
       </div>
       <div class="form-row form-row-2">
         <div>
@@ -78,6 +79,10 @@
       <div class="form-row">
         <label for="hwReason">休日出勤理由 <span class="req">必須</span></label>
         <textarea id="hwReason" rows="2" maxlength="2000" required placeholder="例：お客様の都合で、休日に現場立ち会いが必要なため"></textarea>
+      </div>
+      <div class="form-row">
+        <label for="hwSite">現場 <span class="optional">任意</span></label>
+        <input type="text" id="hwSite" maxlength="200" placeholder="例：堺市○○様邸">
       </div>
       <div class="form-row">
         <label for="hwContent">業務内容 <span class="req">必須</span></label>

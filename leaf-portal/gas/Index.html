@@ -177,6 +177,26 @@
             </div>
           </div>
 
+          <!-- 有給休暇申請の対象の人だけに表示（対象かどうかはサーバーが判定。申請もサーバー側で確認） -->
+          <div class="card link-card" id="paidLeaveCard" hidden>
+            <h2 class="card-title">有給休暇申請</h2>
+            <p>1日有給・午前半休・午後半休を申請できます。原則として事前に申請してください。</p>
+            <ul class="mini-list" id="paidLeaveMiniList"></ul>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenPaidLeave">有給を申請する</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenPaidLeaveHistory">申請状況を見る</button>
+            </div>
+          </div>
+
+          <!-- 自分のシフト（管理者が登録した通常勤務・休日・法定休日） -->
+          <div class="card link-card" id="shiftCard">
+            <h2 class="card-title">シフト</h2>
+            <p>今の締め期間の自分のシフト（通常勤務・休日・法定休日）を確認できます。</p>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenShifts">シフトを見る</button>
+            </div>
+          </div>
+
           <!-- 交通費（通勤以外）と自家用車の業務走行距離。今の20日締め期間の分を本人が追加・修正・削除できる -->
           <div class="card link-card" id="transportCard">
             <h2 class="card-title">交通費</h2>
@@ -278,6 +298,7 @@
 
   <!-- ================= 休日出勤申請のフォーム（HolidayWorkView.html） ================= -->
   <?!= includeHtml_('HolidayWorkView') ?>
+  <?!= includeHtml_('PaidLeaveView') ?>
 
   <!-- ================= 1日の詳細・交通費（DetailView.html） ================= -->
   <?!= includeHtml_('DetailView') ?>
@@ -343,6 +364,7 @@
   <?!= includeHtml_('AdminScripts') ?>
   <?!= includeHtml_('ReportScripts') ?>
   <?!= includeHtml_('HolidayWorkScripts') ?>
+  <?!= includeHtml_('PaidLeaveScripts') ?>
   <?!= includeHtml_('DetailScripts') ?>
 </body>
 </html>
