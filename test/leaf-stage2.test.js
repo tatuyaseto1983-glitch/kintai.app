@@ -9,6 +9,12 @@ const FIXED = 'fixed@example.com';
 const FLEX = 'flex@example.com';
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
+/** 日報_未提出判定開始日を入れる（段階5の修正：空欄の間は日報の未提出を判定しない） */
+function setReportMissingFrom(gas, value) {
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '日報_未提出判定開始日')[1] = value;
+  gas.g.clearTableCache_();
+}
+
 function ready() {
   const gas = createLeafGas({ email: ADMIN });
   gas.g.setupSystem();
@@ -17,6 +23,7 @@ function ready() {
     { '社員ID': 'E002', '氏名': '佐藤', 'メールアドレス': FIXED, '権限': 'staff', '勤務区分': '固定勤務', '在籍状況': '在籍' },
     { '社員ID': 'E003', '氏名': '鈴木', 'メールアドレス': FLEX, '権限': 'staff', '勤務区分': 'フレックス', '在籍状況': '在籍' },
   ]);
+  setReportMissingFrom(gas, '2026-01-01');
   return gas;
 }
 function run(gas, date, steps) {

@@ -15,6 +15,12 @@ const NAKATSUI = 'yuuki@example.com';
 const KUBO = 'ayumi@example.com';
 
 /** 実際に近い6名。setupSystem の後に追加するので、日報提出対象・日報確認対象は空欄（＝勤怠集計対象に合わせる／対象） */
+/** 日報_未提出判定開始日を入れる（段階5の修正：空欄の間は日報の未提出を判定しない） */
+function setReportMissingFrom(gas, value) {
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '日報_未提出判定開始日')[1] = value;
+  gas.g.clearTableCache_();
+}
+
 function office(extra) {
   const gas = createLeafGas({ email: MITSUYAMA });
   gas.g.setupSystem();
@@ -27,6 +33,7 @@ function office(extra) {
     { ...base, '社員ID': 'E005', '氏名': '中津井祐貴', 'メールアドレス': NAKATSUI, '権限': 'staff', '勤務区分': '固定勤務', '部署': '一般' },
     { ...base, '社員ID': 'E006', '氏名': '久保亜弓', 'メールアドレス': KUBO, '権限': 'staff', '勤務区分': '固定勤務', '部署': '一般' },
   ]);
+  setReportMissingFrom(gas, '2026-01-01'); // 未提出の判定をする（開始日そのもののテストは leaf-stage5.test.js）
   gas.setNow('2026-10-08 18:00');
   return gas;
 }

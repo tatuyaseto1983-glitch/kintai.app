@@ -171,6 +171,41 @@ function isDeletedComment_(c) {
   return String(c['削除'] === undefined ? '' : c['削除']).trim() === '1';
 }
 
+// ============================================================ 日報の未提出の判定（管理者の日別・月別・日報確認集計・要確認一覧・月次詳細・CSV で共通）
+
+/**
+ * その日が日報の「未提出」「下書きのみ」を判定する日か。
+ * 設定「日報_未提出判定開始日」が空欄（または日付でない値）なら判定しない。開始日より前の日も判定しない。
+ */
+function isReportDueDate_(dateKey, settings) {
+  const from = settings && settings.reportMissingFrom;
+  return !!from && dateKey >= from;
+}
+
+/**
+ * その日の日報の状態（すべての画面・集計・CSV はこれを使う。個別に日付を判定しない）。
+ * @param {object} p { date, today, worked: 出勤あり, submitTarget: 日報提出対象, submitted: 提出済みあり, draft: 下書きあり, settings }
+ * 戻り値 { state, label, due }
+ *   submitted … 提出済み（出勤・開始日に関係なく）
+ *   none      … 判定の対象外（出勤なし・日報提出対象外）
+ *   not-due   … 出勤ありだが、日報_未提出判定開始日より前（または空欄）なので判定しない
+ *   future    … 先の日
+ *   today     … 今日（まだ書ける。draft で下書きの有無）
+ *   draft     … 未提出（下書きあり）
+ *   missing   … 未提出
+ *   due       … 提出率の分母に入る日か（判定する日で、今日より前。提出済みの日も、判定する日なら入る）
+ */
+function judgeReportDay_(p) {
+  const due = isReportDueDate_(p.date, p.settings);
+  const inRate = due && p.date < p.today && !!p.submitTarget && (!!p.worked || !!p.submitted);
+  if (p.submitted) return { state: 'submitted', label: REPORT_STATUS.SUBMITTED, due: inRate };
+  if (!p.worked || !p.submitTarget) return { state: 'none', label: p.draft ? '下書き' : '', due: false };
+  if (!due) return { state: 'not-due', label: p.draft ? '下書き' : '', due: false };
+  if (p.date > p.today) return { state: 'future', label: p.draft ? '下書き' : '', due: false };
+  if (p.date === p.today) return { state: 'today', label: p.draft ? '下書き' : '未提出（今日）', draft: !!p.draft, due: false };
+  return p.draft ? { state: 'draft', label: '未提出（下書きあり）', due: true } : { state: 'missing', label: '未提出', due: true };
+}
+
 // ============================================================ 権限
 
 /** 日報を見てよいか：提出済みなら全社員、下書きは本人だけ、旧日報は本人と管理者だけ */

@@ -266,16 +266,13 @@ function buildEmployeeDay_(env, staff, date, transports) {
 }
 
 /**
- * その日の日報の状態（暦月とは関係なく、その日の日報）。
- *   提出済み／未提出（下書きあり）／未提出（出勤ありの日報提出対象者で、前日まで）／空欄（対象外・今日）
+ * その日の日報の状態（暦月とは関係なく、その日の日報）。判定は judgeReportDay_（日報_未提出判定開始日を含む）。
+ *   提出済み／未提出（下書きあり）／未提出（出勤ありの日報提出対象者で、開始日以降・前日まで）／空欄（対象外・開始日前・今日・先の日）
  */
 function reportStatusOfDay_(env, staff, date, worked) {
   const slot = env.reportByKey[staff.employeeId + '|' + date] || {};
-  if (slot.submitted) return { state: 'submitted', label: '提出済み' };
-  if (!worked || !staff.reportSubmitTarget) return { state: slot.draft ? 'draft-only' : 'none', label: slot.draft ? '下書き' : '' };
-  if (date > env.now.date) return { state: 'future', label: slot.draft ? '下書き' : '' }; // 先の日（まだ判定しない）
-  if (date === env.now.date) return { state: 'today', label: slot.draft ? '下書き' : '未提出（今日）' };
-  return slot.draft ? { state: 'draft', label: '未提出（下書きあり）' } : { state: 'missing', label: '未提出' };
+  return judgeReportDay_({ date: date, today: env.now.date, worked: worked, submitTarget: staff.reportSubmitTarget,
+    submitted: !!slot.submitted, draft: !!slot.draft, settings: env.settings });
 }
 
 /**
@@ -514,21 +511,23 @@ function buildReportSummary_(env, reportRange) {
   const rate = function (done, all) { return all ? Math.round(done / all * 1000) / 10 : null; };
 
   const authors = active.filter(function (s) { return s.reportSubmitTarget || reports.some(function (r) { return r.employeeId === s.employeeId; }); }).map(function (s) {
-    const row = { employeeId: s.employeeId, name: s.name, submitTarget: s.reportSubmitTarget, workDays: 0, submitted: 0, missing: 0, draftOnly: 0, confirmed: 0, targets: 0 };
+    const row = { employeeId: s.employeeId, name: s.name, submitTarget: s.reportSubmitTarget, workDays: 0, submitted: 0, missing: 0, draftOnly: 0, dueSubmitted: 0, confirmed: 0, targets: 0 };
     dates.forEach(function (d) {
       const a = ctx.attendanceByKey[s.employeeId + '|' + d];
       const worked = !!a && !isBlank_(a['出勤']);
-      const slot = env.reportByKey[s.employeeId + '|' + d] || {};
       if (worked) row.workDays += 1;
-      if (slot.submitted || !worked || !s.reportSubmitTarget || d >= env.now.date) return;
-      if (slot.draft) row.draftOnly += 1; else row.missing += 1;
+      const j = reportStatusOfDay_(env, s, d, worked);
+      if (j.state === 'missing') row.missing += 1;
+      if (j.state === 'draft') row.draftOnly += 1;
+      if (j.state === 'submitted' && j.due) row.dueSubmitted += 1; // 提出率の分母に入る日に提出した分
     });
     reports.filter(function (r) { return r.employeeId === s.employeeId; }).forEach(function (r) {
       row.submitted += 1;
       row.confirmed += r.confirmedCount;
       row.targets += r.targetCount;
     });
-    row.submitRate = rate(row.submitted, row.submitted + row.missing + row.draftOnly);
+    // 提出率：日報_未提出判定開始日以降・前日までの判定する日だけ（開始日前の日は分母に入れない）
+    row.submitRate = rate(row.dueSubmitted, row.dueSubmitted + row.missing + row.draftOnly);
     row.confirmRate = rate(row.confirmed, row.targets);
     return row;
   });
@@ -542,6 +541,7 @@ function buildReportSummary_(env, reportRange) {
   const totalTargets = reports.reduce(function (t, r) { return t + r.targetCount; }, 0);
   const totalConfirmed = reports.reduce(function (t, r) { return t + r.confirmedCount; }, 0);
   const submitted = authors.reduce(function (t, a) { return t + a.submitted; }, 0);
+  const dueSubmitted = authors.reduce(function (t, a) { return t + a.dueSubmitted; }, 0);
   const missing = authors.reduce(function (t, a) { return t + a.missing; }, 0);
   const draftOnly = authors.reduce(function (t, a) { return t + a.draftOnly; }, 0);
   return {
@@ -550,7 +550,8 @@ function buildReportSummary_(env, reportRange) {
     reports: reports.map(function (r) { return { reportId: r.reportId, date: r.date, name: r.name, confirmedCount: r.confirmedCount, targetCount: r.targetCount, pendingNames: r.pendingNames, commentCount: r.commentCount }; })
       .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }),
     totals: {
-      submitted: submitted, missing: missing, draftOnly: draftOnly, submitRate: rate(submitted, submitted + missing + draftOnly),
+      submitted: submitted, missing: missing, draftOnly: draftOnly, submitRate: rate(dueSubmitted, dueSubmitted + missing + draftOnly),
+      reportMissingFrom: env.settings.reportMissingFrom, // 空欄なら未提出の判定をしていない
       confirmations: totalConfirmed, confirmationTargets: totalTargets, confirmRate: rate(totalConfirmed, totalTargets),
     },
   };

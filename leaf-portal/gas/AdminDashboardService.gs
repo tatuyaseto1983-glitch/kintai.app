@@ -103,7 +103,7 @@ function exportAdminAttendanceCsv(params) {
       // 段階5：休日出勤時間（承認済みの休日出勤の日の実働）・その日の日報の状態・理由付きの要確認（打刻・残業・申請・日報をまとめて）
       ['休日出勤時間', '日報', '要確認の理由']);
     const dctx = buildDayStatusContext_(settings);
-    const reportEnv = { now: now, reportByKey: buildReportStateMap_() };
+    const reportEnv = { now: now, settings: settings, reportByKey: buildReportStateMap_() };
     const transportByDay = {};
     listTransportRows_('', range.from, range.to).forEach(function (r) {
       const key = String(r['社員ID']).trim() + '|' + toDateKey_(r['日付']);
@@ -532,6 +532,8 @@ function buildAdminReports_(ctx, date) {
       workStyle: attendance ? toPlainText_(attendance['勤務形態']) : '', worked: worked(s.employeeId, date),
       submitTarget: s.reportSubmitTarget, submitted: false, submittedAt: '',
     };
+    // 未提出の判定は judgeReportDay_ に集めている（日報_未提出判定開始日より前・空欄なら判定しない）。日別では今日の未提出も「未提出」と表示する
+    const j = judgeReportDay_({ date: date, today: ctx.today, worked: row.worked, submitTarget: s.reportSubmitTarget, submitted: !!record, draft: !!slot.draft, settings: ctx.settings });
     if (record) {
       row.state = 'submitted';
       row.status = REPORT_STATUS.SUBMITTED;
@@ -548,12 +550,15 @@ function buildAdminReports_(ctx, date) {
         row.targetCount = c.targetCount;
         row.pendingNames = c.pending.map(function (p) { return p.name; });
       }
-    } else if (!row.worked) {
-      row.state = 'none';
-      row.status = '対象外';
-    } else {
+    } else if (j.state === 'missing' || j.state === 'draft' || j.state === 'today') {
       row.state = slot.draft ? 'draft' : 'missing';
       row.status = slot.draft ? '未提出（下書きあり）' : '未提出';
+    } else if (j.state === 'not-due') {
+      row.state = 'none';
+      row.status = '対象外（日報の判定開始前）';
+    } else {
+      row.state = 'none';
+      row.status = '対象外';
     }
     rows.push(row);
   });
@@ -564,13 +569,14 @@ function buildAdminReports_(ctx, date) {
     notSubmittedCount: count('missing') + count('draft'),
     draftOnlyCount: count('draft'),
     noneCount: count('none'),
+    reportMissingFrom: ctx.settings.reportMissingFrom, // 空欄なら未提出を判定していない（画面に案内を出す）
     monthly: buildAdminReportMonthly_(ctx, date, reportByKey, active, worked),
   };
 }
 
 /**
  * 日報の月別（暦月）：日報提出対象の社員ごとに、勤務日数・提出数・未提出数・下書きのみ数。
- * 未提出・下書きのみは「前日まで」の勤務日で数える（今日はまだ書ける）。提出数は月内の提出済みの日報（出勤の有無は問わない）。
+ * 未提出・下書きのみは「前日まで」の勤務日で、日報_未提出判定開始日以降だけ数える（judgeReportDay_）。提出数は月内の提出済みの日報（出勤の有無は問わない）。
  */
 function buildAdminReportMonthly_(ctx, date, reportByKey, active, worked) {
   const range = getReportMonthPeriodForDate_(date);
@@ -582,9 +588,10 @@ function buildAdminReportMonthly_(ctx, date, reportByKey, active, worked) {
       const slot = reportByKey[s.employeeId + '|' + d] || {};
       const w = worked(s.employeeId, d);
       if (w) row.workDays += 1;
-      if (slot.submitted) { row.submittedCount += 1; return; }
-      if (!w || d >= ctx.today) return;
-      if (slot.draft) row.draftOnlyCount += 1; else row.notSubmittedCount += 1;
+      const j = judgeReportDay_({ date: d, today: ctx.today, worked: w, submitTarget: true, submitted: !!slot.submitted, draft: !!slot.draft, settings: ctx.settings });
+      if (j.state === 'submitted') row.submittedCount += 1;
+      if (j.state === 'missing') row.notSubmittedCount += 1;
+      if (j.state === 'draft') row.draftOnlyCount += 1;
     });
     return row;
   });

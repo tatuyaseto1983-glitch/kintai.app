@@ -794,6 +794,8 @@
     var rep = S.data.reports;
     $('admReportDate').textContent = App.formatDateShort(rep.date);
     $('admReportCount').textContent = '提出済み ' + rep.submittedCount + '名／未提出 ' + rep.notSubmittedCount + '名（うち下書きあり ' + (rep.draftOnlyCount || 0) + '名）／対象外 ' + (rep.noneCount || 0) + '名';
+    if (!rep.reportMissingFrom) $('admReportCount').textContent += '　※ 設定「日報_未提出判定開始日」が空欄のため、未提出は判定していません';
+    else $('admReportCount').textContent += '　（未提出の判定は ' + App.formatDateShort(rep.reportMissingFrom) + ' から）';
     renderReportMonthly(rep.monthly);
     var filter = $('admReportFilter').value;
     var box = $('admReports');
@@ -1012,7 +1014,8 @@
     $('admReportSumPeriod').textContent = r.periodText;
     $('admReportSumTotal').textContent = r.totals
       ? '提出 ' + r.totals.submitted + '件　未提出 ' + r.totals.missing + '件　下書きのみ ' + r.totals.draftOnly + '件（未提出・下書きは前日まで）　提出率 ' + rateText(r.totals.submitRate) +
-        '　確認率 ' + rateText(r.totals.confirmRate) + '（' + r.totals.confirmations + ' / ' + r.totals.confirmationTargets + '）'
+        '　確認率 ' + rateText(r.totals.confirmRate) + '（' + r.totals.confirmations + ' / ' + r.totals.confirmationTargets + '）' +
+        (r.totals.reportMissingFrom ? '　未提出の判定は ' + App.formatDateShort(r.totals.reportMissingFrom) + ' から' : '　※ 日報_未提出判定開始日が空欄のため、未提出は判定していません')
       : '日報の機能がまだ準備されていません（setupSystem）';
     var ab = $('admReportAuthorBody');
     ab.textContent = '';

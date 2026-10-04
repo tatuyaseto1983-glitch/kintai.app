@@ -27,7 +27,7 @@ test('setupSystem：7シートを作り、2回目以降は何も壊さない', (
   const names = gas.main.getSheets().map((s) => s.getName());
   for (const n of ['スタッフマスタ', '勤怠記録', '中断履歴', '打刻修正申請', '残業申請', '日報', '設定']) assert.ok(names.includes(n), n);
   assert.ok(names.includes('シート1'), '最初からあるシートも削除しない');
-  assert.equal(gas.main.rows('設定').length, 18, '段階3の5項目（有給・半休・フレックスの有給）を含む');
+  assert.equal(gas.main.rows('設定').length, 19, '段階3の5項目と段階5の日報_未提出判定開始日を含む');
   assert.equal(gas.main.getSpreadsheetTimeZone(), 'Asia/Tokyo');
 
   // 利用者が設定値を変更し、データも入れた後にもう一度実行
@@ -61,7 +61,7 @@ test('setupSystem：既存シートの足りない見出しだけを右端に足
   assert.match(log, /日報：⚠ 1行目（見出し）が空/);
   const rows = gas.main.rows('設定');
   assert.equal(rows.find((r) => r['項目'] === '自動休憩')['値'], '00:45', '既存の設定値は上書きしない');
-  assert.equal(rows.length, 18, '無い項目だけ追加');
+  assert.equal(rows.length, 19, '無い項目だけ追加');
 });
 
 test('Apps Script のファイルの並び順が違っても動く', () => {
@@ -575,8 +575,15 @@ test('自動テスト（runAllScenarioTests）は Google 実機と同じ 43件',
 // ============================================================ 管理者画面
 
 /** 管理者画面のテスト用：6/1(月) に固定・フレックスが勤務、固定は残業・申請あり */
+/** 日報_未提出判定開始日を入れる（段階5の修正：空欄の間は日報の未提出を判定しない） */
+function setReportMissingFrom(gas, value) {
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '日報_未提出判定開始日')[1] = value;
+  gas.g.clearTableCache_();
+}
+
 function adminReady() {
   const gas = ready();
+  setReportMissingFrom(gas, '2026-01-01');
   gas.g.appendRecords_('スタッフマスタ', [{ '社員ID': 'E004', '氏名': '田中', 'メールアドレス': 'tanaka@example.com', '権限': 'staff', '勤務区分': '固定勤務', '在籍状況': '在籍', '部署': '営業部' }]);
   const staff = gas.main.getSheetByName('スタッフマスタ');
   staff.data[2][13] = '設計部'; // 佐藤の部署

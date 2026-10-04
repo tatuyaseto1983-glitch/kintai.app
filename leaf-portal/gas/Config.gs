@@ -205,6 +205,7 @@ const SETTING_KEYS = {
   AM_HALF_START: '午前半休_勤務開始',
   PM_HALF_END: '午後半休_勤務終了',
   FLEX_PAID_LEAVE: 'フレックス_有給算入',
+  REPORT_MISSING_FROM: '日報_未提出判定開始日',
 };
 
 /** フレックスの有給の扱い（138時間などの所定への算入）。社労士の確認が済むまで「未確定」 */
@@ -231,6 +232,7 @@ const DEFAULT_SETTINGS = [
   { key: SETTING_KEYS.PAID_LEAVE_HALF, value: '04:00', note: '午前半休・午後半休で記録する有給時間（実働とは別に記録します）' },
   { key: SETTING_KEYS.AM_HALF_START, value: '14:30', note: '午前半休の日の勤務開始の基準（固定勤務・通常勤務日だけ。これより遅い開始を遅刻として記録します）' },
   { key: SETTING_KEYS.PM_HALF_END, value: '13:30', note: '午後半休の日の勤務終了の基準（固定勤務・通常勤務日だけ。これより早い終了を早退として記録します）' },
+  { key: SETTING_KEYS.REPORT_MISSING_FROM, value: '', note: 'この日付（例：2026-10-21）以降の勤務日だけ、日報の「未提出」「下書きのみ」を判定します。空欄の間は判定しません（日報の運用開始日を入れてください）。勤務記録の表示は変わりません' },
   { key: SETTING_KEYS.FLEX_PAID_LEAVE, value: '未確定', note: 'フレックスの有給を月の所定（138時間など）に算入するか：未確定／算入しない／算入する。社労士に確認してから変えてください（未確定の間は実働と有給を別々に表示し、所定には足しません）' },
   { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD, value: '00:00', note: '中断を除いた勤務時間（退勤−出勤−中断合計）がこの時間を超えた日だけ自動休憩を差し引きます。00:00＝常に差し引く／06:00＝6時間以下の日は引かない' },
 ];

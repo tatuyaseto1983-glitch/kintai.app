@@ -16,6 +16,9 @@ const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
 
 test('管理者画面をブラウザで操作する', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas, calls } = createServer();
+  // 日報の未提出を判定する（設定「日報_未提出判定開始日」。空欄の間は判定しない）
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '日報_未提出判定開始日')[1] = '2026-01-01';
+  gas.g.clearTableCache_();
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
   const post = (p, body) => fetch(base + p, { method: 'POST', body: JSON.stringify(body) });

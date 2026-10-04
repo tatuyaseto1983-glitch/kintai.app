@@ -28,6 +28,7 @@ function office() {
   ]);
   const settings = gas.main.getSheetByName('設定');
   settings.data.find((r) => r[0] === '自動休憩_適用開始')[1] = '06:00'; // 本番と同じ
+  settings.data.find((r) => r[0] === '日報_未提出判定開始日')[1] = '2026-01-01'; // 開始日そのもののテストは下の「日報_未提出判定開始日」
   gas.g.clearTableCache_();
   gas.setNow('2026-10-15 20:00');
   return gas;
@@ -311,6 +312,97 @@ test('まだ計算しないもの：法定時間外・週40時間・深夜・法
     .map((f) => fs.readFileSync(path.join(__dirname, '../leaf-portal/gas', f), 'utf8')).join('\n')
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); // コメント（例の説明）は除く
   assert.doesNotMatch(src, /22:00|1320|週40/, '深夜（22時）・週40時間の計算式を入れていない');
+});
+
+// ============================================================ 日報_未提出判定開始日（共通の判定 judgeReportDay_）
+
+/** 中津井さん：9/22・10/1（開始日前）、10/5（開始日当日・日報なし）、10/6（下書きのみ）、10/7（提出済み）に勤務 */
+function reportStartScenario(startDate) {
+  const gas = office();
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '日報_未提出判定開始日')[1] = startDate;
+  gas.g.clearTableCache_();
+  for (const d of ['2026-09-22', '2026-10-01', '2026-10-05', '2026-10-06', '2026-10-07']) work(gas, NAKATSUI, d, '09:30', '18:30');
+  gas.loginAs(NAKATSUI);
+  gas.setNow('2026-10-06 19:00'); gas.g.saveReportDraft({ workContent: '途中' });
+  gas.setNow('2026-10-07 19:00'); gas.g.submitReport({ workContent: '提出' });
+  asAdmin(gas);
+  return gas;
+}
+const dailyStatus = (gas, date) => gas.g.getAdminDashboard({ date, parts: ['reports'] }).data.reports.rows.find((r) => r.name === '中津井祐貴').status;
+
+test('日報_未提出判定開始日：開始日前の勤務日は未提出にならない（勤務は表示）。開始日当日は未提出、開始日以降の下書きのみは未提出（下書きあり）', () => {
+  const gas = reportStartScenario('2026-10-05');
+  // 管理者の日別
+  assert.deepEqual(['2026-10-01', '2026-10-05', '2026-10-06', '2026-10-07'].map((d) => dailyStatus(gas, d)),
+    ['対象外（日報の判定開始前）', '未提出', '未提出（下書きあり）', '提出済み']);
+  // 月次詳細（20日締め）の日報欄と要確認の理由。勤務記録はそのまま表示
+  const m = month(gas, 'E005');
+  const d1 = dayOf(m, '2026-10-01');
+  assert.deepEqual([d1.workTime, d1.reportStatus, d1.reasons.filter((r) => r.category === '日報').length], ['08:00', '', 0], '開始日前：勤務は出す・日報は判定しない');
+  assert.deepEqual([dayOf(m, '2026-09-22').reportStatus, dayOf(m, '2026-10-05').reportStatus, dayOf(m, '2026-10-06').reportStatus, dayOf(m, '2026-10-07').reportStatus],
+    ['', '未提出', '未提出（下書きあり）', '提出済み']);
+  assert.deepEqual([m.totals.workDays, m.totals.reportMissing, m.totals.reportDraftOnly], [5, 1, 1]);
+  // 理由付き要確認一覧（20日締め）
+  const c = gas.g.getAdminMonthlyAnalysis('2026-10').data.checks;
+  assert.deepEqual(c.items.filter((x) => x.reasons.some((r) => r.category === '日報')).map((x) => x.date + ' ' + x.reasons.map((r) => r.text).join('')),
+    ['2026-10-05 日報未提出', '2026-10-06 日報未提出（下書きあり）']);
+  // CSV の日報・要確認の理由
+  const csv = csvLines(gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }));
+  assert.match(csv.find((l) => l.startsWith('2026-10-01,E005')), /,,$/, '開始日前：日報・要確認の理由は空欄');
+  assert.match(csv.find((l) => l.startsWith('2026-10-05,E005')), /,未提出,日報未提出$/);
+  assert.match(csv.find((l) => l.startsWith('2026-10-06,E005')), /,未提出（下書きあり）,日報未提出（下書きあり）$/);
+  const detail = csvLines(gas.g.exportAdminEmployeeMonthCsv('E005', '2026-10'));
+  assert.match(detail.find((l) => l.startsWith('2026-10-01')), /,不要,,$/);
+});
+
+test('日報_未提出判定開始日：開始日前の日は提出率の分母に入らない。暦月の月別・日報確認集計でも同じ開始日が効く', () => {
+  const gas = reportStartScenario('2026-10-05');
+  // 管理者の月別（暦月 10/1〜10/31）
+  const mo = gas.g.getAdminDashboard({ date: '2026-10-15', parts: ['reports'] }).data.reports.monthly.rows.find((r) => r.name === '中津井祐貴');
+  assert.deepEqual([mo.workDays, mo.submittedCount, mo.notSubmittedCount, mo.draftOnlyCount], [4, 1, 1, 1], '10/1 は勤務日数に入るが未提出には数えない。9/22 は暦月の外');
+  // 段階5の日報確認集計（暦月）
+  const r = gas.g.getAdminMonthlyAnalysis('2026-10').data.reports;
+  const n = r.authors.find((x) => x.name === '中津井祐貴');
+  assert.deepEqual([n.workDays, n.submitted, n.missing, n.draftOnly, n.submitRate], [4, 1, 1, 1, 33.3], '提出率＝1÷（提出1＋未提出1＋下書き1）。10/1 は分母に入らない');
+  assert.deepEqual([r.totals.missing, r.totals.draftOnly, r.totals.submitRate, r.totals.reportMissingFrom], [1, 1, 33.3, '2026-10-05']);
+  // 開始日を 10/6 にすると 10/5 も対象外
+  gas.main.getSheetByName('設定').data.find((x) => x[0] === '日報_未提出判定開始日')[1] = '2026-10-06';
+  gas.g.clearTableCache_();
+  const n2 = gas.g.getAdminMonthlyAnalysis('2026-10').data.reports.authors.find((x) => x.name === '中津井祐貴');
+  assert.deepEqual([n2.missing, n2.draftOnly, n2.submitRate], [0, 1, 50]);
+});
+
+test('日報_未提出判定開始日：setupSystem で空欄のまま追加し、空欄（または日付でない値）なら未提出の判定をしない', () => {
+  const gas = createLeafGas({ email: MITSUYAMA });
+  const log = gas.g.setupSystem();
+  assert.match(log, /設定の初期値を登録しました：[^\n]*日報_未提出判定開始日/);
+  const row = gas.main.rows('設定').find((r) => r['項目'] === '日報_未提出判定開始日');
+  assert.equal(row['値'], '', '初期値は空欄（運用開始日はコードで決めない）');
+  for (const value of ['', '未定']) {
+    const g2 = reportStartScenario(value);
+    assert.deepEqual(['2026-10-01', '2026-10-05', '2026-10-06'].map((d) => dailyStatus(g2, d)),
+      ['対象外（日報の判定開始前）', '対象外（日報の判定開始前）', '対象外（日報の判定開始前）'], JSON.stringify(value));
+    const m = month(g2, 'E005');
+    assert.deepEqual([m.totals.reportMissing, m.totals.reportDraftOnly, m.totals.reportSubmitted], [0, 0, 1], '提出済みはそのまま数える');
+    const a = g2.g.getAdminMonthlyAnalysis('2026-10').data;
+    assert.ok(!a.checks.items.some((x) => x.reasons.some((r) => r.category === '日報')));
+    assert.deepEqual([a.reports.totals.missing, a.reports.totals.draftOnly, a.reports.totals.submitRate], [0, 0, null]);
+    assert.equal(g2.g.getAdminDashboard({ date: '2026-10-15', parts: ['reports'] }).data.reports.monthly.rows.find((r) => r.name === '中津井祐貴').notSubmittedCount, 0);
+  }
+});
+
+test('日報_未提出判定開始日：日付の判定は共通関数（isReportDueDate_・judgeReportDay_）だけ。各集計で個別に開始日を比べていない', () => {
+  const dir = path.join(__dirname, '../leaf-portal/gas');
+  const all = fs.readdirSync(dir).filter((f) => f.endsWith('.gs')).map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')]);
+  const users = all.filter(([, src]) => /reportMissingFrom/.test(src)).map(([f]) => f).sort();
+  assert.deepEqual(users, ['AdminDashboardService.gs', 'AdminMonthlyService.gs', 'DailyReportShareService.gs', 'SettingsService.gs'], '管理者の集計は開始日を画面に表示するために返すだけ');
+  const monthly = all.find(([f]) => f === 'AdminMonthlyService.gs')[1];
+  for (const [f, src] of all.filter(([name]) => name !== 'DailyReportShareService.gs')) {
+    assert.doesNotMatch(src, /[<>]=?\s*[\w.]*reportMissingFrom|reportMissingFrom\s*[<>]/, f + '：開始日との比較は isReportDueDate_ だけ');
+  }
+  const dash = all.find(([f]) => f === 'AdminDashboardService.gs')[1];
+  assert.equal((dash.match(/judgeReportDay_\(/g) || []).length, 2, '管理者の日別と月別は judgeReportDay_ で判定');
+  assert.match(monthly, /function reportStatusOfDay_[\s\S]*?return judgeReportDay_\(/);
 });
 
 test.todo('法定時間外（日8時間超）：社労士回答 Q-1 の後に実装');

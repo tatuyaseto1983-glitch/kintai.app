@@ -47,6 +47,9 @@ function getSettings_() {
     amHalfStartMinutes: softSettingClock_(values, SETTING_KEYS.AM_HALF_START),
     pmHalfEndMinutes: softSettingClock_(values, SETTING_KEYS.PM_HALF_END),
     flexPaidLeaveMode: parseFlexPaidLeaveMode_(values),
+    // 日報の未提出判定の開始日（空欄・日付でない値なら ''＝判定しない）。判定は isReportDueDate_ に集めている
+    reportMissingFrom: toDateKey_(values[SETTING_KEYS.REPORT_MISSING_FROM]),
+    reportMissingFromInvalid: !isBlank_(values[SETTING_KEYS.REPORT_MISSING_FROM]) && !toDateKey_(values[SETTING_KEYS.REPORT_MISSING_FROM]),
   };
   if (settings.overtimeUnitMinutes < 1) invalidSetting_(SETTING_KEYS.OVERTIME_UNIT, values, '00:01 以上');
   if (settings.fixedEndMinutes <= settings.fixedStartMinutes) {
