@@ -16,12 +16,14 @@
   var el = App.el;
 
   /** 管理者画面から呼んでよいサーバーの関数 */
+  // 末尾の5つは段階5（社内詳細月次・集計・出力。読み取りだけ）
   var ADMIN_FUNCTIONS = [
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
     'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
     'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
     'getAttendanceDetail', 'getAdminDayDetail',
     'approvePaidLeaveRequest', 'rejectPaidLeaveRequest', 'approvePaidLeaveCancellation', 'rejectPaidLeaveCancellation',
+    'getAdminEmployeeMonth', 'exportAdminEmployeeMonthCsv', 'getAdminMonthlyAnalysis', 'exportAdminMonthlySummaryCsv', 'exportSharoushiDetailCsv',
   ];
   var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports'];
 
@@ -254,7 +256,14 @@
         shown += 1;
         var tr = document.createElement('tr');
         if (alert) tr.className = 'row-alert';
-        tr.appendChild(td(r.name, 'sticky-col'));
+        var nameCell = td(r.name, 'sticky-col');
+        var detailBtn = el('button', 'btn btn-outline btn-sm js-admin-action', '詳細');
+        detailBtn.type = 'button';
+        detailBtn.setAttribute('data-emp-month', r.employeeId);
+        detailBtn.addEventListener('click', function () { openEmployeeMonth(r.employeeId, detailBtn); });
+        nameCell.appendChild(document.createTextNode(' '));
+        nameCell.appendChild(detailBtn);
+        tr.appendChild(nameCell);
         tr.appendChild(td(r.department, 'left'));
         tr.appendChild(td(r.workType));
         tr.appendChild(td(r.workDays + '日'));
@@ -852,6 +861,196 @@
     });
   }
 
+  // ============================================================ 段階5：社内詳細月次・集計・出力
+
+  /** 社員1名の20日締め1か月（1日1行）。［区間］で勤務区間・中断・交通費を展開する */
+  function openEmployeeMonth(employeeId, button) {
+    if (S.busy) return;
+    setBusy(true, button);
+    call('getAdminEmployeeMonth', [employeeId, S.month]).then(function (res) {
+      setBusy(false);
+      if (!res.success) { App.showToast('error', res.message); return; }
+      S.empMonth = res.data;
+      renderEmployeeMonth(res.data);
+      $('admEmpMonth').hidden = false;
+      $('admEmpMonth').scrollIntoView({ block: 'start' });
+    });
+  }
+
+  function renderEmployeeMonth(m) {
+    $('admEmpMonthTitle').textContent = '社内詳細月次：' + m.employee.name + '（' + m.employee.workType + '）　' + m.periodText;
+    var cols = ['日付', '勤務場所', '区間', '出勤', '退勤', '中断', '自動休憩', '実働', '遅刻', '早退', '社内超過', '休日出勤', '有給', '直行', '直帰', '現場',
+      '出張', '距離', '交通費', '残業申請', '日報', '要確認の理由'];
+    var head = $('admEmpMonthHead');
+    head.textContent = '';
+    var hr = document.createElement('tr');
+    cols.forEach(function (c) { hr.appendChild(el('th', c === '要確認の理由' || c === '現場' ? 'left' : '', c)); });
+    head.appendChild(hr);
+    var body = $('admEmpMonthBody');
+    body.textContent = '';
+    m.days.forEach(function (d) {
+      var tr = document.createElement('tr');
+      tr.setAttribute('data-date', d.date);
+      if (d.reasons.length) tr.className = 'row-alert';
+      tr.appendChild(td(App.formatDateShort(d.date)));
+      tr.appendChild(td(d.workPlace));
+      var segCell = el('td');
+      if (d.segmentCount) {
+        var b = el('button', 'btn btn-ghost btn-sm', d.segmentCount + '区間');
+        b.type = 'button';
+        b.addEventListener('click', function () { toggleEmpDayDetail(tr, d, cols.length); });
+        segCell.appendChild(b);
+      } else segCell.textContent = '—';
+      tr.appendChild(segCell);
+      [d.clockIn, d.clockOut, trim(d.breakTotal), trim(d.autoBreak), trim(d.workTime), trim(d.late), trim(d.earlyLeave), trim(d.internalExcess)]
+        .forEach(function (v) { tr.appendChild(td(v)); });
+      tr.appendChild(td(d.holidayWork ? '休出 ' + App.trimHour(d.holidayWorkTime) : ''));
+      tr.appendChild(td(d.leaveType ? d.leaveType + ' ' + App.trimHour(d.leaveTime) : ''));
+      tr.appendChild(td(d.direct ? '○' : ''));
+      tr.appendChild(td(d.directReturn ? '○' : ''));
+      tr.appendChild(td(d.sites.join('・'), 'left'));
+      tr.appendChild(td(d.businessTrip ? '○' : ''));
+      tr.appendChild(td(d.kmText));
+      tr.appendChild(td(d.transportAmount ? d.transportAmount.toLocaleString('ja-JP') + '円' : ''));
+      tr.appendChild(td(d.overtimeRequest === '不要' ? '' : d.overtimeRequest));
+      tr.appendChild(td(d.reportStatus, d.reportState === 'missing' || d.reportState === 'draft' ? 'cell-alert' : ''));
+      tr.appendChild(td(d.reasons.map(function (x) { return x.text; }).join('／'), 'left' + (d.reasons.length ? ' cell-alert' : '')));
+      body.appendChild(tr);
+    });
+    var t = m.totals;
+    var tr2 = el('tr', 'row-total');
+    ['合計', t.workDays + '日', '', '', '', trim(t.breakTotal), trim(t.autoBreak), trim(t.workTime), trim(t.late), trim(t.earlyLeave), trim(t.internalExcess),
+      t.holidayWorkDays ? t.holidayWorkDays + '日 ' + App.trimHour(t.holidayWorkTime) : '', t.leaveDays ? t.leaveDays + '日 ' + App.trimHour(t.leaveTime) : '',
+      t.directDays + '日', t.directReturnDays + '日', '', t.businessTripDays + '日', t.kmText, t.transportAmount.toLocaleString('ja-JP') + '円', '',
+      '提出 ' + t.reportSubmitted + '／未提出 ' + t.reportMissing + '／下書き ' + t.reportDraftOnly, '要確認 ' + t.checkDays + '日']
+      .forEach(function (v, i) { tr2.appendChild(el(i === 0 ? 'th' : 'td', '', v === '' ? '—' : v)); });
+    body.appendChild(tr2);
+  }
+
+  function trim(v) { return v ? App.trimHour(v) : ''; }
+
+  /** 1日の明細（勤務区間・中断・交通費）を、その行の下に開く／閉じる */
+  function toggleEmpDayDetail(tr, d, colSpan) {
+    var next = tr.nextSibling;
+    if (next && next.classList && next.classList.contains('emp-day-detail')) { next.remove(); return; }
+    var row = el('tr', 'emp-day-detail');
+    var cell = el('td', 'left');
+    cell.colSpan = colSpan;
+    var ul = el('ul', 'plain-list');
+    d.segments.forEach(function (s, i) {
+      var extra = [s.direct ? '直行' : '', s.directReturn ? '直帰' : '', s.site ? '現場：' + s.site : '', s.note ? '備考：' + s.note : ''].filter(Boolean).join('／');
+      ul.appendChild(el('li', '', '区間' + (i + 1) + '　' + s.place + '　' + s.start + '〜' + (s.end || '（勤務中）') + (extra ? '　' + extra : '')));
+    });
+    d.interruptions.forEach(function (b) { ul.appendChild(el('li', '', '中断（私用の中抜け）　' + b.start + '〜' + b.end)); });
+    d.transports.forEach(function (t) {
+      ul.appendChild(el('li', '', '交通費　' + t.mode + (t.from || t.to ? '　' + t.from + '→' + t.to : '') + (t.purpose ? '　' + t.purpose : '') +
+        (t.amount ? '　' + Number(t.amount).toLocaleString('ja-JP') + '円' : '') + (t.km ? '　' + t.km + 'km' : '')));
+    });
+    if (d.dayNote) ul.appendChild(el('li', '', '日備考　' + d.dayNote));
+    cell.appendChild(ul);
+    row.appendChild(cell);
+    tr.parentNode.insertBefore(row, tr.nextSibling);
+  }
+
+  /** 月次の集計（要確認一覧・接客・日報確認）。ボタンを押したときだけ読む（管理者画面の表示を重くしない） */
+  function loadAnalysis(button) {
+    if (S.busy) return;
+    setBusy(true, button);
+    call('getAdminMonthlyAnalysis', [S.month]).then(function (res) {
+      setBusy(false);
+      if (!res.success) { App.showToast('error', res.message); return; }
+      S.analysis = res.data;
+      $('admAnalysisMonth').textContent = App.formatMonth(res.data.month) + '分';
+      renderAnalysis();
+      $('admAnalysisBody').hidden = false;
+    });
+  }
+
+  function rateText(v) { return v === null || v === undefined ? '—' : v + '%'; }
+
+  function renderAnalysis() {
+    var a = S.analysis;
+    if (!a) return;
+    // 要確認一覧
+    var c = a.checks;
+    $('admCheckPeriod').textContent = c.periodText + '（' + App.formatDateShort(c.until) + 'まで）';
+    $('admCheckCounts').textContent = Object.keys(c.byCategory).map(function (k) { return k + ' ' + c.byCategory[k] + '件'; }).join('　');
+    var filter = $('admCheckFilter').value;
+    var cb = $('admCheckBody');
+    cb.textContent = '';
+    var shown = 0;
+    c.items.forEach(function (it) {
+      var reasons = it.reasons.filter(function (r) { return !filter || r.category === filter; });
+      if (!reasons.length) return;
+      shown += 1;
+      var tr = document.createElement('tr');
+      tr.appendChild(td(App.formatDateShort(it.date)));
+      tr.appendChild(td(it.name, 'left'));
+      tr.appendChild(td(reasons.map(function (r) { return '［' + r.category + '］' + r.text; }).join('　'), 'left'));
+      cb.appendChild(tr);
+    });
+    if (!shown) { var e = document.createElement('tr'); var ec = el('td', 'empty', '要確認はありません'); ec.colSpan = 3; e.appendChild(ec); cb.appendChild(e); }
+
+    // 接客集計
+    var s = a.sales;
+    $('admSalesPeriod').textContent = s.periodText;
+    $('admSalesTotal').textContent = '会社の接客件数（主担当だけ） ' + s.companyMainCount + '件　副担当参加 ' + s.subCount + '件（会社の件数には含めない）　' +
+      s.groups.map(function (g) { return g.name + ' ' + g.count + '件'; }).join('　');
+    var sb = $('admSalesStaffBody');
+    sb.textContent = '';
+    s.employees.forEach(function (x) { var tr = document.createElement('tr'); tr.appendChild(td(x.name, 'left')); tr.appendChild(td(x.mainCount + '件')); tr.appendChild(td(x.subCount + '件')); sb.appendChild(tr); });
+    if (!s.employees.length) { var e2 = document.createElement('tr'); var c2 = el('td', 'empty', '接客記録はありません'); c2.colSpan = 3; e2.appendChild(c2); sb.appendChild(e2); }
+    var tb = $('admSalesTriggerBody');
+    tb.textContent = '';
+    s.triggers.forEach(function (x) { var tr = document.createElement('tr'); tr.appendChild(td(x.label, 'left')); tr.appendChild(td(x.count + '件')); tb.appendChild(tr); });
+    var wl = $('admSalesWarnings');
+    wl.textContent = '';
+    s.warnings.forEach(function (w) { wl.appendChild(el('li', 'cell-alert', '［' + w.type + '］' + App.formatDateShort(w.date) + '　' + w.text)); });
+
+    // 日報確認集計
+    var r = a.reports;
+    $('admReportSumPeriod').textContent = r.periodText;
+    $('admReportSumTotal').textContent = r.totals
+      ? '提出 ' + r.totals.submitted + '件　未提出 ' + r.totals.missing + '件　下書きのみ ' + r.totals.draftOnly + '件（未提出・下書きは前日まで）　提出率 ' + rateText(r.totals.submitRate) +
+        '　確認率 ' + rateText(r.totals.confirmRate) + '（' + r.totals.confirmations + ' / ' + r.totals.confirmationTargets + '）'
+      : '日報の機能がまだ準備されていません（setupSystem）';
+    var ab = $('admReportAuthorBody');
+    ab.textContent = '';
+    r.authors.forEach(function (x) {
+      var tr = document.createElement('tr');
+      [x.name, x.workDays + '日', x.submitted + '件', x.missing + '件', x.draftOnly + '件', rateText(x.submitRate), rateText(x.confirmRate)]
+        .forEach(function (v, i) { tr.appendChild(td(v, i === 0 ? 'left' : (i === 3 && x.missing) || (i === 4 && x.draftOnly) ? 'cell-alert' : '')); });
+      ab.appendChild(tr);
+    });
+    var rb = $('admReportReaderBody');
+    rb.textContent = '';
+    r.readers.forEach(function (x) {
+      var tr = document.createElement('tr');
+      [x.name, x.required + '件', x.confirmed + '件', rateText(x.rate)].forEach(function (v, i) { tr.appendChild(td(v, i === 0 ? 'left' : '')); });
+      rb.appendChild(tr);
+    });
+    var lb = $('admReportListBody');
+    lb.textContent = '';
+    r.reports.forEach(function (x) {
+      var tr = document.createElement('tr');
+      [App.formatDateShort(x.date), x.name, x.confirmedCount + ' / ' + x.targetCount, x.commentCount + '件', x.pendingNames.join('、')]
+        .forEach(function (v, i) { tr.appendChild(td(v, i === 1 || i === 4 ? 'left' : '')); });
+      lb.appendChild(tr);
+    });
+  }
+
+  /** CSVを作ってダウンロードする（月次サマリー・社労士確認用・社員の詳細） */
+  function exportNamedCsv(fn, args, button) {
+    if (S.busy) return;
+    setBusy(true, button);
+    call(fn, args).then(function (res) {
+      setBusy(false);
+      if (!res.success) { App.showToast('error', res.message); return; }
+      if (downloadText(res.data.fileName, res.data.csv)) App.showToast('success', res.message + '（' + res.data.fileName + '）');
+      else App.showToast('error', 'CSVのダウンロードに失敗しました。ブラウザの設定を確認してください');
+    });
+  }
+
   // ============================================================ 操作（承認・却下・CSV・再計算）
 
   /** 操作の共通処理：ボタン無効化 →「処理中...」→ 通知 → 一覧を取り直す → ボタンを戻す */
@@ -989,6 +1188,14 @@
     });
     $('btnCsvDaily').addEventListener('click', function () { exportCsv('daily', $('btnCsvDaily')); });
     $('btnCsvMonthly').addEventListener('click', function () { exportCsv('monthly', $('btnCsvMonthly')); });
+    $('btnLoadAnalysis').addEventListener('click', function () { loadAnalysis($('btnLoadAnalysis')); });
+    $('admCheckFilter').addEventListener('change', renderAnalysis);
+    $('btnCsvSummary').addEventListener('click', function () { exportNamedCsv('exportAdminMonthlySummaryCsv', [S.month], $('btnCsvSummary')); });
+    $('btnCsvSharoushi').addEventListener('click', function () { exportNamedCsv('exportSharoushiDetailCsv', [S.month], $('btnCsvSharoushi')); });
+    $('btnEmpMonthClose').addEventListener('click', function () { $('admEmpMonth').hidden = true; });
+    $('btnEmpMonthCsv').addEventListener('click', function () {
+      if (S.empMonth) exportNamedCsv('exportAdminEmployeeMonthCsv', [S.empMonth.employee.employeeId, S.empMonth.month], $('btnEmpMonthCsv'));
+    });
     $('btnRecalc').addEventListener('click', onRecalc);
     $('btnAdminConfirmOk').addEventListener('click', onConfirmOk);
     $('btnAdminConfirmCancel').addEventListener('click', function () { S.confirmAction = null; App.closeModal('adminConfirmModal'); });

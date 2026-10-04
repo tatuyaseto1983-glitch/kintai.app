@@ -283,8 +283,8 @@ test('日次・月次の集計（月次CSVの列）と、走行距離を二重�
   gas.loginAs(ADMIN);
   gas.setNow('2026-10-07 09:00');
   const csv = ok(gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' })).data.csv.split('\r\n');
-  assert.ok(csv[0].endsWith(',日備考,出張,直行,直帰,現場,業務走行距離,交通費合計,日の区分,有給種別,有給時間,要確認（申請）'));
-  assert.match(csv[1], /,直行直帰,○,○,○,堺市○○様邸,32\.5,1920,,,,$/);
+  assert.ok(csv[0].endsWith(',日備考,出張,直行,直帰,現場,業務走行距離,交通費合計,日の区分,有給種別,有給時間,要確認（申請）,休日出勤時間,日報,要確認の理由'));
+  assert.match(csv[1], /,直行直帰,○,○,○,堺市○○様邸,32\.5,1920,,,,,,未提出,日報未提出$/);
   const sato = gas.g.getAdminDashboard({ month: '2026-10', parts: ['monthly'] }).data.monthly.rows.find((x) => x.name === '佐藤');
   assert.deepEqual([sato.mileageKm, sato.transportAmount], [40, 1920]);
 });

@@ -107,6 +107,8 @@
             <label for="breakReason">中断の理由（任意）</label>
             <input type="text" id="breakReason" maxlength="200" placeholder="例：私用外出、通院">
           </div>
+          <!-- 中断の使い方（R-1）：中断は私用の中抜け。昼休みは自動休憩で引くので、中断にしない（中断と自動休憩は両方引かれる） -->
+          <p class="action-hint" id="breakRuleNote">［中断］は私用外出・通院など、勤務から離れるときに押します。<strong>昼休みは中断にしないでください</strong>（昼休みは自動休憩として実働から差し引きます）。</p>
           <p class="action-hint" id="actionHint"></p>
         </section>
 

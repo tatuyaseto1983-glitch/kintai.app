@@ -99,8 +99,11 @@ function exportAdminAttendanceCsv(params) {
       '日備考', '出張', '直行', '直帰', '現場', '業務走行距離', '交通費合計',
       // 段階3：有給（有給時間は実働とは別の列）・要確認（申請に関するもの。残業の要確認とは別）
       // シフト管理を使うときだけ、その前に シフト区分・日の区分 を入れる
-    ].concat(dayStatusCsvHeaders_());
+    ].concat(dayStatusCsvHeaders_(),
+      // 段階5：休日出勤時間（承認済みの休日出勤の日の実働）・その日の日報の状態・理由付きの要確認（打刻・残業・申請・日報をまとめて）
+      ['休日出勤時間', '日報', '要確認の理由']);
     const dctx = buildDayStatusContext_(settings);
+    const reportEnv = { now: now, reportByKey: buildReportStateMap_() };
     const transportByDay = {};
     listTransportRows_('', range.from, range.to).forEach(function (r) {
       const key = String(r['社員ID']).trim() + '|' + toDateKey_(r['日付']);
@@ -115,7 +118,8 @@ function exportAdminAttendanceCsv(params) {
         row.needsCheck, row.issues.join('・'), row.correctionStatus, row.status,
         row.workPlace, row.segmentCount, row.officeTime, row.remoteTime,
         row.dayNote, row.businessTrip, row.direct, row.directReturn, row.sites.join('・')].concat(transportCsvCells_(transportByDay[row.employeeId + '|' + row.date]))
-        .concat(dayStatusCsvCells_(buildDayStatus_(row.employeeId, row.date, record, dctx))).map(csvCell_).join(','));
+        .concat(dayStatusCsvCells_(row.day || buildDayStatus_(row.employeeId, row.date, record, dctx)))
+        .concat(stage5CsvCells_(row, record, reportEnv, ctx.staffById[row.employeeId])).map(csvCell_).join(','));
     });
     return {
       message: (range.periodText || label) + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
@@ -214,6 +218,14 @@ function dayStatusCsvHeaders_() {
 function dayStatusCsvCells_(st) {
   const leave = [st.leave ? st.leave.type : '', st.leave ? formatMinutes_(st.leave.minutes) : '', st.checks.join('・')];
   return isShiftEnabled_() ? [st.shiftType, st.kind].concat(leave) : [st.kind].concat(leave); // シフトなし：日の区分は「休日出勤」か空欄
+}
+
+/** CSV の段階5の欄：休日出勤時間・日報・要確認の理由（社内詳細月次と同じ判定） */
+function stage5CsvCells_(row, record, reportEnv, staffRecord) {
+  const st = row.day;
+  const staff = staffRecord || { employeeId: row.employeeId, reportSubmitTarget: false };
+  const report = reportStatusOfDay_(reportEnv, staff, row.date, !isBlank_(record['出勤']));
+  return [st && st.holidayWork ? formatMinutes_(st.holidayWork.minutes) : '', report.label, reasonsText_(collectDayReasons_(row, st || { checks: [] }, report))];
 }
 
 /** CSV の「業務走行距離」「交通費合計」の欄（その日の交通費明細から） */

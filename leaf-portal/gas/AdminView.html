@@ -105,6 +105,24 @@
       </p>
     </section>
 
+    <!-- ============ 社内詳細月次（社員1名×20日締め1か月。月別の［詳細］から開く） ============ -->
+    <section class="card" id="admEmpMonth" hidden>
+      <div class="card-head">
+        <h2 class="card-title" id="admEmpMonthTitle">社内詳細月次</h2>
+        <div class="tool-row">
+          <button type="button" class="btn btn-outline btn-sm js-admin-action" id="btnEmpMonthCsv">この社員の詳細CSV</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnEmpMonthClose">閉じる</button>
+        </div>
+      </div>
+      <p class="card-note">実働 ＝ 勤務区間 − 中断（私用の中抜け） − 自動休憩（昼休み）。法定時間外・深夜・法定休日は社労士の確認待ちのため表示していません。</p>
+      <div class="table-wrap admin-table-wrap">
+        <table class="table admin-table">
+          <thead id="admEmpMonthHead"></thead>
+          <tbody id="admEmpMonthBody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- ============ 申請（打刻修正・残業・休日出勤・有給） ============ -->
     <h2 class="section-title" id="requestsTitle">申請 <span class="section-sub">打刻修正・残業・休日出勤・有給</span></h2>
     <section class="grid grid-2" aria-labelledby="requestsTitle">
@@ -191,6 +209,49 @@
           </table>
         </div>
       </div>
+    </section>
+
+    <!-- ============ 月次の集計・出力（段階5） ============ -->
+    <section class="card" id="admAnalysis">
+      <div class="card-head">
+        <h2 class="card-title">月次の集計・出力 <span class="section-sub" id="admAnalysisMonth"></span></h2>
+        <button type="button" class="btn btn-primary btn-sm js-admin-action" id="btnLoadAnalysis">選択中の月の集計を表示</button>
+      </div>
+      <p class="card-note">要確認一覧・社労士確認用は20日締め（例：10月分＝9/21〜10/20）、接客と日報は暦月（10/1〜10/31）です。どれも読み取りだけで、シートは変えません。</p>
+      <div id="admAnalysisBody" hidden>
+        <h3 class="section-title">要確認一覧（理由付き） <span class="section-sub" id="admCheckPeriod"></span></h3>
+        <div class="tool-row">
+          <label for="admCheckFilter" class="section-sub">区分</label>
+          <select id="admCheckFilter" class="select-sm">
+            <option value="">すべて</option><option value="打刻">打刻</option><option value="残業">残業</option>
+            <option value="有給・申請">有給・申請</option><option value="日報">日報</option>
+          </select>
+          <span class="card-note" id="admCheckCounts"></span>
+        </div>
+        <div class="table-wrap"><table class="table admin-table"><thead><tr><th>日付</th><th class="left">氏名</th><th class="left">理由</th></tr></thead><tbody id="admCheckBody"></tbody></table></div>
+
+        <h3 class="section-title">接客集計 <span class="section-sub" id="admSalesPeriod"></span></h3>
+        <p class="card-note" id="admSalesTotal"></p>
+        <div class="grid grid-2">
+          <div class="table-wrap"><table class="table admin-table"><thead><tr><th class="left">氏名</th><th>主担当件数</th><th>副担当参加件数</th></tr></thead><tbody id="admSalesStaffBody"></tbody></table></div>
+          <div class="table-wrap"><table class="table admin-table"><thead><tr><th class="left">来場きっかけ（主担当で数える）</th><th>件数</th></tr></thead><tbody id="admSalesTriggerBody"></tbody></table></div>
+        </div>
+        <ul class="plain-list" id="admSalesWarnings"></ul>
+
+        <h3 class="section-title">日報確認集計 <span class="section-sub" id="admReportSumPeriod"></span></h3>
+        <p class="card-note" id="admReportSumTotal"></p>
+        <div class="grid grid-2">
+          <div class="table-wrap"><table class="table admin-table"><thead><tr><th class="left">提出する人</th><th>勤務日数</th><th>提出</th><th>未提出</th><th>下書きのみ</th><th>提出率</th><th>確認率</th></tr></thead><tbody id="admReportAuthorBody"></tbody></table></div>
+          <div class="table-wrap"><table class="table admin-table"><thead><tr><th class="left">確認する人</th><th>確認すべき日報</th><th>確認した</th><th>確認率</th></tr></thead><tbody id="admReportReaderBody"></tbody></table></div>
+        </div>
+        <div class="table-wrap"><table class="table admin-table"><thead><tr><th>日付</th><th class="left">提出者</th><th>確認</th><th>コメント</th><th class="left">未確認者</th></tr></thead><tbody id="admReportListBody"></tbody></table></div>
+      </div>
+      <h3 class="section-title">出力</h3>
+      <div class="tool-row">
+        <button type="button" class="btn btn-outline" id="btnCsvSummary" data-admin-label="月次サマリーCSV（社員ごとの合計）">月次サマリーCSV（社員ごとの合計）</button>
+        <button type="button" class="btn btn-outline" id="btnCsvSharoushi" data-admin-label="社労士確認用の詳細表（CSV）">社労士確認用の詳細表（CSV）</button>
+      </div>
+      <p class="card-note">社労士確認用の詳細表は、勤怠集計対象の社員×20日締め期間の全日（1日1行・社員ごとに合計行）を、確定している項目だけ値で出します（数式なし）。法定時間外・深夜・法定休日は「未確定」の列として空欄です。</p>
     </section>
 
     <!-- ============ CSV・再計算 ============ -->

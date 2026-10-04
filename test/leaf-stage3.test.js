@@ -264,7 +264,7 @@ test('シフト無効時は法定休日かどうかを推測しない：日曜�
   gas.loginAs(MITSUYAMA);
   const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv;
   assert.doesNotMatch(csv, /法定休日/);
-  assert.match(csv, /2026-10-11,E005[^\n]*,休日出勤,,,\r?$/m);
+  assert.match(csv, /2026-10-11,E005[^\n]*,休日出勤,,,,04:00,[^,\n]*,\r?$/m, '日の区分は休日出勤、休日出勤時間は実働');
 });
 
 test('シフト管理を使わない：手で作ったシフトシートがあっても読まない・変えない', () => {
@@ -708,9 +708,9 @@ test('CSV：日の区分（休日出勤か空欄）・有給種別・有給時�
   work(gas, NAKATSUI, '2026-10-10', '09:00', '12:00');
   gas.loginAs(MITSUYAMA);
   const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
-  assert.match(csv[0], /,交通費合計,日の区分,有給種別,有給時間,要確認（申請）$/);
-  assert.ok(csv.some((l) => /^2026-10-07,E005/.test(l) && /,,午後半休,04:00,$/.test(l)), csv.join('\n'));
-  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,,,,$/.test(l) && !/休日|未申請|未登録/.test(l)), '申請のない土曜の勤務は区分・要確認なし');
+  assert.match(csv[0], /,交通費合計,日の区分,有給種別,有給時間,要確認（申請）,休日出勤時間,日報,要確認の理由$/);
+  assert.ok(csv.some((l) => /^2026-10-07,E005/.test(l) && /,,午後半休,04:00,,,,$/.test(l)), csv.join('\n'));
+  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,,,,,,,$/.test(l) && !/休日|未申請|未登録/.test(l)), '申請のない土曜の勤務は区分・要確認なし');
 });
 
 test('将来用 CSV：シフト管理を使うときは シフト区分・日の区分 も出す', () => {
@@ -718,8 +718,8 @@ test('将来用 CSV：シフト管理を使うときは シフト区分・日の
   work(gas, NAKATSUI, '2026-10-10', '09:00', '12:00');
   gas.loginAs(MITSUYAMA);
   const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
-  assert.match(csv[0], /,シフト区分,日の区分,有給種別,有給時間,要確認（シフト・申請）$/);
-  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,休日,休日出勤,,,未申請休日出勤$/.test(l)), csv.join('\n'));
+  assert.match(csv[0], /,シフト区分,日の区分,有給種別,有給時間,要確認（シフト・申請）,休日出勤時間,日報,要確認の理由$/);
+  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,休日,休日出勤,,,未申請休日出勤,03:00,,未申請休日出勤$/.test(l)), csv.join('\n'));
 });
 
 // ============================================================ 権限・安全
