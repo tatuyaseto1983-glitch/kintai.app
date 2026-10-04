@@ -8,6 +8,11 @@
  * 1日に何回でも中断できます（ただし中断中にもう一度中断はできません）。
  *
  * 中断時間 = 再開時刻 − 中断開始時刻
+ *
+ * 再開するときに勤務形態を選べます（出社で再開／在宅で再開）。
+ *   同じ勤務形態 … 今の勤務区間のまま続ける（中断は区間の中にあるので、区間の実働から引く）
+ *   違う勤務形態 … 今の区間を「中断開始」で終え、新しい区間を「再開」から始める
+ *                 （例：12:00 出社を中断 → 12:30 在宅で再開 → 出社 〜12:00／在宅 12:30〜。中断は区間の外なので二重に引かない）
  */
 
 /**
@@ -20,10 +25,13 @@ function startBreak(reason) {
   });
 }
 
-/** 【画面から呼ぶ】中断から再開する。 */
-function resumeWork() {
+/**
+ * 【画面から呼ぶ】中断から再開する。
+ * @param {string} [workStyle] 再開する勤務形態（「出社」「在宅」）。省略すると中断前と同じ
+ */
+function resumeWork(workStyle) {
   return runApi_(function () {
-    return withLock_(function () { return resumeWork_(); });
+    return withLock_(function () { return resumeWork_(workStyle); });
   });
 }
 
@@ -41,8 +49,13 @@ function startBreak_(reason) {
   if (status !== ATTENDANCE_STATUS.WORKING) fail_('勤務中ではないため中断できません（今の状態：' + status + '）');
 
   const attendanceId = String(record['勤怠ID']).trim();
+  let segmentId = '';
+  if (hasWorkSegmentSchema_()) {
+    const open = findOpenSegmentRow_(ensureSegmentsForCurrent_(record, now.timestamp));
+    if (open) segmentId = String(open['勤務区間ID']);
+  }
   const count = getBreaksOfAttendance_(attendanceId).length;
-  appendRecord_(SHEET_NAMES.BREAKS, {
+  const breakRow = appendRecord_(SHEET_NAMES.BREAKS, {
     '中断ID': makeUniqueId_(SHEET_NAMES.BREAKS, '中断ID', 'BR-' + attendanceId.replace(/^AT-/, '') + '-' + pad2_(count + 1)),
     '勤怠ID': attendanceId,
     '日付': toDateKey_(record['日付']),
@@ -51,6 +64,7 @@ function startBreak_(reason) {
     '中断開始': now.time,
     '理由': reasonText,
   });
+  if (segmentId && hasColumn_(SHEET_NAMES.BREAKS, '勤務区間ID')) updateRecord_(SHEET_NAMES.BREAKS, breakRow, { '勤務区間ID': segmentId });
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, {
     '状態': ATTENDANCE_STATUS.ON_BREAK,
     '更新日時': now.timestamp,
@@ -62,7 +76,8 @@ function startBreak_(reason) {
   };
 }
 
-function resumeWork_() {
+function resumeWork_(workStyle) {
+  const requestedStyle = isBlank_(workStyle) ? '' : requireChoice_(workStyle, punchWorkStyles_(), '再開する勤務形態');
   const staff = getCurrentStaff_();
   requireActiveStaff_(staff);
   const now = getNowInfo_();
@@ -77,6 +92,21 @@ function resumeWork_() {
 
   const latest = openBreaks[openBreaks.length - 1]; // 最新の未完了の中断
   const minutes = durationBetween_(toMinutes_(latest['中断開始']), now.minutes);
+
+  // 違う勤務形態で再開するときは、勤務区間を区切る
+  let switched = '';
+  if (requestedStyle) {
+    const segRows = hasWorkSegmentSchema_() ? ensureSegmentsForCurrent_(record, now.timestamp) : [];
+    const open = findOpenSegmentRow_(segRows);
+    const currentStyle = open ? toPlainText_(open['勤務形態']) : toPlainText_(record['勤務形態']);
+    if (requestedStyle !== currentStyle) {
+      requireWorkSegmentSchema_();
+      if (!open) fail_('今の勤務区間が見つかりません。管理者に連絡してください');
+      closeAndStartSegment_(record, open, toClockText_(latest['中断開始']), requestedStyle, now.time, now.timestamp);
+      switched = currentStyle + 'から' + requestedStyle + 'に切り替え';
+    }
+  }
+
   updateRecord_(SHEET_NAMES.BREAKS, latest, {
     '再開': now.time,
     '中断時間': formatMinutes_(minutes),
@@ -88,9 +118,11 @@ function resumeWork_() {
     '状態': ATTENDANCE_STATUS.WORKING,
     '更新日時': now.timestamp,
   });
+  if (switched) recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
 
   return {
-    message: '再開しました（中断 ' + formatMinutes_(minutes) + '／本日の中断合計 ' + formatMinutes_(total) + '）',
+    message: (switched ? requestedStyle + 'で再開しました（' + switched + '／' : '再開しました（') +
+      '中断 ' + formatMinutes_(minutes) + '／本日の中断合計 ' + formatMinutes_(total) + '）',
     data: toAttendanceView_(record),
   };
 }

@@ -247,6 +247,47 @@ function getMonthKeyForDate_(dateKey, closingDay) {
   return Number(dateKey.slice(8, 10)) > closingDay ? shiftMonthKey_(monthKey, 1) : monthKey;
 }
 
+/**
+ * 「◯年◯月分」の集計期間（締め日の設定を使う共通の関数）。月別の画面・CSV・フレックス集計はすべてこれを使う。
+ *   20日締め：getPayrollPeriod_(2026, 9) → { label: '2026年9月分', startDate: '2026-08-21', endDate: '2026-09-20', ... }
+ *   末日締め：getPayrollPeriod_(2026, 9) → 2026-09-01〜2026-09-30
+ * 月の日数やうるう年に関係なく、前月の（締め日＋1）日〜当月の締め日になる。
+ * @param {number} year
+ * @param {number} month 1〜12
+ * @param {number} [closingDay] 省略すると設定シートの「月_締め日」（0＝末日）
+ */
+function getPayrollPeriod_(year, month, closingDay) {
+  const monthKey = requireMonthKey_(year + '-' + month, '対象月');
+  return getPayrollPeriodByMonthKey_(monthKey, closingDay);
+}
+
+/** getPayrollPeriod_ の '2026-09' 版 */
+function getPayrollPeriodByMonthKey_(monthKey, closingDay) {
+  const day = closingDay === undefined || closingDay === null ? getSettings_().monthClosingDay : closingDay;
+  const range = getMonthRange_(monthKey, day);
+  return {
+    monthKey: monthKey,
+    label: getPeriodLabel_(monthKey),
+    startDate: range.from,
+    endDate: range.to,
+    from: range.from,
+    to: range.to,
+    closingDay: day,
+    periodText: getPeriodLabel_(monthKey) + ' 対象期間：' + range.from.replace(/-/g, '/') + '〜' + range.to.replace(/-/g, '/'),
+  };
+}
+
+/** その日付が入る「◯月分」の期間 */
+function getPayrollPeriodForDate_(dateKey, closingDay) {
+  const day = closingDay === undefined || closingDay === null ? getSettings_().monthClosingDay : closingDay;
+  return getPayrollPeriodByMonthKey_(getMonthKeyForDate_(dateKey, day), day);
+}
+
+/** '2026-09' → '2026年9月分' */
+function getPeriodLabel_(monthKey) {
+  return Number(monthKey.slice(0, 4)) + '年' + Number(monthKey.slice(5, 7)) + '月分';
+}
+
 // ============================================================ 時刻・時間（分に変換して計算する）
 
 /**

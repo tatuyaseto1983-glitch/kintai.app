@@ -53,6 +53,7 @@ function ensureSheet_(ss, definition) {
 
   if (!sheet) {
     sheet = ss.insertSheet(definition.name);
+    ensureColumnCount_(sheet, definition.headers.length);
     writeHeaderCells_(sheet, 1, definition.headers);
     prepareNewColumns_(sheet, definition, 1, definition.headers);
     sheet.setFrozenRows(1);
@@ -63,6 +64,7 @@ function ensureSheet_(ss, definition) {
   const lastColumn = sheet.getLastColumn();
   if (lastRow === 0) {
     // 同名の空のシートがある → 見出しだけ入れる
+    ensureColumnCount_(sheet, definition.headers.length);
     writeHeaderCells_(sheet, 1, definition.headers);
     prepareNewColumns_(sheet, definition, 1, definition.headers);
     sheet.setFrozenRows(1);
@@ -88,6 +90,12 @@ function ensureSheet_(ss, definition) {
   // 新しく作った列だけに初期値を入れる（定義に onColumnsAdded があるとき。既存の列・値には触れない）
   const note = typeof definition.onColumnsAdded === 'function' ? definition.onColumnsAdded(sheet, missing) : '';
   return '足りない列を右端に追加しました（' + missing.join('、') + '）' + (note ? '。' + note : '');
+}
+
+/** シートの列が count 列より少なければ右に足す（新しいシートは26列しかないため） */
+function ensureColumnCount_(sheet, count) {
+  const need = count - sheet.getMaxColumns();
+  if (need > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), need);
 }
 
 /** 必須の見出しと任意の見出し（optionalHeaders）をまとめた定義。setupSystem() はどちらも作る */

@@ -662,7 +662,9 @@ test('管理者画面 4：月別一覧（固定の合計・フレックスの残
   gas.g.submitCorrectionRequest({ targetDate: '2026-06-01', item: '退勤', after: '18:30', reason: 'x' });
   gas.loginAs(ADMIN);
   const m = gas.g.getAdminDashboard({ month: '2026-06', parts: ['monthly'] }).data.monthly;
-  assert.equal(m.from, '2026-06-01');
+  assert.equal(m.from, '2026-05-21', '20日締め：6月分＝5/21〜6/20');
+  assert.equal(m.to, '2026-06-20');
+  assert.equal(m.periodText, '2026年6月分 対象期間：2026/05/21〜2026/06/20');
   const sato = m.rows.find((x) => x.name === '佐藤');
   assert.deepEqual([sato.workDays, sato.workTime, sato.lateTotal, sato.lateCount, sato.internalExcessTotal, sato.needsCheckCount, sato.correctionCount, sato.flex],
     [1, '08:32', '00:10', 1, '00:42', 1, 1, null]);
@@ -743,9 +745,9 @@ test('管理者画面 10：CSV（日別・月別。部署入り・BOM付き・�
   assert.equal(r.success, true);
   assert.equal(r.data.fileName, 'kintai_monthly_2026-06.csv');
   const lines = r.data.csv.split('\r\n');
-  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態'));
+  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態,勤務形態区分,勤務区間数,出社時間,在宅時間,現場外出時間'));
   assert.equal(lines.length, 3);
-  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み$/);
+  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み,出社,1,09:32,00:00,00:00$/, '勤務区間の列は右端に足す');
   r = gas.g.exportAdminAttendanceCsv({ type: 'daily', date: '2026-06-02' });
   assert.equal(r.data.csv.split('\r\n').length, 1, 'その日の記録がなければ見出しだけ');
 });

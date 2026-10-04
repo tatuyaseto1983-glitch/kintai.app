@@ -29,8 +29,10 @@ function getReportList(params) {
     const viewer = getCurrentStaff_();
     const settings = getSettings_();
     const p = params || {};
-    const monthKey = isBlank_(p.month) ? getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay) : requireMonthKey_(p.month, '対象月');
-    const range = getMonthRange_(monthKey, settings.monthClosingDay);
+    const range = isBlank_(p.month)
+      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
+      : getPayrollPeriodByMonthKey_(requireMonthKey_(p.month, '対象月'), settings.monthClosingDay);
+    const monthKey = range.monthKey;
     const ctx = buildReportShareContext_();
 
     const visible = readTable_(SHEET_NAMES.DAILY_REPORTS).records.filter(function (r) {
@@ -45,7 +47,7 @@ function getReportList(params) {
     return {
       message: '日報の一覧を取得しました',
       data: {
-        month: monthKey, from: range.from, to: range.to, today: getNowInfo_().date,
+        month: monthKey, from: range.from, to: range.to, periodLabel: range.label, periodText: range.periodText, today: getNowInfo_().date,
         reports: items.filter(function (x) { return x.status === REPORT_STATE.SUBMITTED; }),
         myDrafts: items.filter(function (x) { return x.status === REPORT_STATE.DRAFT; }),
       },

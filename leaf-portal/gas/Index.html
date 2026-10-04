@@ -90,6 +90,11 @@
             <button type="button" class="btn btn-resume btn-lg" id="btnResume" data-label="再開" disabled>再開</button>
             <button type="button" class="btn btn-dark btn-lg" id="btnClockOut" data-label="退勤" disabled>退勤</button>
           </div>
+          <!-- 勤務中の切替（出社⇄在宅）と、中断中に別の勤務形態で再開するボタン。状態に合わせて表示する -->
+          <div class="action-grid action-grid-sub" id="actionSub" hidden>
+            <button type="button" class="btn btn-outline" id="btnSwitchStyle" data-label="在宅勤務へ切替" hidden>在宅勤務へ切替</button>
+            <button type="button" class="btn btn-resume" id="btnResumeOther" data-label="在宅で再開" hidden>在宅で再開</button>
+          </div>
 
           <div class="break-reason" id="breakReasonBox">
             <label for="breakReason">中断の理由（任意）</label>
@@ -213,7 +218,15 @@
             <option value="中断">中断</option>
             <option value="再開">再開</option>
             <option value="勤務形態">勤務形態</option>
+            <option value="区間開始">勤務区間の開始</option>
+            <option value="区間終了">勤務区間の終了</option>
+            <option value="区間勤務形態">勤務区間の勤務形態</option>
           </select>
+        </div>
+        <div class="form-row" id="corSegmentRow" hidden>
+          <label for="corSegment">対象区間</label>
+          <select id="corSegment"></select>
+          <p class="form-help" id="corSegmentHelp">1日の中で出社・在宅を切り替えたり、退勤後に再出勤した日は、区間ごとに直せます。</p>
         </div>
         <div class="form-row">
           <label for="corBefore">修正前</label>

@@ -45,7 +45,7 @@ function getAdminDashboard(params) {
     const settings = getSettings_();
     const now = getNowInfo_();
     const date = isBlank_(p.date) ? now.date : requireDateKey_(p.date, '日付');
-    const month = isBlank_(p.month) ? getMonthKeyForDate_(date, settings.monthClosingDay) : requireMonthKey_(p.month, '対象月');
+    const month = isBlank_(p.month) ? getPayrollPeriodForDate_(date, settings.monthClosingDay).monthKey : requireMonthKey_(p.month, '対象月');
     const parts = normalizeAdminParts_(p.parts);
     const ctx = buildAdminContext_(settings, now.date);
     const has = function (name) { return parts.indexOf(name) !== -1; };
@@ -84,22 +84,27 @@ function exportAdminAttendanceCsv(params) {
       range = { from: date, to: date };
       label = date;
     } else {
-      const month = isBlank_(p.month) ? getMonthKeyForDate_(now.date, settings.monthClosingDay) : requireMonthKey_(p.month, '対象月');
-      range = getMonthRange_(month, settings.monthClosingDay);
-      label = month;
+      // 月別は締め日の設定による「◯月分」の期間（20日締めなら前月21日〜当月20日）
+      range = isBlank_(p.month)
+        ? getPayrollPeriodForDate_(now.date, settings.monthClosingDay)
+        : getPayrollPeriodByMonthKey_(requireMonthKey_(p.month, '対象月'), settings.monthClosingDay);
+      label = range.monthKey;
     }
     const headers = ['日付', '社員ID', '氏名', '部署', '勤務区分', '勤務形態', '出勤', '退勤', '自動休憩', '中断合計', '実働',
-      '遅刻', '早退', '社内超過', '事前残業申請', '要確認', '打刻漏れ', '打刻修正状況', '状態'];
+      '遅刻', '早退', '社内超過', '事前残業申請', '要確認', '打刻漏れ', '打刻修正状況', '状態',
+      // 勤務区間の列（以前の列の右に足す。以前の記録で計算していない日は空欄）
+      '勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間'];
     const lines = [headers.map(csvCell_).join(',')];
     getAttendanceInRange_(range.from, range.to).forEach(function (record) {
       if (ctx.excludedIds[String(record['社員ID']).trim()]) return; // 勤怠集計の対象外（役員など）は出さない
       const row = toAdminAttendanceRow_(record, ctx);
       lines.push([row.date, row.employeeId, row.name, row.department, row.workType, row.workStyle, row.clockIn, row.clockOut,
         row.autoBreak, row.breakTotal, row.workTime, row.late, row.earlyLeave, row.internalExcess, row.preOvertimeRequest,
-        row.needsCheck, row.issues.join('・'), row.correctionStatus, row.status].map(csvCell_).join(','));
+        row.needsCheck, row.issues.join('・'), row.correctionStatus, row.status,
+        row.workStyleCategory, row.segmentCount, row.officeTime, row.remoteTime, row.siteOutingTime].map(csvCell_).join(','));
     });
     return {
-      message: label + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
+      message: (range.periodText || label) + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
       // ファイル名は英数字だけにする（日本語のファイル名は、ブラウザによって「download」という名前になってしまうため）
       data: { fileName: 'kintai_' + (p.type === 'daily' ? 'daily_' : 'monthly_') + label + '.csv', csv: '\uFEFF' + lines.join('\r\n') },
     };
@@ -196,7 +201,7 @@ function toAdminAttendanceRow_(record, ctx) {
 
 function buildAdminSummary_(ctx) {
   const settings = ctx.settings;
-  const range = getMonthRange_(getMonthKeyForDate_(ctx.today, settings.monthClosingDay), settings.monthClosingDay);
+  const range = getPayrollPeriodForDate_(ctx.today, settings.monthClosingDay);
   const summary = {
     date: ctx.today, monthFrom: range.from, monthTo: range.to,
     present: 0, remote: 0, working: 0, onBreak: 0, finished: 0, notStarted: 0,
@@ -207,7 +212,7 @@ function buildAdminSummary_(ctx) {
     const record = currentAttendanceFromContext_(ctx, s.employeeId);
     if (!record || isBlank_(record['出勤'])) { summary.notStarted += 1; return; }
     summary.present += 1;
-    if (String(record['勤務形態']) === WORK_STYLES.REMOTE) summary.remote += 1;
+    if (getCurrentWorkStyle_(record) === WORK_STYLES.REMOTE) summary.remote += 1; // 勤務中なら今の区間の勤務形態
     const status = String(record['状態']);
     if (status === ATTENDANCE_STATUS.WORKING) summary.working += 1;
     else if (status === ATTENDANCE_STATUS.ON_BREAK) summary.onBreak += 1;
@@ -266,7 +271,7 @@ function buildAdminDaily_(ctx, date) {
 /** 月別：スタッフごとの合計 */
 function buildAdminMonthly_(ctx, month) {
   const settings = ctx.settings;
-  const range = getMonthRange_(month, settings.monthClosingDay);
+  const range = getPayrollPeriodByMonthKey_(month, settings.monthClosingDay);
   const correctionCount = {};
   readTable_(SHEET_NAMES.CORRECTIONS).records.forEach(function (r) {
     const date = toDateKey_(r['対象日']);
@@ -304,7 +309,7 @@ function buildAdminMonthly_(ctx, month) {
     }
     return row;
   });
-  return { month: month, from: range.from, to: range.to, rows: rows };
+  return { month: month, from: range.from, to: range.to, periodLabel: range.label, periodText: range.periodText, rows: rows };
 }
 
 // ============================================================ 申請
@@ -331,7 +336,7 @@ function listRequestsForAdmin_(sheetName, toView, ctx) {
 function buildAdminFlex_(ctx, date, month) {
   const settings = ctx.settings;
   const week = getWeekRange_(date, settings.weekStartDay);
-  const monthRange = getMonthRange_(month, settings.monthClosingDay);
+  const monthRange = getPayrollPeriodByMonthKey_(month, settings.monthClosingDay);
   const rows = ctx.staffList
     .filter(function (s) { return isAttendanceTarget_(s) && s.workType === WORK_TYPES.FLEX; })
     .map(function (s) {

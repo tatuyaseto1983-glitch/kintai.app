@@ -20,6 +20,7 @@
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
     'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
     'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
+    'getAttendanceDetail',
   ];
   var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'flex', 'restDays', 'reports'];
 
@@ -32,6 +33,7 @@
     data: {},
     seq: 0,         // 取得の順番（古い結果が後から届いても上書きしない）
     confirmAction: null,
+    openDetail: {},  // 日別一覧で開いている行（勤怠ID → 取得した勤務区間）
   };
 
   function $(id) { return document.getElementById(id); }
@@ -87,6 +89,7 @@
       $('adminDept').textContent = d.admin.department ? '（' + d.admin.department + '）' : '';
     }
     if (d.summary) renderSummary();
+    if (d.daily) S.openDetail = {}; // 取り直したら開いていた明細は閉じる（古い内容を出さない）
     if (d.daily || d.monthly) renderTable();
     if (d.corrections) renderCorrections();
     if (d.overtime) renderOvertime();
@@ -177,13 +180,13 @@
     if (S.mode === 'daily') {
       var daily = S.data.daily;
       $('admTableTitle').textContent = '全スタッフ勤怠（日別：' + (daily ? App.formatDateShort(daily.date) : '') + '）';
-      setHead(['氏名', '部署', '勤務区分', '勤務形態', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
+      setHead(['氏名', '部署', '勤務区分', '勤務形態', '勤務区間', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
       var rows = daily ? daily.rows : [];
       total = rows.length;
       rows.forEach(function (r) {
         var alert = r.needsCheck === '要確認' || (r.issues && r.issues.length);
         if (!matchesCommon(r, f)) return;
-        if (f.workStyle && r.workStyle !== f.workStyle) return;
+        if (f.workStyle && r.workStyle !== f.workStyle && (r.workStyleCategory || '').split('＋').indexOf(f.workStyle) === -1) return;
         if (f.status && r.status !== f.status) return;
         if (f.alertOnly && !alert) return;
         shown += 1;
@@ -192,7 +195,8 @@
         tr.appendChild(td(r.name, 'sticky-col'));
         tr.appendChild(td(r.department, 'left'));
         tr.appendChild(td(r.workType));
-        tr.appendChild(td(r.workStyle));
+        tr.appendChild(td(r.workStyleCategory || r.workStyle)); // 出社＋在宅 など（以前の記録は勤務形態）
+        tr.appendChild(segmentCell(r));
         tr.appendChild(td(r.clockIn));
         tr.appendChild(td(r.clockOut));
         tr.appendChild(td(r.breakTotal));
@@ -225,10 +229,12 @@
         st.appendChild(badges);
         tr.appendChild(st);
         body.appendChild(tr);
+        if (r.attendanceId && S.openDetail[r.attendanceId]) body.appendChild(detailRow(S.openDetail[r.attendanceId]));
       });
     } else {
       var monthly = S.data.monthly;
-      $('admTableTitle').textContent = '全スタッフ勤怠（月別：' + (monthly ? App.formatMonth(monthly.month) + '　' + App.formatDateShort(monthly.from) + '〜' + App.formatDateShort(monthly.to) : '') + '）';
+      // 「2026年9月分 対象期間：2026/08/21〜2026/09/20」（締め日の設定による期間をそのまま表示）
+      $('admTableTitle').textContent = '全スタッフ勤怠（月別：' + (monthly ? (monthly.periodText || App.formatMonth(monthly.month) + '　' + App.formatDateShort(monthly.from) + '〜' + App.formatDateShort(monthly.to)) : '') + '）';
       setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過']);
       var mrows = monthly ? monthly.rows : [];
       total = mrows.length;
@@ -260,11 +266,80 @@
     if (!shown) {
       var empty = document.createElement('tr');
       var cell = el('td', 'empty', total ? '条件に合うスタッフはいません' : 'データがありません');
-      cell.colSpan = 16;
+      cell.colSpan = 17;
       empty.appendChild(cell);
       body.appendChild(empty);
     }
     $('admTableCount').textContent = shown + '名 / ' + total + '名';
+  }
+
+  /** 勤務区間の数と「開く」ボタン（押すとその日の勤務区間と中断を下に表示） */
+  function segmentCell(r) {
+    var cell = el('td');
+    if (!r.attendanceId) { cell.textContent = '—'; return cell; }
+    var count = r.segmentCount || '';
+    cell.appendChild(document.createTextNode(count ? count + '区間 ' : ''));
+    var opened = !!S.openDetail[r.attendanceId];
+    var btn = el('button', 'btn btn-ghost btn-sm', opened ? '閉じる' : '開く');
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', opened ? 'true' : 'false');
+    btn.setAttribute('data-detail', r.attendanceId);
+    btn.addEventListener('click', function () { toggleDetail(r.attendanceId, btn); });
+    cell.appendChild(btn);
+    return cell;
+  }
+
+  function toggleDetail(attendanceId, button) {
+    if (S.busy) return;
+    if (S.openDetail[attendanceId]) {
+      delete S.openDetail[attendanceId];
+      renderTable();
+      return;
+    }
+    button.disabled = true;
+    button.textContent = '読み込み中...';
+    call('getAttendanceDetail', [attendanceId]).then(function (res) {
+      if (!res.success) {
+        App.showToast('error', res.message);
+        button.disabled = false;
+        button.textContent = '開く';
+        return;
+      }
+      S.openDetail[attendanceId] = res.data;
+      renderTable();
+    });
+  }
+
+  /** 勤務区間と中断の明細の行 */
+  function detailRow(detail) {
+    var tr = el('tr', 'detail-row');
+    var cell = el('td', 'left');
+    cell.colSpan = 17;
+    var box = el('div', 'segment-detail');
+    box.appendChild(el('p', 'subhead', '勤務区間' + (detail.segments.length && detail.segments[0].virtual ? '（以前の記録のため、出勤〜退勤を1区間として表示）' : '')));
+    var ul = el('ul', 'timeline');
+    detail.segments.forEach(function (s) {
+      ul.appendChild(el('li', 'timeline-item style-' + (s.style === '在宅' ? 'remote' : 'office'),
+        '区間' + s.number + '　' + s.style + '　' + s.start + '〜' + (s.end || '勤務中') + (s.workTime ? '（区間の実働 ' + App.trimHour(s.workTime) + '）' : '')));
+    });
+    box.appendChild(ul);
+    box.appendChild(el('p', 'subhead', '中断'));
+    var ub = el('ul', 'timeline');
+    if (!detail.breaks.length) ub.appendChild(el('li', 'muted', 'なし'));
+    detail.breaks.forEach(function (b) {
+      ub.appendChild(el('li', 'timeline-item style-break', b.start + '〜' + (b.end || '中断中') + (b.minutes ? '（' + App.trimHour(b.minutes) + '）' : '') + (b.reason ? '　' + b.reason : '')));
+    });
+    box.appendChild(ub);
+    var r = detail.record || {};
+    if (r.officeTime || r.remoteTime) {
+      box.appendChild(el('p', 'card-note', '出社 ' + App.trimHour(r.officeTime || '00:00') + '／在宅 ' + App.trimHour(r.remoteTime || '00:00') +
+        (r.siteOutingTime && r.siteOutingTime !== '00:00' ? '／現場・外出 ' + App.trimHour(r.siteOutingTime) : '') +
+        '／自動休憩 ' + App.trimHour(r.autoBreak || '00:00') + '／実働 ' + App.trimHour(r.workTime || '00:00') +
+        '（出社・在宅は中断を除いた時間。合計から自動休憩を引いたものが実働）'));
+    }
+    cell.appendChild(box);
+    tr.appendChild(cell);
+    return tr;
   }
 
   function setMode(mode) {

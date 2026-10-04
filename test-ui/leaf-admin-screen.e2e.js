@@ -92,7 +92,7 @@ test('管理者画面をブラウザで操作する', { skip: !playwright && 'Pl
         assert.match(cards, re);
       }
       const sato = await page.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText();
-      assert.match(sato, /設計部\s+固定勤務\s+出社\s+09:30\s+19:12\s+00:00\s+01:00\s+08:42/);
+      assert.match(sato, /設計部\s+固定勤務\s+出社\s+1区間 開く\s+09:30\s+19:12\s+00:00\s+01:00\s+08:42/);
       assert.match(sato, /00:42\s*30分以上・事前申請なし/);
       assert.match(sato, /要確認/);
       assert.equal(await page.locator('#admTableBody tr', { hasText: '佐藤 花子' }).getAttribute('class'), 'row-alert');

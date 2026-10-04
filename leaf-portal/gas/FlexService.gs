@@ -31,14 +31,17 @@ function getFlexSummary(employeeId) {
     const rule = getWorkRule_(target, settings);
     const today = getNowInfo_().date;
     const week = getWeekRange_(today, settings.weekStartDay);
-    const monthKey = getMonthKeyForDate_(today, settings.monthClosingDay);
-    const month = getMonthRange_(monthKey, settings.monthClosingDay);
+    // 月の所定（138時間など）は締め日の設定による「◯月分」で集計する（20日締めなら前月21日〜当月20日）
+    const month = getPayrollPeriodForDate_(today, settings.monthClosingDay);
+    const monthKey = month.monthKey;
     const records = getAttendanceOfEmployee_(target.employeeId);
 
     const weekSummary = summarizeFlexPeriod_(records, week.from, week.to, rule.weeklyMinutes);
     weekSummary.restDayCheck = checkWeeklyRest_(records, week.from, today, settings.weeklyFullRestDays);
     const monthSummary = summarizeFlexPeriod_(records, month.from, month.to, rule.monthlyMinutes);
     monthSummary.month = monthKey;
+    monthSummary.periodLabel = month.label;
+    monthSummary.periodText = month.periodText;
 
     const todayRecord = records.filter(function (r) { return toDateKey_(r['日付']) === today; })[0];
     return {

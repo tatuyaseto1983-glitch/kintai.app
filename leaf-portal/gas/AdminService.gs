@@ -6,7 +6,8 @@
  *   requireAdmin()             … 管理者かどうかのチェック（管理者用の関数はすべて最初にこれを呼ぶ）
  *   getAllAttendance(from, to) … 全スタッフの勤怠（期間指定）
  *   getDailyAttendance(date)   … 日別表示（未出勤の人も含む）
- *   getMonthlyAttendance(month)… 月別表示（スタッフごとの合計つき）
+ *   getMonthlyAttendance(month)… 月別表示（スタッフごとの合計つき。期間は締め日の設定による「◯月分」）
+ *   getAttendanceDetail(id)    … 1日の勤務区間と中断（日別一覧で行を開いたとき）
  *   getPendingRequests()       … 承認待ちの申請の一覧
  *   checkWeeklyRestDays(date)  … 週1日の完全休日の確認（全スタッフ）
  *   exportAttendanceCsv(month) … CSV 出力（文字列で返す）
@@ -53,13 +54,31 @@ function getDailyAttendance(date) {
   });
 }
 
+/**
+ * 【管理者】勤怠1日分の勤務区間と中断（日別一覧で行を開いたときに使う）。
+ * 勤務区間がない日（以前の記録）は、出勤〜退勤の1区間として返します（virtual: true）。
+ */
+function getAttendanceDetail(attendanceId) {
+  return runApi_(function () {
+    requireAdmin();
+    const id = requireText_(attendanceId, '勤怠ID', { max: TEXT_LIMITS.SHORT });
+    const record = findRecords_(SHEET_NAMES.ATTENDANCE, function (r) { return String(r['勤怠ID']).trim() === id; })[0];
+    if (!record) fail_('勤怠記録が見つかりません（勤怠ID：' + id + '）');
+    const timeline = buildAttendanceTimeline_(record);
+    timeline.record = toAttendanceView_(record);
+    return { message: toDateKey_(record['日付']) + ' ' + toPlainText_(record['氏名']) + ' の勤務区間を取得しました', data: timeline };
+  });
+}
+
 /** 【管理者】月別表示。スタッフごとの合計と、明細 */
 function getMonthlyAttendance(month) {
   return runApi_(function () {
     requireAdmin();
     const settings = getSettings_();
-    const monthKey = isBlank_(month) ? getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay) : requireMonthKey_(month, '対象月');
-    const range = getMonthRange_(monthKey, settings.monthClosingDay);
+    const range = isBlank_(month)
+      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
+      : getPayrollPeriodByMonthKey_(requireMonthKey_(month, '対象月'), settings.monthClosingDay);
+    const monthKey = range.monthKey;
     const records = onlyAttendanceTargets_(getAttendanceInRange_(range.from, range.to));
 
     const summaries = getAllStaff_()
@@ -90,8 +109,9 @@ function getMonthlyAttendance(month) {
       });
 
     return {
-      message: monthKey + ' の月別勤怠を取得しました',
-      data: { month: monthKey, from: range.from, to: range.to, summaries: summaries, records: records.map(toAttendanceView_) },
+      message: range.periodText + ' の月別勤怠を取得しました',
+      data: { month: monthKey, from: range.from, to: range.to, periodLabel: range.label, periodText: range.periodText,
+        summaries: summaries, records: records.map(toAttendanceView_) },
     };
   });
 }
@@ -142,15 +162,19 @@ function exportAttendanceCsv(month) {
   return runApi_(function () {
     requireAdmin();
     const settings = getSettings_();
-    const monthKey = isBlank_(month) ? getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay) : requireMonthKey_(month, '対象月');
-    const range = getMonthRange_(monthKey, settings.monthClosingDay);
-    const headers = getSheetDefinition_(SHEET_NAMES.ATTENDANCE).headers;
+    const range = isBlank_(month)
+      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
+      : getPayrollPeriodByMonthKey_(requireMonthKey_(month, '対象月'), settings.monthClosingDay);
+    const monthKey = range.monthKey;
+    // 以前からの列の順番のまま、新しい列（勤務形態区分など）はシートにある分だけ右端に足す
+    const definition = getSheetDefinition_(SHEET_NAMES.ATTENDANCE);
+    const headers = definition.headers.concat((definition.optionalHeaders || []).filter(function (h) { return hasColumn_(SHEET_NAMES.ATTENDANCE, h); }));
     const lines = [headers.map(csvEscape_).join(',')];
     onlyAttendanceTargets_(getAttendanceInRange_(range.from, range.to)).forEach(function (r) {
       lines.push(headers.map(function (h) { return csvEscape_(h === '日付' ? toDateKey_(r[h]) : toPlainText_(r[h])); }).join(','));
     });
     return {
-      message: monthKey + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
+      message: range.periodText + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
       data: { fileName: '勤怠記録_' + monthKey + '.csv', csv: '﻿' + lines.join('\r\n') },
     };
   });
@@ -165,9 +189,7 @@ function recalculateThisMonth() {
   const result = runApi_(function () {
     return withLock_(function () {
       requireAdmin();
-      const settings = getSettings_();
-      const monthKey = getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay);
-      return recalculateAttendanceInRange_(getMonthRange_(monthKey, settings.monthClosingDay));
+      return recalculateAttendanceInRange_(getPayrollPeriodForDate_(getNowInfo_().date));
     });
   });
   console.log(result.message);
@@ -181,13 +203,20 @@ function recalculateAttendanceInRange_(range) {
   const targets = getAttendanceInRange_(range.from, range.to);
   if (!targets.length) return { message: range.from + '〜' + range.to + ' の勤怠記録はありません', data: { count: 0 } };
 
-  let columns = [];
+  // 記録によって計算する列が違う（勤務区間がある日は出勤・退勤・勤務形態も）ので、すべての列をまとめて書く
+  const columns = [];
+  const segmentColumns = [];
   targets.forEach(function (record) {
-    const fields = calculateAttendanceFields_(record, ctx);
-    columns = Object.keys(fields);
-    updateRecordInMemory_(SHEET_NAMES.ATTENDANCE, record, fields);
+    const detail = calculateAttendanceDetail_(record, ctx);
+    Object.keys(detail.fields).forEach(function (k) { if (columns.indexOf(k) === -1) columns.push(k); });
+    updateRecordInMemory_(SHEET_NAMES.ATTENDANCE, record, detail.fields);
+    detail.segmentChanges.forEach(function (c) {
+      Object.keys(c.changes).forEach(function (k) { if (segmentColumns.indexOf(k) === -1) segmentColumns.push(k); });
+      updateRecordInMemory_(SHEET_NAMES.WORK_SEGMENTS, c.row, c.changes);
+    });
   });
   writeColumnsInBulk_(SHEET_NAMES.ATTENDANCE, columns);
+  if (segmentColumns.length) writeColumnsInBulk_(SHEET_NAMES.WORK_SEGMENTS, segmentColumns);
   return { message: range.from + '〜' + range.to + ' の勤怠記録 ' + targets.length + '件を再計算しました', data: { count: targets.length } };
 }
 

@@ -122,8 +122,10 @@ function getMyDailyReports(month) {
   return runApi_(function () {
     const staff = getCurrentStaff_();
     const settings = getSettings_();
-    const monthKey = isBlank_(month) ? getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay) : requireMonthKey_(month, '対象月');
-    const range = getMonthRange_(monthKey, settings.monthClosingDay);
+    const range = isBlank_(month)
+      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
+      : getPayrollPeriodByMonthKey_(requireMonthKey_(month, '対象月'), settings.monthClosingDay);
+    const monthKey = range.monthKey;
     const list = findRecords_(SHEET_NAMES.DAILY_REPORTS, function (r) {
       const date = toDateKey_(r['日付']);
       return String(r['社員ID']).trim() === staff.employeeId && date >= range.from && date <= range.to;

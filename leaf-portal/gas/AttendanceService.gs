@@ -9,14 +9,17 @@
  *   社内超過時間 : 固定勤務の人が標準退勤（18:30）より後まで働いた時間。
  *                  社内管理のための数字で、法律上の「時間外労働（法定残業）」とは別のものです。
  *
- * 【実働時間の計算】
- *   実働時間 = 退勤 − 出勤 − 自動休憩 − 中断合計（マイナスにはしない）
+ * 【実働時間の計算】（勤務区間の計算は WorkSegmentService.gs）
+ *   実働時間 = 各勤務区間の（長さ − 重なる中断）の合計 − 自動休憩（1日1回）（マイナスにはしない）
+ *   勤務区間が1つで中断がその中にある日は、以前と同じく 退勤 − 出勤 − 自動休憩 − 中断合計 になります。
+ *   中断合計 は記録した中断の合計（以前と同じ意味）。出社から在宅へ「中断→在宅で再開」した場合、
+ *   その中断はどちらの区間にも入らないので、実働から二重に引かれることはありません。
  */
 
 // ============================================================ 画面から呼ぶ関数
 
 /**
- * 【画面から呼ぶ】出勤する。
+ * 【画面から呼ぶ】出勤する。退勤済みの日にもう一度押すと「再出勤」（新しい勤務区間）になります。
  * @param {string} workStyle 「出社」または「在宅」
  */
 function clockIn(workStyle) {
@@ -40,8 +43,11 @@ function getMyAttendance(month) {
   return runApi_(function () {
     const staff = getCurrentStaff_();
     const settings = getSettings_();
-    const monthKey = isBlank_(month) ? getMonthKeyForDate_(getNowInfo_().date, settings.monthClosingDay) : requireMonthKey_(month, '対象月');
-    const range = getMonthRange_(monthKey, settings.monthClosingDay);
+    const period = isBlank_(month)
+      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
+      : getPayrollPeriodByMonthKey_(requireMonthKey_(month, '対象月'), settings.monthClosingDay);
+    const monthKey = period.monthKey;
+    const range = period;
 
     const records = findRecords_(SHEET_NAMES.ATTENDANCE, function (r) {
       const date = toDateKey_(r['日付']);
@@ -50,11 +56,13 @@ function getMyAttendance(month) {
 
     const totalWorkMinutes = records.reduce(function (sum, r) { return sum + (toMinutes_(r.workTime) || 0); }, 0);
     return {
-      message: monthKey + ' の勤怠を取得しました（' + records.length + '件）',
+      message: period.periodText + ' の勤怠を取得しました（' + records.length + '件）',
       data: {
         month: monthKey,
         from: range.from,
         to: range.to,
+        periodLabel: period.label,
+        periodText: period.periodText,
         records: records,
         totals: { workDays: records.length, workTime: formatMinutes_(totalWorkMinutes) },
       },
@@ -64,7 +72,8 @@ function getMyAttendance(month) {
 
 /**
  * 【画面から呼ぶ】今日の全スタッフの勤務状況（スタッフ向け）。
- * 他の人の勤務時間・遅刻・残業などは返しません。返すのは「氏名・勤務形態・状態」と、自分の行かどうか（isSelf）だけです。
+ * 他の人の勤務時間・遅刻・残業・勤務区間などは返しません。返すのは「氏名・今の勤務形態・状態」と、自分の行かどうか（isSelf）だけです。
+ * 状態の表示：勤務中（出社）／勤務中（在宅）／中断中／退勤済み／未出勤
  */
 function getTodayStaffStatus() {
   return runApi_(function () {
@@ -75,12 +84,12 @@ function getTodayStaffStatus() {
       .map(function (s) {
         const record = findCurrentAttendance_(s.employeeId, now.date);
         const status = record ? String(record['状態']) : ATTENDANCE_STATUS.NOT_STARTED;
-        const workStyle = record ? String(record['勤務形態']) : '';
+        const workStyle = record ? getCurrentWorkStyle_(record) : '';
         return {
           name: s.name,
           workStyle: workStyle,
           status: status,
-          label: status === ATTENDANCE_STATUS.WORKING && workStyle ? workStyle + '・' + status : status,
+          label: status === ATTENDANCE_STATUS.WORKING && workStyle ? status + '（' + workStyle + '）' : status,
           isSelf: s.employeeId === me.employeeId, // 自分の行か（画面の「（あなた）」表示用。社員IDそのものは返さない）
         };
       });
@@ -99,9 +108,7 @@ function clockIn_(workStyle) {
   const now = getNowInfo_();
 
   const existing = findAttendance_(staff.employeeId, now.date);
-  if (existing) {
-    fail_('本日はすでに出勤済みです（出勤 ' + toClockText_(existing['出勤']) + '）');
-  }
+  if (existing) return reClockIn_(existing, style, now);
 
   // 固定勤務だけ遅刻を判定する（フレックスは出勤時刻が自由なので判定しない）
   const lateMinutes = rule.isFixed ? Math.max(0, now.minutes - rule.standardStartMinutes) : 0;
@@ -120,6 +127,12 @@ function clockIn_(workStyle) {
     '状態': ATTENDANCE_STATUS.WORKING,
     '更新日時': now.timestamp,
   });
+  if (hasWorkSegmentSchema_()) {
+    appendSegment_(record, style, now.time, '', now.timestamp);
+    updateRecord_(SHEET_NAMES.ATTENDANCE, record, onlyExistingColumns_(SHEET_NAMES.ATTENDANCE, {
+      '勤務形態区分': style, '勤務区間数': '1',
+    }));
+  }
 
   let message = '出勤しました（' + style + '・' + now.time + '）';
   if (lateMinutes > 0) message += '\n標準出勤 ' + minutesToClock_(rule.standardStartMinutes) + ' から ' + formatMinutes_(lateMinutes) + ' の遅れとして記録しました';
@@ -131,6 +144,33 @@ function clockIn_(workStyle) {
       ' の退勤が記録されていません。打刻修正申請をしてください';
   }
   return { message: message, data: toAttendanceView_(record) };
+}
+
+/**
+ * 退勤済みの日の「再出勤」。新しい勤務区間をこの時刻から始める（1日に何回でもできる）。
+ */
+function reClockIn_(record, style, now) {
+  const status = String(record['状態']);
+  if (status === ATTENDANCE_STATUS.WORKING) fail_('本日はすでに出勤済みです（勤務中・出勤 ' + toClockText_(record['出勤']) + '）');
+  if (status === ATTENDANCE_STATUS.ON_BREAK) fail_('中断中です。業務に戻るときは「再開」を押してください');
+  if (status !== ATTENDANCE_STATUS.FINISHED) fail_('勤怠の状態が「' + status + '」のため出勤できません。管理者に確認してください');
+  requireWorkSegmentSchema_();
+
+  const rows = ensureSegmentsForCurrent_(record, now.timestamp);
+  const last = rows[rows.length - 1];
+  if (last && toClockText_(last['終了時刻']) === now.time && toPlainText_(last['勤務形態']) === style) {
+    // 退勤した同じ分に同じ勤務形態で再出勤 → 0分の区切りを作らずに、前の区間を続ける
+    updateRecord_(SHEET_NAMES.WORK_SEGMENTS, last, { '終了時刻': '', '更新日時': now.timestamp });
+  } else {
+    appendSegment_(record, style, now.time, '', now.timestamp);
+  }
+  updateRecord_(SHEET_NAMES.ATTENDANCE, record, { '退勤': '', '状態': ATTENDANCE_STATUS.WORKING, '更新日時': now.timestamp });
+  recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
+  syncOvertimeActual_(record);
+  return {
+    message: '再出勤しました（' + style + '・' + now.time + '）。本日の勤務区間は ' + getSegmentRowsOfAttendance_(String(record['勤怠ID']).trim()).length + ' つ目です',
+    data: toAttendanceView_(record),
+  };
 }
 
 function clockOut_() {
@@ -145,8 +185,12 @@ function clockOut_() {
   if (status === ATTENDANCE_STATUS.ON_BREAK) fail_('中断中のため退勤できません。先に「再開」を押してから退勤してください');
   if (status !== ATTENDANCE_STATUS.WORKING) fail_('勤怠の状態が「' + status + '」のため退勤できません。管理者に確認してください');
 
+  if (hasWorkSegmentSchema_()) {
+    const open = findOpenSegmentRow_(ensureSegmentsForCurrent_(record, now.timestamp));
+    if (open) closeSegmentRow_(open, now.time, now.timestamp);
+  }
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, { '退勤': now.time });
-  recalculateAttendanceRecord_(record, now.timestamp);
+  recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
   syncOvertimeActual_(record);
 
   let message = '退勤しました（退勤 ' + now.time + '／実働 ' + record['実働時間'] + '）';
@@ -241,6 +285,7 @@ function buildCalcContext_() {
 
   const breakMinutesByAttendance = {};
   const openBreakByAttendance = {};
+  const breakIntervalsByAttendance = {};
   readTable_(SHEET_NAMES.BREAKS).records.forEach(function (b) {
     const id = String(b['勤怠ID']).trim();
     const start = toMinutes_(b['中断開始']);
@@ -251,23 +296,34 @@ function buildCalcContext_() {
       return;
     }
     breakMinutesByAttendance[id] = (breakMinutesByAttendance[id] || 0) + durationBetween_(start, end);
+    (breakIntervalsByAttendance[id] = breakIntervalsByAttendance[id] || []).push({ startMinutes: start, endMinutes: end });
   });
 
   return {
     settings: getSettings_(),
     staffById: staffById,
     breakMinutesByAttendance: breakMinutesByAttendance,
+    breakIntervalsByAttendance: breakIntervalsByAttendance,
     openBreakByAttendance: openBreakByAttendance,
+    segmentsByAttendance: buildSegmentMap_(),
+    attendanceColumns: readTable_(SHEET_NAMES.ATTENDANCE).columnIndex,
     overtimeStatusByKey: buildOvertimeStatusMap_(),
   };
 }
 
 /**
  * 勤怠記録1件の「計算で決まる列」をすべて計算し直す。
- * 出勤・退勤・中断履歴・残業申請の今の内容から計算するので、何度実行しても同じ結果になります。
- * 戻り値は { 列名: 新しい値 }。
+ * 出勤・退勤（勤務区間）・中断履歴・残業申請の今の内容から計算するので、何度実行しても同じ結果になります。
+ * 勤務区間がある日は、出勤・退勤・勤務形態も勤務区間から決めます（出勤＝最初の開始、退勤＝最後の終了、勤務形態＝最初の区間）。
+ * 勤務区間がない日（以前の記録）は、出勤〜退勤を1区間として計算し、出勤・退勤・勤務形態は変えません。
+ *
+ * 管理者が勤怠記録の出勤・退勤・勤務形態をシートで直接直してから再計算した場合（以前からの運用）は、
+ * その値を勤務区間（最初の区間の開始・勤務形態、最後の区間の終了）にも反映します（直した値を消さない）。
+ * 打刻の操作から呼ぶときは opts.segmentsWin = true（勤務区間の値を正として勤怠記録を合わせる）。
+ * 戻り値は { fields: { 列名: 新しい値 }, segmentChanges: [{ row, changes }] }。
  */
-function calculateAttendanceFields_(record, ctx) {
+function calculateAttendanceDetail_(record, ctx, opts) {
+  const segmentsWin = !!(opts && opts.segmentsWin);
   const settings = ctx.settings;
   const employeeId = String(record['社員ID']).trim();
   const staff = ctx.staffById[employeeId] || null;
@@ -280,8 +336,16 @@ function calculateAttendanceFields_(record, ctx) {
 
   const attendanceId = String(record['勤怠ID']).trim();
   const interruptionMinutes = ctx.breakMinutesByAttendance[attendanceId] || 0;
-  const clockInMinutes = toMinutes_(record['出勤']);
-  const clockOutMinutes = toMinutes_(record['退勤']);
+  const segments = getDaySegments_(record, ctx.segmentsByAttendance[attendanceId]);
+  const hasRealSegments = segments.length > 0 && !segments[0].virtual;
+  const columns = ctx.attendanceColumns || {};
+  const segmentChanges = [];
+  const changeOf = function (row) {
+    let entry = segmentChanges.filter(function (c) { return c.row === row; })[0];
+    if (!entry) { entry = { row: row, changes: {} }; segmentChanges.push(entry); }
+    return entry.changes;
+  };
+  if (hasRealSegments && !segmentsWin) reconcileSegmentsWithSummary_(record, segments, changeOf);
 
   const fields = {
     '勤務区分': workType,
@@ -289,23 +353,36 @@ function calculateAttendanceFields_(record, ctx) {
     '自動休憩': '', '実働時間': '', '所定終了': '', '社内超過時間': '', '30分以上': '',
     '事前残業申請': '', '要確認': '', '遅刻': '', '早退': '',
   };
-  if (clockInMinutes === null) {
+  const optional = { '勤務形態区分': '', '勤務区間数': '', '出社時間': '', '在宅時間': '', '現場外出時間': '' };
+  const finish = function () {
+    Object.keys(optional).forEach(function (k) { if (columns[k] !== undefined) fields[k] = optional[k]; });
+    return { fields: fields, segmentChanges: segmentChanges };
+  };
+
+  if (!segments.length) {
     fields['状態'] = ATTENDANCE_STATUS.NOT_STARTED;
-    return fields;
+    return finish();
   }
+  const open = findOpenSegment_(segments);
+  if (hasRealSegments) {
+    fields['出勤'] = minutesToClock_(segments[0].startMinutes);
+    fields['退勤'] = open ? '' : minutesToClock_(segments[segments.length - 1].endMinutes);
+    fields['勤務形態'] = segments[0].style;
+  }
+  optional['勤務形態区分'] = workStyleCategory_(segments);
+  optional['勤務区間数'] = String(segments.length);
   if (rule.isFixed) {
     fields['所定終了'] = minutesToClock_(rule.standardEndMinutes);
-    fields['遅刻'] = formatMinutesOrBlank_(Math.max(0, clockInMinutes - rule.standardStartMinutes));
+    fields['遅刻'] = formatMinutesOrBlank_(Math.max(0, segments[0].startMinutes - rule.standardStartMinutes));
   }
-  if (clockOutMinutes === null) {
+  if (open) {
     fields['状態'] = ctx.openBreakByAttendance[attendanceId] ? ATTENDANCE_STATUS.ON_BREAK : ATTENDANCE_STATUS.WORKING;
-    return fields;
+    return finish();
   }
 
-  const result = calculateWorkTime_({
-    clockInMinutes: clockInMinutes,
-    clockOutMinutes: clockOutMinutes,
-    interruptionMinutes: interruptionMinutes,
+  const result = calculateSegmentedWorkTime_({
+    segments: segments,
+    interruptions: ctx.breakIntervalsByAttendance[attendanceId] || [],
     isFixed: rule.isFixed,
     standardStartMinutes: rule.standardStartMinutes,
     standardEndMinutes: rule.standardEndMinutes,
@@ -317,6 +394,13 @@ function calculateAttendanceFields_(record, ctx) {
   fields['状態'] = ATTENDANCE_STATUS.FINISHED;
   fields['自動休憩'] = formatMinutes_(result.autoBreakMinutes);
   fields['実働時間'] = formatMinutes_(result.netMinutes);
+  optional['出社時間'] = formatMinutes_(result.officeMinutes);
+  optional['在宅時間'] = formatMinutes_(result.remoteMinutes);
+  optional['現場外出時間'] = formatMinutes_(result.siteOutingMinutes);
+  segments.forEach(function (seg, i) {
+    const workTime = formatMinutes_(result.segments[i].netMinutes);
+    if (seg.row && toPlainText_(seg.row['区間実働']) !== workTime) changeOf(seg.row)['区間実働'] = workTime;
+  });
 
   if (rule.isFixed) {
     // 勤務実績（社内超過時間）と申請状況は別々に保存する。実績を申請に合わせて丸めることはしない
@@ -327,14 +411,59 @@ function calculateAttendanceFields_(record, ctx) {
     fields['要確認'] = result.requiresPreApproval && requestStatus !== REQUEST_STATUS.APPROVED ? MARKS.NEEDS_CHECK : '';
     fields['早退'] = formatMinutesOrBlank_(result.earlyLeaveMinutes);
   }
-  return fields;
+  return finish();
+}
+
+/**
+ * 勤怠記録の出勤・退勤・勤務形態がシートで直接直されていたら、勤務区間に反映する（segments も書き換える）。
+ * 反映すると区間の順番がおかしくなる（例：出勤を最初の区間の終了より後にした）ときは反映しない。
+ */
+function reconcileSegmentsWithSummary_(record, segments, changeOf) {
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const recIn = toMinutes_(record['出勤']);
+  const recOut = toMinutes_(record['退勤']);
+  const recStyle = toPlainText_(record['勤務形態']).trim();
+  const planned = segments.map(function (s) { return { number: s.number, startMinutes: s.startMinutes, endMinutes: s.endMinutes }; });
+  const fixIn = recIn !== null && recIn !== first.startMinutes;
+  const fixOut = recOut !== null && recOut !== last.endMinutes;
+  if (fixIn) planned[0].startMinutes = recIn;
+  if (fixOut) planned[planned.length - 1].endMinutes = recOut;
+  if (fixIn || fixOut) {
+    try {
+      validateSegmentOrder_(planned);
+    } catch (e) {
+      return; // 直した値では区間が成り立たない → 勤務区間の値のまま（管理者は勤務区間履歴を直す）
+    }
+    if (fixIn) { first.startMinutes = recIn; changeOf(first.row)['開始時刻'] = minutesToClock_(recIn); }
+    if (fixOut) { last.endMinutes = recOut; changeOf(last.row)['終了時刻'] = minutesToClock_(recOut); }
+  }
+  if (recStyle && segmentWorkStyles_().indexOf(recStyle) !== -1 && recStyle !== first.style) {
+    first.style = recStyle;
+    changeOf(first.row)['勤務形態'] = recStyle;
+  }
+}
+
+/** 勤怠記録1件の「計算で決まる列」（以前からの関数名。戻り値は { 列名: 新しい値 }） */
+function calculateAttendanceFields_(record, ctx) {
+  return calculateAttendanceDetail_(record, ctx).fields;
 }
 
 /** 勤怠記録1件を再計算してシートに書き込む */
-function recalculateAttendanceRecord_(record, timestamp) {
-  const fields = calculateAttendanceFields_(record, buildCalcContext_());
-  fields['更新日時'] = timestamp || getNowInfo_().timestamp;
+/**
+ * 勤怠記録1件を再計算してシートに書き込む。
+ * @param {object} [opts] { segmentsWin: true } … 打刻・打刻修正で勤務区間を書き換えた直後（勤務区間の値を正とする）
+ */
+function recalculateAttendanceRecord_(record, timestamp, opts) {
+  const ts = timestamp || getNowInfo_().timestamp;
+  const detail = calculateAttendanceDetail_(record, buildCalcContext_(), opts);
+  const fields = detail.fields;
+  fields['更新日時'] = ts;
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, fields);
+  detail.segmentChanges.forEach(function (c) {
+    if (Object.keys(c.changes).some(function (k) { return k !== '区間実働'; })) c.changes['更新日時'] = ts;
+    updateRecord_(SHEET_NAMES.WORK_SEGMENTS, c.row, c.changes);
+  });
   return record;
 }
 
@@ -365,5 +494,11 @@ function toAttendanceView_(record) {
     correctionStatus: toPlainText_(record['打刻修正状況']),
     updatedAt: toPlainText_(record['更新日時']),
     note: toPlainText_(record['備考']),
+    // 勤務区間の合計（列が無い・以前の記録は空欄）
+    workStyleCategory: toPlainText_(record['勤務形態区分']),
+    segmentCount: toPlainText_(record['勤務区間数']),
+    officeTime: toDurationText_(record['出社時間']),
+    remoteTime: toDurationText_(record['在宅時間']),
+    siteOutingTime: toDurationText_(record['現場外出時間']),
   };
 }

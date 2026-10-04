@@ -202,12 +202,21 @@ h2, h3, p { margin: 0; }
 .style-option[aria-checked="true"]::before { content: "✓ "; }
 .style-option:disabled { opacity: .45; cursor: not-allowed; }
 .action-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.action-grid-sub { margin-top: 10px; grid-template-columns: repeat(2, 1fr); }
 .break-reason { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .break-reason label { font-size: 14px; color: var(--text-sub); }
 .break-reason input { flex: 1; min-width: 200px; }
 .action-hint { margin-top: 12px; font-size: 14px; color: var(--text-sub); }
 
 /* 本日の記録 */
+/* タイムライン（勤務区間・中断） */
+.timeline { list-style: none; margin: 0 0 10px; padding: 0; }
+.timeline-item { position: relative; padding: 6px 0 6px 16px; font-size: 14px; border-left: 3px solid var(--brand-border-strong); margin-left: 4px; }
+.timeline-item.style-office { border-left-color: var(--brand-primary); }
+.timeline-item.style-remote { border-left-color: #6F8FAF; }
+.timeline-item.style-break { border-left-style: dashed; color: var(--brand-muted); }
+.segment-detail { padding: 6px 4px; }
+
 .record-list { display: grid; grid-template-columns: auto 1fr; gap: 0; margin: 0; }
 .record-list dt, .record-list dd { padding: 11px 0; border-bottom: 1px solid var(--line); margin: 0; }
 .record-list dt { color: var(--text-sub); font-size: 14px; padding-right: 16px; }

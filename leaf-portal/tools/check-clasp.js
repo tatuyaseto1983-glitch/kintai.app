@@ -32,6 +32,8 @@ const REQUIRED_FILES = [
   'DailyReportShareService.gs', 'ReportView.html', 'ReportStyles.html', 'ReportScripts.html',
   // 休日出勤申請
   'HolidayWorkService.gs', 'HolidayWorkView.html', 'HolidayWorkScripts.html',
+  // 勤務区間（出社⇄在宅の切替・再出勤）
+  'WorkSegmentService.gs',
 ];
 
 const PROD_CONFIG = '.clasp.json';

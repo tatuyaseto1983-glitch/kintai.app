@@ -76,7 +76,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       assert.equal(await status(), '出社勤務中');
       assert.deepEqual(await enabled(), { clockIn: false, break: true, resume: false, clockOut: true });
       assert.match(await page.locator('#todayBody').innerText(), /出勤\s+09:25/);
-      assert.match(await page.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*出社・勤務中/);
+      assert.match(await page.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*勤務中（出社）/);
     });
 
     await t.test('5. 二重出勤：画面が古くてもサーバー側で止まり、エラーが表示される', async () => {
@@ -125,8 +125,10 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       assert.match(await page.locator('#toasts').innerText(), /退勤しました（退勤 19:00／実働 08:15）/);
       assert.equal(await page.locator('#toasts .toast-warn').count() > 0, true, '要確認はオレンジで通知');
       assert.equal(await status(), '退勤済み');
-      assert.deepEqual(await enabled(), { clockIn: false, break: false, resume: false, clockOut: false });
-      assert.equal(await page.locator('.style-option[data-style="出社"]').isDisabled(), true);
+      // 退勤後は、勤務形態を選んで「再出勤」できる（勤務区間がもう1つ増える）
+      assert.deepEqual(await enabled(), { clockIn: true, break: false, resume: false, clockOut: false });
+      assert.equal(await page.locator('#btnClockIn').innerText(), '出社で再出勤する');
+      assert.equal(await page.locator('.style-option[data-style="出社"]').isDisabled(), false);
       const today = await page.locator('#todayBody').innerText();
       assert.match(today, /実働時間\s+08:15/);
       assert.match(today, /社内超過時間\s+00:30/);

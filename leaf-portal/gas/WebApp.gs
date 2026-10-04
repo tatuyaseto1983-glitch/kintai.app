@@ -20,7 +20,7 @@ const APP_BRAND_NAME = 'Leaf Co.,Ltd';
  * 画面の一番下に出る「版」。どのコードが動いているか（push とデプロイ更新が済んでいるか）を画面で確かめるためのもの。
  * コードを変えて反映するときは、この値も変えてください（npm run check の表示と見比べます）。
  */
-const APP_BUILD = '2026.10.02-5';
+const APP_BUILD = '2026.10.04-1';
 
 /** 画面のタイトル（ブラウザのタブに表示） */
 const WEB_APP_TITLE = 'Leaf Co.,Ltd｜勤怠管理';
@@ -167,9 +167,16 @@ function getMyTodayAttendance_() {
     const staff = getCurrentStaff_();
     const now = getNowInfo_();
     const record = findCurrentAttendance_(staff.employeeId, now.date);
+    let view = null;
+    let timeline = null;
+    if (record) {
+      view = toAttendanceView_(record);
+      timeline = buildAttendanceTimeline_(record); // 本人の記録だけ（他の人の勤務区間は返さない）
+      view.currentStyle = timeline.currentStyle || view.workStyle;
+    }
     return {
       message: record ? '本日の勤怠を取得しました' : '本日はまだ出勤していません',
-      data: { date: now.date, time: now.time, record: record ? toAttendanceView_(record) : null },
+      data: { date: now.date, time: now.time, record: view, timeline: timeline },
     };
   });
 }

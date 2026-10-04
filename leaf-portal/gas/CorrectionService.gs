@@ -11,6 +11,10 @@
  *   勤務形態   : 修正後に「出社」か「在宅」
  *   中断       : 修正前＝直したい中断の開始時刻。空欄なら「中断の打刻忘れ」として新しい中断を追加
  *   再開       : 修正前＝直したい再開時刻。空欄なら「再開の押し忘れ」として未完了の中断に再開時刻を入れる
+ *   区間開始・区間終了・区間勤務形態 : 「対象区間」（区間番号）の開始・終了・勤務形態を直す（勤務区間がある日だけ）
+ *
+ * 勤務区間がある日は、出勤＝区間1の開始、退勤＝最後の区間の終了、勤務形態＝区間1の勤務形態 として直します。
+ * 承認すると勤務区間を書き換えてから、勤怠記録（1日の合計）を計算し直します。
  */
 
 /**
@@ -66,7 +70,26 @@ function submitCorrectionRequest_(request) {
 
   let before = '';
   let after;
-  if (item === CORRECTION_ITEMS.WORK_STYLE) {
+  let segmentNo = '';
+  if (isSegmentCorrectionItem_(item)) {
+    if (!hasColumn_(SHEET_NAMES.CORRECTIONS, '対象区間') || !hasWorkSegmentSchema_()) {
+      fail_('区間ごとの修正の準備ができていません。管理者が setupSystem() を実行してから申請してください');
+    }
+    const no = Number(String(request.segmentNo === undefined ? '' : request.segmentNo).trim());
+    if (!isFinite(no) || Math.floor(no) !== no || no < 1) fail_('対象区間は 1 以上の区間番号で選んでください');
+    const rows = record ? getSegmentRowsOfAttendance_(String(record['勤怠ID']).trim()) : [];
+    if (!rows.length) fail_(targetDate + ' は勤務区間の記録がありません。「出勤」「退勤」「勤務形態」の修正を使ってください');
+    const target = rows.filter(function (r) { return Number(r['区間番号']) === no; })[0];
+    if (!target) fail_(targetDate + ' に区間' + no + 'はありません（区間は ' + rows.length + 'つです）');
+    segmentNo = String(no);
+    if (item === CORRECTION_ITEMS.SEGMENT_STYLE) {
+      after = requireChoice_(request.after, punchWorkStyles_(), '修正後の勤務形態');
+      before = toPlainText_(target['勤務形態']);
+    } else {
+      after = minutesToClock_(requireClockMinutes_(request.after, '修正後の時刻'));
+      before = toClockText_(target[item === CORRECTION_ITEMS.SEGMENT_START ? '開始時刻' : '終了時刻']);
+    }
+  } else if (item === CORRECTION_ITEMS.WORK_STYLE) {
     after = requireChoice_(request.after, [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE], '修正後の勤務形態');
     before = record ? toPlainText_(record['勤務形態']) : '';
   } else {
@@ -89,7 +112,7 @@ function submitCorrectionRequest_(request) {
     }
   }
 
-  const created = appendRecord_(SHEET_NAMES.CORRECTIONS, {
+  const created = appendRecord_(SHEET_NAMES.CORRECTIONS, onlyExistingColumns_(SHEET_NAMES.CORRECTIONS, {
     '申請ID': makeUniqueId_(SHEET_NAMES.CORRECTIONS, '申請ID', 'CR-' + compactTimestamp_() + '-' + staff.employeeId),
     '申請日時': now.timestamp,
     '社員ID': staff.employeeId,
@@ -100,9 +123,15 @@ function submitCorrectionRequest_(request) {
     '修正後': after,
     '申請理由': reason,
     'ステータス': REQUEST_STATUS.PENDING,
-  });
+    '対象区間': segmentNo,
+  }));
   refreshCorrectionState_(staff.employeeId, targetDate);
-  return { message: '打刻修正を申請しました（' + targetDate + '・' + item + '）。管理者の承認をお待ちください', data: toCorrectionView_(created) };
+  return { message: '打刻修正を申請しました（' + targetDate + '・' + (segmentNo ? '区間' + segmentNo + 'の' : '') + item + '）。管理者の承認をお待ちください', data: toCorrectionView_(created) };
+}
+
+/** 区間番号を指定する修正項目か */
+function isSegmentCorrectionItem_(item) {
+  return item === CORRECTION_ITEMS.SEGMENT_START || item === CORRECTION_ITEMS.SEGMENT_END || item === CORRECTION_ITEMS.SEGMENT_STYLE;
 }
 
 function hasPendingClockInRequest_(employeeId, dateKey) {
@@ -130,9 +159,15 @@ function approveCorrectionRequest_(requestId) {
   const item = String(request['修正項目']).trim();
   const before = toPlainText_(request['修正前']).trim();
   const after = toPlainText_(request['修正後']).trim();
+  const segmentNo = Number(toPlainText_(request['対象区間']).trim()) || 0;
   let record = findAttendance_(employeeId, dateKey);
+  const segmentRows = record ? getSegmentRowsOfAttendance_(String(record['勤怠ID']).trim()) : [];
 
-  if (item === CORRECTION_ITEMS.CLOCK_IN) {
+  if (isSegmentCorrectionItem_(item) || (segmentRows.length && item !== CORRECTION_ITEMS.BREAK_START && item !== CORRECTION_ITEMS.BREAK_END)) {
+    // 勤務区間がある日：区間を書き換える（出勤・退勤・勤務形態も区間の値として直す）
+    if (!segmentRows.length) fail_(dateKey + ' は勤務区間の記録がありません。区間ごとの修正は承認できません');
+    applyCorrectionToSegments_(segmentRows, item, segmentNo, after, now.timestamp);
+  } else if (item === CORRECTION_ITEMS.CLOCK_IN) {
     if (record) {
       updateRecord_(SHEET_NAMES.ATTENDANCE, record, { '出勤': toClockText_(after) });
     } else {
@@ -160,10 +195,67 @@ function approveCorrectionRequest_(requestId) {
     '承認者': admin.name,
     '承認日時': now.timestamp,
   });
-  recalculateAttendanceRecord_(record, now.timestamp);
+  // 勤務区間を直した日は勤務区間の値を正とし、勤怠記録（出勤・退勤・勤務形態）を合わせる
+  recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: segmentRows.length > 0 });
   syncOvertimeActual_(record);
   refreshCorrectionState_(employeeId, dateKey);
-  return { message: '打刻修正を承認し、勤怠記録に反映しました（' + dateKey + '・' + item + '：' + (before || '空欄') + ' → ' + after + '）', data: toCorrectionView_(request) };
+  return { message: '打刻修正を承認し、勤怠記録に反映しました（' + dateKey + '・' + (segmentNo && isSegmentCorrectionItem_(item) ? '区間' + segmentNo + 'の' : '') + item + '：' + (before || '空欄') + ' → ' + after + '）', data: toCorrectionView_(request) };
+}
+
+/**
+ * 勤務区間がある日の修正を、勤務区間の行に反映する。
+ *   出勤 → 区間1の開始／退勤 → 最後の区間の終了／勤務形態 → 区間1の勤務形態
+ *   区間開始・区間終了・区間勤務形態 → 指定の区間
+ * 書き込む前に、区間の順番と重なりを確認する（おかしければ何も書かずにエラー）。
+ */
+function applyCorrectionToSegments_(rows, item, segmentNo, after, timestamp) {
+  let target;
+  let column;
+  if (item === CORRECTION_ITEMS.CLOCK_IN) { target = rows[0]; column = '開始時刻'; }
+  else if (item === CORRECTION_ITEMS.CLOCK_OUT) { target = rows[rows.length - 1]; column = '終了時刻'; }
+  else if (item === CORRECTION_ITEMS.WORK_STYLE) { target = rows[0]; column = '勤務形態'; }
+  else {
+    target = rows.filter(function (r) { return Number(r['区間番号']) === segmentNo; })[0];
+    column = item === CORRECTION_ITEMS.SEGMENT_START ? '開始時刻' : item === CORRECTION_ITEMS.SEGMENT_END ? '終了時刻' : '勤務形態';
+  }
+  if (!target) fail_('修正する勤務区間（区間' + segmentNo + '）が見つかりません');
+  const value = column === '勤務形態' ? after : toClockText_(after);
+
+  // 書き換えた後の区間で、順番と重なりを確認する
+  const planned = rows.map(function (r) {
+    return {
+      number: Number(r['区間番号']) || 0,
+      startMinutes: toMinutes_(r === target && column === '開始時刻' ? value : r['開始時刻']),
+      endMinutes: toMinutes_(r === target && column === '終了時刻' ? value : r['終了時刻']),
+    };
+  });
+  validateSegmentOrder_(planned);
+  updateRecord_(SHEET_NAMES.WORK_SEGMENTS, target, { [column]: value, '更新日時': timestamp });
+}
+
+/**
+ * 区間の順番と重なりの確認（区間番号の順）。最初の開始を基準に、日付をまたぐ時刻は翌日として扱う。
+ * 終了がない区間（勤務中）は最後の区間だけ認める。
+ */
+function validateSegmentOrder_(segments) {
+  if (!segments.length) return;
+  if (segments.some(function (s) { return s.startMinutes === null; })) fail_('開始時刻がない勤務区間があります');
+  const dayStart = segments[0].startMinutes;
+  const abs = function (m) { return m < dayStart ? m + 1440 : m; };
+  let cursor = -1;
+  segments.forEach(function (s, i) {
+    const start = abs(s.startMinutes);
+    if (start < cursor) fail_('区間' + s.number + 'の開始が、前の区間の終了より前になります。時刻を確認してください');
+    if (s.endMinutes === null) {
+      if (i !== segments.length - 1) fail_('区間' + s.number + 'の終了時刻がありません（終了がないのは最後の区間だけにしてください）');
+      cursor = start;
+      return;
+    }
+    const length = durationBetween_(s.startMinutes, s.endMinutes);
+    if (length === 0) fail_('区間' + s.number + 'の開始と終了が同じ時刻です');
+    cursor = start + length;
+    if (cursor > dayStart + 1440) fail_('勤務区間が24時間を超えます。時刻を確認してください');
+  });
 }
 
 /** 出勤以外の修正を勤怠記録・中断履歴に反映する */
@@ -270,6 +362,7 @@ function toCorrectionView_(r) {
     approvedAt: toPlainText_(r['承認日時']),
     rejectReason: toPlainText_(r['却下理由']),
     note: toPlainText_(r['備考']),
+    segmentNo: toPlainText_(r['対象区間']),
   };
 }
 

@@ -113,7 +113,9 @@
       var d = res.data;
       R.month = d.month;
       if (!month || !R.currentMonth) R.currentMonth = R.currentMonth || d.month;
-      $('reportMonthLabel').textContent = App.formatMonth(d.month);
+      // 締め日の設定による「◯月分」と期間（20日締めなら 10月分＝9/21〜10/20）
+      var md = function (key) { var x = (key || '').split('-'); return x.length === 3 ? Number(x[1]) + '/' + Number(x[2]) : ''; };
+      $('reportMonthLabel').textContent = d.periodLabel ? d.periodLabel + '（' + md(d.from) + '〜' + md(d.to) + '）' : App.formatMonth(d.month);
       $('btnReportNextMonth').disabled = d.month >= R.currentMonth;
 
       var drafts = $('reportDraftCards');

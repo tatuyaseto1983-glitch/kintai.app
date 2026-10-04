@@ -32,6 +32,8 @@ const SHEET_NAMES = {
   REPORT_COMMENTS: '日報_コメント',
   REPORT_HISTORY: '日報_更新履歴',
   HOLIDAY_WORK: '休日出勤申請',
+  // 1日の中の勤務の区切り（出社→在宅への切替、退勤後の再出勤など）。勤怠記録は1日の合計のまま
+  WORK_SEGMENTS: '勤務区間履歴',
 };
 
 /** 権限 */
@@ -46,8 +48,18 @@ const EMPLOYMENT_STATUS = { ACTIVE: '在籍', ON_LEAVE: '休職', RETIRED: '退�
 /** 雇用区分（選択肢の例。リスト外の値も入力できます） */
 const EMPLOYMENT_TYPES = ['正社員', '契約社員', 'パート・アルバイト'];
 
-/** 勤務形態 */
-const WORK_STYLES = { OFFICE: '出社', REMOTE: '在宅' };
+/** 勤務形態（打刻で選べるのは出社・在宅。現場・外出は勤務区間の値として受け付けるだけで、段階2で画面に出す） */
+const WORK_STYLES = { OFFICE: '出社', REMOTE: '在宅', SITE: '現場', OUTING: '外出' };
+
+/** 勤務区間の「勤務形態」に入れてよい値（この順番で「出社＋在宅」のように並べる） */
+function segmentWorkStyles_() {
+  return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE, WORK_STYLES.SITE, WORK_STYLES.OUTING];
+}
+
+/** 打刻（出勤・切替・再開）で選べる勤務形態 */
+function punchWorkStyles_() {
+  return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE];
+}
 
 /** 勤怠の状態 */
 const ATTENDANCE_STATUS = {
@@ -67,6 +79,10 @@ const CORRECTION_ITEMS = {
   BREAK_START: '中断',
   BREAK_END: '再開',
   WORK_STYLE: '勤務形態',
+  // 勤務区間ごとの修正（打刻修正申請の「対象区間」に区間番号を入れる）
+  SEGMENT_START: '区間開始',
+  SEGMENT_END: '区間終了',
+  SEGMENT_STYLE: '区間勤務形態',
 };
 
 /** 勤怠記録の「打刻修正状況」列に入れる文字 */
@@ -144,7 +160,7 @@ const DEFAULT_SETTINGS = [
   { key: SETTING_KEYS.WEEKLY_FULL_REST_DAYS, value: '1', note: '1週間に必要な完全休日（出勤記録がない日）の日数' },
   { key: SETTING_KEYS.HOLIDAY_CATEGORY, value: 'なし', note: '土日祝の特別区分。現在は「なし」（曜日に関係なく勤務できるシフト制）' },
   { key: SETTING_KEYS.WEEK_START_DAY, value: '月', note: '週の集計を始める曜日（日・月・火・水・木・金・土）。就業規則に合わせてください' },
-  { key: SETTING_KEYS.MONTH_CLOSING_DAY, value: '末日', note: '月の締め日。「末日」または 1〜27 の数字（例：20＝21日〜翌月20日を1か月として集計）' },
+  { key: SETTING_KEYS.MONTH_CLOSING_DAY, value: '20', note: '月の締め日。「末日」または 1〜27 の数字（20＝前月21日〜当月20日を「当月分」として集計。例：9月分＝8/21〜9/20）' },
   { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD, value: '00:00', note: '中断を除いた勤務時間（退勤−出勤−中断合計）がこの時間を超えた日だけ自動休憩を差し引きます。00:00＝常に差し引く／06:00＝6時間以下の日は引かない' },
 ];
 
@@ -177,15 +193,22 @@ const SHEET_DEFINITIONS = [
     headers: ['勤怠ID', '日付', '社員ID', '氏名', '勤務区分', '勤務形態', '出勤', '退勤', '自動休憩', '中断合計',
       '実働時間', '所定終了', '社内超過時間', '30分以上', '事前残業申請', '要確認', '遅刻', '早退', '状態',
       '打刻修正状況', '更新日時', '備考'],
+    // 勤務区間の合計（setupSystem() が右端に追加。無くても動く）。
+    // 出勤＝最初の開始、退勤＝最後の終了、勤務形態＝最初の区間の勤務形態（以前と同じ意味）
+    optionalHeaders: ['勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間'],
   },
   {
     name: SHEET_NAMES.BREAKS,
     headers: ['中断ID', '勤怠ID', '日付', '社員ID', '氏名', '中断開始', '再開', '中断時間', '理由'],
+    // 中断したときの勤務区間（以前の行は空欄のまま読める）
+    optionalHeaders: ['勤務区間ID'],
   },
   {
     name: SHEET_NAMES.CORRECTIONS,
     headers: ['申請ID', '申請日時', '社員ID', '氏名', '対象日', '修正項目', '修正前', '修正後', '申請理由',
       'ステータス', '承認者', '承認日時', '却下理由', '備考'],
+    // 区間ごとの修正のときの区間番号（以前の申請は空欄のまま読める）
+    optionalHeaders: ['対象区間'],
     choices: { 'ステータス': [REQUEST_STATUS.PENDING, REQUEST_STATUS.APPROVED, REQUEST_STATUS.REJECTED] },
   },
   {
@@ -234,6 +257,13 @@ const SHEET_DEFINITIONS = [
         HOLIDAY_WORK_STATUS.CANCEL_REQUESTED, HOLIDAY_WORK_STATUS.CANCELLED],
       '振替休日区分': [COMP_DAY_TYPES.PLANNED, COMP_DAY_TYPES.NONE, COMP_DAY_TYPES.UNDECIDED],
     },
+  },
+  {
+    // 勤務区間（1日に何行でも）。勤怠記録の勤怠IDでつなぐ。勤務区間がない日は「出勤〜退勤」の1区間として読む
+    // 時刻は「09:30」の形。日付をまたぐ場合は、その日の最初の開始より前の時刻を翌日として扱う
+    name: SHEET_NAMES.WORK_SEGMENTS,
+    headers: ['勤務区間ID', '勤怠ID', '日付', '社員ID', '氏名', '区間番号', '勤務形態', '開始時刻', '終了時刻', '区間実働',
+      '直行', '直帰', '現場名', '備考', '作成日時', '更新日時'],
   },
   {
     name: SHEET_NAMES.SETTINGS,
