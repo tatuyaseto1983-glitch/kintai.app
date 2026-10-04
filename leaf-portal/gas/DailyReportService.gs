@@ -121,10 +121,9 @@ function saveDailyReport(report) {
 function getMyDailyReports(month) {
   return runApi_(function () {
     const staff = getCurrentStaff_();
-    const settings = getSettings_();
     const range = isBlank_(month)
-      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
-      : getPayrollPeriodByMonthKey_(requireMonthKey_(month, '対象月'), settings.monthClosingDay);
+      ? getReportMonthPeriodForDate_(getNowInfo_().date) // 日報は暦月（締め日の設定は使わない）
+      : getReportMonthPeriod_(requireMonthKey_(month, '対象月'));
     const monthKey = range.monthKey;
     const list = findRecords_(SHEET_NAMES.DAILY_REPORTS, function (r) {
       const date = toDateKey_(r['日付']);

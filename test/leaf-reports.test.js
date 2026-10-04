@@ -288,15 +288,15 @@ test('旧日報（新しい仕組みより前の提出済み）は公開しな�
   // 一般社員・役員（管理者ではない）には一覧にも詳細にも出ない
   for (const viewer of [OMORI, INOKURA, KUBO]) {
     gas.loginAs(viewer);
-    assert.deepEqual(gas.g.getReportList({ month: '2026-10' }).data.reports.map((x) => x.reportId).filter((x) => x === LEGACY), [], viewer);
-    assert.doesNotMatch(JSON.stringify(gas.g.getReportList({ month: '2026-10' }).data), /以前の日報|以前の課題/);
+    assert.deepEqual(gas.g.getReportList({ month: '2026-09' }).data.reports.map((x) => x.reportId).filter((x) => x === LEGACY), [], viewer);
+    assert.doesNotMatch(JSON.stringify(gas.g.getReportList({ month: '2026-09' }).data), /以前の日報|以前の課題/);
     assert.equal(gas.g.getReportDetail(LEGACY).message, '日報が見つかりません');
     assert.equal(gas.g.confirmReport(LEGACY).message, '日報が見つかりません');
     assert.equal(gas.g.addReportComment(LEGACY, 'x').message, '日報が見つかりません');
   }
   // 本人：見られる（旧「課題・困りごと」も表示）が、修正・確認はできない
   gas.loginAs(NAKATSUI);
-  const mine = gas.g.getReportList({ month: '2026-10' }).data.reports.find((x) => x.reportId === LEGACY);
+  const mine = gas.g.getReportList({ month: '2026-09' }).data.reports.find((x) => x.reportId === LEGACY);
   assert.deepEqual([mine.legacy, mine.status, mine.targetCount, mine.showUpdated], [true, 'submitted', undefined, undefined]);
   let d = gas.g.getReportDetail(LEGACY).data;
   assert.deepEqual([d.legacy, d.canEdit, d.canConfirm, d.confirmation, d.report.issues, d.report.legacy.tomorrowPlan], [true, false, undefined, undefined, '以前の課題', '見積']);
@@ -315,7 +315,7 @@ test('旧日報（新しい仕組みより前の提出済み）は公開しな�
   // 以前の下書きは本人だけ（管理者にも出ない）
   assert.equal(gas.g.getReportDetail('DR-20260929-E006').message, '日報が見つかりません');
   gas.loginAs(KUBO);
-  assert.deepEqual(gas.g.getReportList({ month: '2026-10' }).data.myDrafts.map((x) => x.reportId), ['DR-20260929-E006']);
+  assert.deepEqual(gas.g.getReportList({ month: '2026-09' }).data.myDrafts.map((x) => x.reportId), ['DR-20260929-E006']);
   // 新しい仕組みで提出した日報は、これまで通り全社員に公開
   gas.loginAs(NAKATSUI);
   const fresh = gas.g.submitReport({ workContent: '新しい日報' }).data.reportId;

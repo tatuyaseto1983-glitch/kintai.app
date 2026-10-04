@@ -283,6 +283,28 @@ function getPayrollPeriodForDate_(dateKey, closingDay) {
   return getPayrollPeriodByMonthKey_(getMonthKeyForDate_(dateKey, day), day);
 }
 
+/**
+ * 日報の「◯月」の期間（業務記録なので、締め日の設定に関係なく暦月の1日〜末日）。
+ * 給与・勤怠の締め期間（getPayrollPeriod_）とは別の関数。日報一覧はこちらを使う。
+ *   getReportMonthPeriod_('2026-10') → { label: '2026年10月', from: '2026-10-01', to: '2026-10-31', ... }
+ */
+function getReportMonthPeriod_(monthKey) {
+  const range = getMonthRange_(monthKey, 0);
+  const label = Number(monthKey.slice(0, 4)) + '年' + Number(monthKey.slice(5, 7)) + '月';
+  return {
+    monthKey: monthKey,
+    label: label,
+    from: range.from,
+    to: range.to,
+    periodText: label + ' 期間：' + range.from.replace(/-/g, '/') + '〜' + range.to.replace(/-/g, '/'),
+  };
+}
+
+/** その日付が入る日報の月（暦月） */
+function getReportMonthPeriodForDate_(dateKey) {
+  return getReportMonthPeriod_(dateKey.slice(0, 7));
+}
+
 /** '2026-09' → '2026年9月分' */
 function getPeriodLabel_(monthKey) {
   return Number(monthKey.slice(0, 4)) + '年' + Number(monthKey.slice(5, 7)) + '月分';

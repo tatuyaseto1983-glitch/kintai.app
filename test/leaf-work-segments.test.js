@@ -406,3 +406,18 @@ test('勤怠記録をシートで直接直して再計算したときは、そ�
   assert.deepEqual(segs(gas, 'AT-20260901-E002'), ['1:出社 09:30-12:00', '2:在宅 12:00-18:40']);
   assert.equal(att(gas, 'AT-20260901-E002')['出勤'], '09:30');
 });
+
+test('日報一覧は暦月（1日〜末日）のまま。勤怠の月次は20日締め（期間の関数を分けている）', () => {
+  const gas = ready();
+  assert.deepEqual(pick(plain(gas.g.getReportMonthPeriod_('2026-10')), ['label', 'from', 'to']), ['2026年10月', '2026-10-01', '2026-10-31']);
+  assert.deepEqual(pick(plain(gas.g.getReportMonthPeriod_('2028-02')), ['from', 'to']), ['2028-02-01', '2028-02-29']);
+  gas.loginAs(FIXED);
+  gas.setNow('2026-09-25 18:00');
+  const list = gas.g.getReportList({}).data;
+  assert.deepEqual([list.month, list.from, list.to], ['2026-09', '2026-09-01', '2026-09-30'], '9/25 の日報一覧は9月（暦月）');
+  assert.deepEqual(pick(gas.g.getReportList({ month: '2026-10' }).data, ['from', 'to']), ['2026-10-01', '2026-10-31']);
+  const my = gas.g.getMyAttendance().data;
+  assert.deepEqual([my.month, my.from, my.to], ['2026-10', '2026-09-21', '2026-10-20'], '同じ日の勤怠は10月分（20日締め）');
+  const src = ['DailyReportService.gs', 'DailyReportShareService.gs'].map((f) => require('node:fs').readFileSync(require('node:path').join(__dirname, '../leaf-portal/gas', f), 'utf8')).join('');
+  assert.doesNotMatch(src, /getPayrollPeriod|monthClosingDay/, '日報は給与の締め期間を使わない');
+});

@@ -27,11 +27,10 @@ function getReportList(params) {
   return runApi_(function () {
     requireReportSchema_();
     const viewer = getCurrentStaff_();
-    const settings = getSettings_();
     const p = params || {};
     const range = isBlank_(p.month)
-      ? getPayrollPeriodForDate_(getNowInfo_().date, settings.monthClosingDay)
-      : getPayrollPeriodByMonthKey_(requireMonthKey_(p.month, '対象月'), settings.monthClosingDay);
+      ? getReportMonthPeriodForDate_(getNowInfo_().date) // 日報は暦月（締め日の設定は使わない）
+      : getReportMonthPeriod_(requireMonthKey_(p.month, '対象月'));
     const monthKey = range.monthKey;
     const ctx = buildReportShareContext_();
 
