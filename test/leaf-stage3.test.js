@@ -101,7 +101,7 @@ test('setupSystem：有給休暇申請シートを作り、有給申請対象は
   const log = gas.g.setupSystem();
   assert.match(log, /有給申請対象の初期値を入れました（対象 2名・対象外 1名/);
   const h = staff.data[0];
-  assert.deepEqual(h.slice(16), ['休日出勤申請対象', '有給申請対象'], '右端に追加');
+  assert.deepEqual(h.slice(16), ['休日出勤申請対象', '有給申請対象', '日報提出対象', '日報確認対象'], '右端に追加');
   assert.deepEqual(staff.data.slice(1).map((r) => r[17]), ['対象外', '対象', '対象']);
   assert.equal(gas.main.getSheetByName('シフト'), null, 'シフト管理を使わない間はシフトシートを作らない');
   assert.deepEqual(gas.main.getSheetByName('休日出勤申請').data[0].slice(25), ['現場'], '休日出勤申請は「現場」だけ右端に足す');

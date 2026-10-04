@@ -176,11 +176,20 @@
           <select id="admReportFilter" class="select-sm" aria-label="日報の絞り込み">
             <option value="">すべて</option>
             <option value="submitted">提出済み</option>
-            <option value="notSubmitted">未提出</option>
+            <option value="notSubmitted">未提出（下書きありを含む）</option>
+            <option value="none">対象外（出勤なし）</option>
           </select>
         </div>
         <p class="card-note" id="admReportCount"></p>
+        <p class="card-note">未提出は「出勤の記録がある日報提出対象者で、提出済みの日報がない日」です。下書きの内容は本人以外には見せません。</p>
         <div class="report-list" id="admReports"></div>
+        <h3 class="section-title" id="admReportMonthTitle">日報の月別</h3>
+        <div class="table-wrap">
+          <table class="admin-table" aria-describedby="admReportMonthTitle">
+            <thead><tr><th class="left">氏名</th><th>勤務日数</th><th>提出数</th><th>未提出（前日まで）</th><th>下書きのみ（前日まで）</th></tr></thead>
+            <tbody id="admReportMonthBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 

@@ -484,44 +484,99 @@ function checkRestDaysForWeek_(ctx, week) {
 }
 
 /**
- * 日報：その日の在籍スタッフ全員の提出状況（未提出の人も含む）。
- * 下書きは本人以外に見せないため、管理者にも「未提出」として返し、内容は返さない。
- * 提出済みの内容は、日報画面（getReportDetail）で見る。
+ * 日報（管理者画面）。日報は暦月（1日〜末日）。勤怠の20日締めとは別。
+ * 日別の状態：
+ *   提出済み            … その日の提出済みの日報がある（出勤の有無に関係なく）
+ *   未提出（下書きあり）… 出勤実績がある日報提出対象者で、下書きだけある（下書きの中身は返さない）
+ *   未提出              … 出勤実績がある日報提出対象者で、日報がない
+ *   対象外              … 出勤実績がない（1日有給・休みなど）
+ * 日報提出対象が「対象外」の人（役員など）は、提出したときだけ一覧に出す。
  */
 function buildAdminReports_(ctx, date) {
-  const byEmployee = {};
+  const reportByKey = {}; // 社員ID|日付 → { submitted: 行, draft: 行 }
   readTable_(SHEET_NAMES.DAILY_REPORTS).records.forEach(function (r) {
-    if (toDateKey_(r['日付']) === date && reportStateOf_(r) === REPORT_STATE.SUBMITTED) byEmployee[String(r['社員ID']).trim()] = r;
+    const key = String(r['社員ID']).trim() + '|' + toDateKey_(r['日付']);
+    const slot = reportByKey[key] = reportByKey[key] || {};
+    if (reportStateOf_(r) === REPORT_STATE.SUBMITTED) slot.submitted = r; else slot.draft = r;
   });
-  const hasShareSheets = !!getSpreadsheet_().getSheetByName(SHEET_NAMES.REPORT_CONFIRMATIONS) && !!getSpreadsheet_().getSheetByName(SHEET_NAMES.REPORT_CUSTOMERS);
-  const share = hasShareSheets && Object.keys(byEmployee).length ? buildReportShareContext_() : null;
-  const rows = ctx.staffList.filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; }).map(function (s) {
-    const record = byEmployee[s.employeeId];
+  const ss = getSpreadsheet_();
+  const hasShareSheets = [SHEET_NAMES.REPORT_CONFIRMATIONS, SHEET_NAMES.REPORT_CUSTOMERS, SHEET_NAMES.REPORT_COMMENTS]
+    .every(function (n) { return !!ss.getSheetByName(n); });
+  const share = hasShareSheets ? buildReportShareContext_() : null;
+  const worked = function (employeeId, d) {
+    const a = ctx.attendanceByKey[employeeId + '|' + d];
+    return !!a && !isBlank_(a['出勤']);
+  };
+  const active = ctx.staffList.filter(function (s) { return s.status === EMPLOYMENT_STATUS.ACTIVE; });
+
+  const rows = [];
+  active.forEach(function (s) {
+    const slot = reportByKey[s.employeeId + '|' + date] || {};
+    const record = slot.submitted;
+    if (!record && !s.reportSubmitTarget) return; // 提出対象外で、提出もしていない人は出さない
     const attendance = ctx.attendanceByKey[s.employeeId + '|' + date];
     const row = {
       reportId: '', date: date, employeeId: s.employeeId, name: s.name, department: s.department,
-      workStyle: attendance ? toPlainText_(attendance['勤務形態']) : '', status: '未提出', submitted: false, submittedAt: '',
+      workStyle: attendance ? toPlainText_(attendance['勤務形態']) : '', worked: worked(s.employeeId, date),
+      submitTarget: s.reportSubmitTarget, submitted: false, submittedAt: '',
     };
-    if (!record) return row;
-    row.reportId = toPlainText_(record['日報ID']);
-    row.status = REPORT_STATUS.SUBMITTED;
-    row.submitted = true;
-    row.submittedAt = toPlainText_(record['提出日時']);
-    row.version = reportVersionOf_(record);
-    if (isLegacySubmittedReport_(record)) { row.legacy = true; return row; } // 旧日報：確認の対象外
-    if (share) {
-      const c = confirmationStatus_(record, share);
-      row.customerCount = share.customerCounts[row.reportId] || 0;
-      row.confirmedCount = c.confirmedCount;
-      row.targetCount = c.targetCount;
+    if (record) {
+      row.state = 'submitted';
+      row.status = REPORT_STATUS.SUBMITTED;
+      row.submitted = true;
+      row.reportId = toPlainText_(record['日報ID']);
+      row.submittedAt = toPlainText_(record['提出日時']);
+      row.version = reportVersionOf_(record);
+      if (isLegacySubmittedReport_(record)) { row.legacy = true; rows.push(row); return; } // 旧日報：確認の対象外
+      if (share) {
+        const c = confirmationStatus_(record, share);
+        row.customerCount = share.customerCounts[row.reportId] || 0;
+        row.commentCount = share.commentCounts[row.reportId] || 0;
+        row.confirmedCount = c.confirmedCount;
+        row.targetCount = c.targetCount;
+        row.pendingNames = c.pending.map(function (p) { return p.name; });
+      }
+    } else if (!row.worked) {
+      row.state = 'none';
+      row.status = '対象外';
+    } else {
+      row.state = slot.draft ? 'draft' : 'missing';
+      row.status = slot.draft ? '未提出（下書きあり）' : '未提出';
     }
-    return row;
+    rows.push(row);
   });
+  const count = function (state) { return rows.filter(function (r) { return r.state === state; }).length; };
   return {
     date: date, rows: rows,
-    submittedCount: rows.filter(function (r) { return r.submitted; }).length,
-    notSubmittedCount: rows.filter(function (r) { return !r.submitted; }).length,
+    submittedCount: count('submitted'),
+    notSubmittedCount: count('missing') + count('draft'),
+    draftOnlyCount: count('draft'),
+    noneCount: count('none'),
+    monthly: buildAdminReportMonthly_(ctx, date, reportByKey, active, worked),
   };
+}
+
+/**
+ * 日報の月別（暦月）：日報提出対象の社員ごとに、勤務日数・提出数・未提出数・下書きのみ数。
+ * 未提出・下書きのみは「前日まで」の勤務日で数える（今日はまだ書ける）。提出数は月内の提出済みの日報（出勤の有無は問わない）。
+ */
+function buildAdminReportMonthly_(ctx, date, reportByKey, active, worked) {
+  const range = getReportMonthPeriodForDate_(date);
+  const last = range.to < ctx.today ? range.to : ctx.today;
+  const dates = range.from <= last ? listDates_(range.from, last) : [];
+  const rows = active.filter(function (s) { return s.reportSubmitTarget; }).map(function (s) {
+    const row = { employeeId: s.employeeId, name: s.name, department: s.department, workDays: 0, submittedCount: 0, notSubmittedCount: 0, draftOnlyCount: 0 };
+    dates.forEach(function (d) {
+      const slot = reportByKey[s.employeeId + '|' + d] || {};
+      const w = worked(s.employeeId, d);
+      if (w) row.workDays += 1;
+      if (slot.submitted) { row.submittedCount += 1; return; }
+      if (!w || d >= ctx.today) return;
+      if (slot.draft) row.draftOnlyCount += 1; else row.notSubmittedCount += 1;
+    });
+    return row;
+  });
+  return { month: range.monthKey, from: range.from, to: range.to, label: range.label, periodText: range.periodText, rows: rows };
 }
 
 // ============================================================ CSV

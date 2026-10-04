@@ -5,9 +5,12 @@
  *
  * 【決まり】
  *   - 日付はサーバーが決めます（新しく作るときは今日。あとから編集しても日付は変わりません）
+ *     書き忘れた日：今日を含めず7日前までで、勤務実績（出勤）がある日だけ、本人が新しく作れます（8日以上前は管理者対応）
  *   - 担当者はログイン中の社員です（画面から送られた氏名・社員IDは使いません）
  *   - 下書き（draft）   … 本人だけが見られる・編集できる。管理者・役員にも見せない
  *   - 提出済み（submitted）… 全社員が見られる。本人は修正できる
+ *   - 接客記録の提出時の必須：顧客名（または顧客名「未確認」）・担当区分（主担当／副担当）・副担当なら主担当者・来場のきっかけ（「未確認」可）
+ *     対応結果・次回対応・備考（補足コメント列）は任意
  *   - 提出後に修正すると、バージョンが1つ上がり、全員の確認状態が「未確認」に戻ります
  *     （確認の履歴は「日報_確認」に残したまま。確認済みかどうかは「今のバージョンを確認したか」で決める）
  *
@@ -71,28 +74,32 @@ function submitReport(input) {
 
 /**
  * 【画面から呼ぶ】日報の入力画面に必要な情報。
- * @param {string} [reportId] 編集する自分の日報。省略すると今日の自分の日報（なければ新規）
+ * @param {string} [reportId] 編集する自分の日報。省略すると date の自分の日報（なければ新規）
+ * @param {string} [date] 新しく書く日（省略すると今日）。過去の日は7日前までで勤務実績がある日だけ
  */
-function getReportEditor(reportId) {
+function getReportEditor(reportId, date) {
   return runApi_(function () {
     requireReportSchema_();
     const staff = getCurrentStaff_();
     const now = getNowInfo_();
     let record = null;
+    let targetDate = now.date;
     if (!isBlank_(reportId)) {
       record = findReportById_(reportId);
       if (!record || String(record['社員ID']).trim() !== staff.employeeId) fail_('編集できる日報が見つかりません');
     } else {
-      record = findOwnReportByDate_(staff.employeeId, now.date);
+      targetDate = isBlank_(date) ? now.date : requireDateKey_(date, '日付');
+      record = findOwnReportByDate_(staff.employeeId, targetDate);
+      if (!record) checkNewReportDate_(staff, targetDate, now.date);
     }
     if (record && isLegacySubmittedReport_(record)) fail_('以前の仕組みで提出された日報のため、修正できません（本人と管理者だけが閲覧できます）');
     return {
       message: record ? '日報を読み込みました' : '新しい日報です',
       data: {
-        date: record ? toDateKey_(record['日付']) : now.date,
+        date: record ? toDateKey_(record['日付']) : targetDate,
         employeeName: staff.name,
         report: record ? toReportView_(record, getActiveCustomers_(String(record['日報ID']).trim())) : null,
-        choices: reportChoices_(),
+        choices: reportChoices_(staff),
       },
     };
   });
@@ -155,12 +162,16 @@ function saveReport_(input, mode, options) {
 
   // どの日報を保存するか（本人の日報だけ）
   let record = null;
+  let targetDate = now.date;
   if (!isBlank_(input.reportId)) {
     record = findReportById_(input.reportId);
     if (!record) fail_('日報が見つかりません');
     if (String(record['社員ID']).trim() !== staff.employeeId) fail_('他の社員の日報は編集できません');
   } else {
-    record = findOwnReportByDate_(staff.employeeId, now.date);
+    // 新しく書く日（省略は今日）。同じ日の自分の日報があればそれを更新する（1社員×1日1件）
+    targetDate = isBlank_(input.date) ? now.date : requireDateKey_(input.date, '日付');
+    record = findOwnReportByDate_(staff.employeeId, targetDate);
+    if (!record) checkNewReportDate_(staff, targetDate, now.date);
   }
   if (record && isLegacySubmittedReport_(record)) fail_('以前の仕組みで提出された日報のため、修正できません（本人と管理者だけが閲覧できます）');
   const previousState = record ? reportStateOf_(record) : null;
@@ -182,7 +193,7 @@ function saveReport_(input, mode, options) {
   }
   const customers = opts.legacy && input.customers === undefined && record
     ? getActiveCustomers_(String(record['日報ID']).trim()).map(customerRecordToInput_)
-    : normalizeCustomers_(input.customers, strict);
+    : normalizeCustomers_(input.customers, strict, staff);
 
   // 提出済みの修正で、内容が何も変わっていなければ保存しない（バージョンも上げない）
   if (previousState === REPORT_STATE.SUBMITTED) {
@@ -208,13 +219,14 @@ function saveReport_(input, mode, options) {
   if (mode === REPORT_STATE.SUBMITTED && !(record && !isBlank_(record['提出日時']) && previousState === REPORT_STATE.SUBMITTED)) {
     values['提出日時'] = now.timestamp; // 最初に提出した日時（修正しても変えない）
   }
+  if (mode === REPORT_STATE.DRAFT && hasColumn_(SHEET_NAMES.DAILY_REPORTS, '下書き保存日時')) values['下書き保存日時'] = now.timestamp;
 
   if (record) {
     updateRecord_(SHEET_NAMES.DAILY_REPORTS, record, values);
   } else {
-    const attendance = findAttendance_(staff.employeeId, now.date);
-    values['日報ID'] = makeUniqueId_(SHEET_NAMES.DAILY_REPORTS, '日報ID', 'DR-' + now.date.replace(/-/g, '') + '-' + staff.employeeId);
-    values['日付'] = now.date;
+    const attendance = findAttendance_(staff.employeeId, targetDate);
+    values['日報ID'] = makeUniqueId_(SHEET_NAMES.DAILY_REPORTS, '日報ID', 'DR-' + targetDate.replace(/-/g, '') + '-' + staff.employeeId);
+    values['日付'] = targetDate;
     values['社員ID'] = staff.employeeId;
     values['氏名'] = staff.name;
     values['勤務形態'] = attendance ? toPlainText_(attendance['勤務形態']) : '';
@@ -222,7 +234,7 @@ function saveReport_(input, mode, options) {
     record = appendRecord_(SHEET_NAMES.DAILY_REPORTS, values);
   }
   const reportId = String(record['日報ID']).trim();
-  syncCustomers_(reportId, staff.employeeId, customers, now.timestamp);
+  syncCustomers_(reportId, staff.employeeId, toDateKey_(record['日付']), customers, now.timestamp);
 
   const action = mode === REPORT_STATE.DRAFT ? '下書き保存' : previousState === REPORT_STATE.SUBMITTED ? '修正' : '提出';
   appendReportHistory_(record, action, staff, now.timestamp);
@@ -241,7 +253,10 @@ function saveReport_(input, mode, options) {
  * 画面から来た接客記録をチェックして整える。
  * @param {boolean} strict 提出のとき true（必須項目をチェック）。下書きのときは途中でも保存できる
  */
-function normalizeCustomers_(list, strict) {
+function normalizeCustomers_(list, strict, staff) {
+  const activeStaff = {};
+  getAllStaff_().forEach(function (s) { if (s.status === EMPLOYMENT_STATUS.ACTIVE && s.employeeId) activeStaff[s.employeeId] = s; });
+  const triggers = VISIT_TRIGGERS.concat(LEGACY_VISIT_TRIGGERS); // 以前の値（Web検索など）もそのまま保存し直せる
   if (list === undefined || list === null) list = [];
   if (!Array.isArray(list)) fail_('接客記録の形式が正しくありません');
   if (list.length > MAX_CUSTOMER_RECORDS) fail_('接客記録は' + MAX_CUSTOMER_RECORDS + '件までです');
@@ -250,13 +265,24 @@ function normalizeCustomers_(list, strict) {
     const label = '接客' + (i + 1) + '：';
     const unknown = c.customerNameUnknown === true || c.customerNameUnknown === 'true';
     const name = unknown ? '' : requireText_(c.customerName, label + '顧客名', { required: false, max: TEXT_LIMITS.SHORT });
-    const trigger = optionalChoice_(c.visitTrigger, VISIT_TRIGGERS, label + '来場のきっかけ');
+    const trigger = optionalChoice_(c.visitTrigger, triggers, label + '来場のきっかけ');
+    const role = optionalChoice_(c.role, [CUSTOMER_ROLES.MAIN, CUSTOMER_ROLES.SUB], label + '担当区分');
+    // 副担当のときだけ主担当者（スタッフマスタの在籍中の社員。自分は選べない。氏名はサーバーがマスタから入れる）
+    let main = null;
+    if (role === CUSTOMER_ROLES.SUB && !isBlank_(c.mainStaffId)) {
+      main = activeStaff[String(c.mainStaffId).trim()] || null;
+      if (!main) fail_(label + '主担当者がスタッフ一覧にいません（在籍中の社員から選んでください）');
+      if (staff && main.employeeId === staff.employeeId) fail_(label + '副担当のときの主担当者には、自分以外の社員を選んでください');
+    }
     const result = optionalChoice_(c.result, CUSTOMER_RESULTS, label + '対応結果');
     const nextAction = optionalChoice_(c.nextAction, [NEXT_ACTION.REQUIRED, NEXT_ACTION.NOT_REQUIRED], label + '次回対応');
     const item = {
       customerRecordId: isBlank_(c.customerRecordId) ? '' : String(c.customerRecordId).trim(),
       customerName: name,
       customerNameUnknown: unknown,
+      role: role,
+      mainStaffId: main ? main.employeeId : '',
+      mainStaffName: main ? main.name : '',
       visitTrigger: trigger,
       visitTriggerOther: trigger === VISIT_TRIGGER_OTHER ? requireText_(c.visitTriggerOther, label + 'その他の内容', { required: false, max: TEXT_LIMITS.SHORT }) : '',
       content: requireText_(c.content, label + '接客内容', { required: false, max: TEXT_LIMITS.LONG }),
@@ -266,12 +292,11 @@ function normalizeCustomers_(list, strict) {
       nextActionDetail: nextAction === NEXT_ACTION.REQUIRED ? requireText_(c.nextActionDetail, label + '次回対応内容', { required: false, max: TEXT_LIMITS.SHORT }) : '',
     };
     if (strict) {
+      // 提出時の必須は最低限だけ（対応結果・次回対応・備考は任意）
       if (!item.customerNameUnknown && !item.customerName) fail_(label + '顧客名を入力するか、「未確認」にチェックしてください');
-      if (!item.visitTrigger) fail_(label + '来場のきっかけを選んでください');
-      if (item.visitTrigger === VISIT_TRIGGER_OTHER && !item.visitTriggerOther) fail_(label + '「その他の内容」を入力してください');
-      if (!item.result) fail_(label + '対応結果を選んでください');
-      if (!item.nextAction) fail_(label + '次回対応（必要／不要）を選んでください');
-      if (item.nextAction === NEXT_ACTION.REQUIRED && !item.nextActionDetail) fail_(label + '次回対応内容を入力してください');
+      if (!item.role) fail_(label + '担当区分（主担当／副担当）を選んでください');
+      if (item.role === CUSTOMER_ROLES.SUB && !item.mainStaffId) fail_(label + '副担当のときは主担当者を選んでください');
+      if (!item.visitTrigger) fail_(label + '来場のきっかけを選んでください（分からないときは「未確認」）');
     }
     return item;
   });
@@ -297,6 +322,10 @@ function customerRecordToInput_(r) {
     customerRecordId: toPlainText_(r['接客ID']),
     customerName: toPlainText_(r['顧客名']),
     customerNameUnknown: String(r['顧客名未確認']).trim() === '1',
+    // 担当区分が空欄の行（段階4より前の記録）は主担当として扱う
+    role: toPlainText_(r['担当区分']).trim() || CUSTOMER_ROLES.MAIN,
+    mainStaffId: toPlainText_(r['主担当者ID']),
+    mainStaffName: toPlainText_(r['主担当者名']),
     visitTrigger: toPlainText_(r['来場のきっかけ']),
     visitTriggerOther: toPlainText_(r['その他の内容']),
     content: toPlainText_(r['接客内容']),
@@ -314,10 +343,13 @@ function stripCustomerId_(c) {
 }
 
 function customerToCells_(c, order, timestamp) {
-  return {
+  return onlyExistingColumns_(SHEET_NAMES.REPORT_CUSTOMERS, {
     '並び順': order,
     '顧客名': c.customerName,
     '顧客名未確認': c.customerNameUnknown ? '1' : '',
+    '担当区分': c.role,
+    '主担当者ID': c.role === CUSTOMER_ROLES.SUB ? c.mainStaffId : '',
+    '主担当者名': c.role === CUSTOMER_ROLES.SUB ? c.mainStaffName : '',
     '来場のきっかけ': c.visitTrigger,
     'その他の内容': c.visitTriggerOther,
     '接客内容': c.content,
@@ -326,7 +358,7 @@ function customerToCells_(c, order, timestamp) {
     '次回対応': c.nextAction,
     '次回対応内容': c.nextActionDetail,
     '更新日時': timestamp,
-  };
+  });
 }
 
 /**
@@ -334,7 +366,7 @@ function customerToCells_(c, order, timestamp) {
  *   画面にある記録 … 既存なら更新、新しければ追加
  *   画面から消えた記録 … 行は残して「削除」に 1 を入れる（データを消さない）
  */
-function syncCustomers_(reportId, employeeId, customers, timestamp) {
+function syncCustomers_(reportId, employeeId, dateKey, customers, timestamp) {
   const existing = getActiveCustomers_(reportId);
   const byId = {};
   existing.forEach(function (r) { byId[String(r['接客ID']).trim()] = r; });
@@ -353,6 +385,7 @@ function syncCustomers_(reportId, employeeId, customers, timestamp) {
     cells['日報ID'] = reportId;
     cells['社員ID'] = employeeId;
     cells['作成日時'] = timestamp;
+    if (hasColumn_(SHEET_NAMES.REPORT_CUSTOMERS, '日付')) cells['日付'] = dateKey;
     toAppend.push(cells);
   });
   existing.forEach(function (r) {
@@ -393,6 +426,7 @@ function requireReportSchema_() {
   const missing = [];
   const reportColumns = readTable_(SHEET_NAMES.DAILY_REPORTS).columnIndex;
   getSheetDefinition_(SHEET_NAMES.DAILY_REPORTS).optionalHeaders.forEach(function (h) {
+    if (h === '下書き保存日時') return; // 段階4の列はなくても動く（setupSystem() で追加）
     if (reportColumns[h] === undefined) missing.push('日報シートの「' + h + '」列');
   });
   [SHEET_NAMES.REPORT_CUSTOMERS, SHEET_NAMES.REPORT_CONFIRMATIONS, SHEET_NAMES.REPORT_COMMENTS, SHEET_NAMES.REPORT_HISTORY].forEach(function (name) {
@@ -484,13 +518,113 @@ function toDailyReportView_(r) {
   return view;
 }
 
-/** 入力画面の選択肢 */
-function reportChoices_() {
+/** 入力画面の選択肢（主担当者の候補は、在籍中の自分以外の社員） */
+function reportChoices_(staff) {
   return {
+    roles: [CUSTOMER_ROLES.MAIN, CUSTOMER_ROLES.SUB],
+    roleSub: CUSTOMER_ROLES.SUB,
+    staffOptions: getAllStaff_().filter(function (s) {
+      return s.status === EMPLOYMENT_STATUS.ACTIVE && s.employeeId && (!staff || s.employeeId !== staff.employeeId);
+    }).map(function (s) { return { employeeId: s.employeeId, name: s.name }; }),
+    legacyVisitTriggers: LEGACY_VISIT_TRIGGERS.slice(),
     visitTriggers: VISIT_TRIGGERS.slice(),
     visitTriggerOther: VISIT_TRIGGER_OTHER,
     results: CUSTOMER_RESULTS.slice(),
     nextActions: [NEXT_ACTION.REQUIRED, NEXT_ACTION.NOT_REQUIRED],
     nextActionRequired: NEXT_ACTION.REQUIRED,
   };
+}
+
+// ============================================================ 段階4：過去の日の日報・列の初期値
+
+/**
+ * 本人が新しく日報を作れる日か。今日、または今日を含めず7日前までで勤務実績（出勤）がある日だけ。
+ * 未来の日・8日以上前の日・勤務実績のない過去の日は作れない（8日以上前は管理者対応）。
+ */
+function checkNewReportDate_(staff, dateKey, today) {
+  if (dateKey === today) return;
+  if (dateKey > today) fail_('先の日付の日報は作れません');
+  if (dateKey < addDays_(today, -REPORT_PAST_DAYS)) fail_(dateKey + ' は' + REPORT_PAST_DAYS + '日より前のため、日報を新しく作れません。必要な場合は管理者に相談してください');
+  const attendance = findAttendance_(staff.employeeId, dateKey);
+  if (!attendance || isBlank_(attendance['出勤'])) fail_(dateKey + ' は勤務の記録がないため、日報を新しく作れません');
+}
+
+/** 書き忘れた日（今日を含めず7日前まで・勤務実績あり・自分の日報がまだない日）。新しい日付順 */
+function listMissingReportDates_(staff, today) {
+  const from = addDays_(today, -REPORT_PAST_DAYS);
+  const worked = {};
+  findRecords_(SHEET_NAMES.ATTENDANCE, function (r) {
+    const d = toDateKey_(r['日付']);
+    return String(r['社員ID']).trim() === staff.employeeId && d >= from && d < today && !isBlank_(r['出勤']);
+  }).forEach(function (r) { worked[toDateKey_(r['日付'])] = true; });
+  findRecords_(SHEET_NAMES.DAILY_REPORTS, function (r) {
+    return String(r['社員ID']).trim() === staff.employeeId && worked[toDateKey_(r['日付'])];
+  }).forEach(function (r) { delete worked[toDateKey_(r['日付'])]; });
+  return Object.keys(worked).sort().reverse();
+}
+
+/**
+ * setupSystem() でスタッフマスタに「日報提出対象」「日報確認対象」を新しく作ったときだけ初期値を入れる（既存の値は変えない）。
+ *   日報提出対象：勤怠集計対象が「対象外」の人（役員など）は対象外、それ以外は対象
+ *   日報確認対象：全員 対象（休職・退職の人は在籍状況で確認の対象から外す）
+ */
+function initReportTargetColumns_(sheet, addedHeaders) {
+  const addSubmit = addedHeaders.indexOf('日報提出対象') !== -1;
+  const addConfirm = addedHeaders.indexOf('日報確認対象') !== -1;
+  if (!addSubmit && !addConfirm) return '';
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return '';
+  const lastColumn = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function (h) { return String(h).trim(); });
+  const idCol = headers.indexOf('社員ID');
+  const targetCol = headers.indexOf('勤怠集計対象');
+  if (idCol === -1) return '';
+  const rows = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+  const notes = [];
+  if (addSubmit) {
+    const col = headers.indexOf('日報提出対象');
+    const values = rows.map(function (row) {
+      if (isBlank_(row[idCol])) return [''];
+      const excluded = targetCol !== -1 && String(row[targetCol]).trim() === ATTENDANCE_TARGET.NO;
+      return [excluded ? REPORT_TARGET.NO : REPORT_TARGET.YES];
+    });
+    sheet.getRange(2, col + 1, values.length, 1).setValues(values);
+    const off = values.filter(function (v) { return v[0] === REPORT_TARGET.NO; }).length;
+    notes.push('日報提出対象の初期値を入れました（対象 ' + values.filter(function (v) { return v[0] === REPORT_TARGET.YES; }).length + '名・対象外 ' + off +
+      '名。勤怠集計対象が「対象外」の人を対象外にしています）');
+  }
+  if (addConfirm) {
+    const col = headers.indexOf('日報確認対象');
+    const values = rows.map(function (row) { return [isBlank_(row[idCol]) ? '' : REPORT_TARGET.YES]; });
+    sheet.getRange(2, col + 1, values.length, 1).setValues(values);
+    notes.push('日報確認対象の初期値を入れました（全員 対象。休職・退職の人は確認の対象に入りません）');
+  }
+  return notes.join('。');
+}
+
+/** setupSystem() で日報_接客に「日付」列を新しく作ったときだけ、既存の行に日報の日付を入れる（日報IDでつなぐ） */
+function initCustomerDateColumn_(sheet, addedHeaders) {
+  if (addedHeaders.indexOf('日付') === -1) return '';
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return '';
+  const reports = getSpreadsheet_().getSheetByName(SHEET_NAMES.DAILY_REPORTS);
+  const dateById = {};
+  if (reports && reports.getLastRow() >= 2) {
+    const rh = reports.getRange(1, 1, 1, reports.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim(); });
+    const ri = rh.indexOf('日報ID');
+    const rd = rh.indexOf('日付');
+    if (ri !== -1 && rd !== -1) {
+      reports.getRange(2, 1, reports.getLastRow() - 1, reports.getLastColumn()).getValues().forEach(function (row) {
+        dateById[String(row[ri]).trim()] = toDateKey_(row[rd]);
+      });
+    }
+  }
+  const lastColumn = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function (h) { return String(h).trim(); });
+  const idCol = headers.indexOf('日報ID');
+  const dateCol = headers.indexOf('日付');
+  if (idCol === -1 || dateCol === -1) return '';
+  const values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues().map(function (row) { return [dateById[String(row[idCol]).trim()] || '']; });
+  sheet.getRange(2, dateCol + 1, values.length, 1).setValues(values);
+  return '既存の接客記録 ' + values.filter(function (v) { return v[0]; }).length + '件に日付を入れました（日報の日付）';
 }

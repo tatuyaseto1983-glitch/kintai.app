@@ -160,8 +160,20 @@ function requestStatusLabel_(status) {
 /** 休日出勤の振替休日区分 */
 const COMP_DAY_TYPES = { PLANNED: '取得予定', NONE: '取得予定なし', UNDECIDED: '未定' };
 
-/** 日報の接客記録の選択肢 */
-const VISIT_TRIGGERS = ['Web検索', 'Googleマップ', 'Instagram', 'LINE', '紹介', '既存顧客', '看板・通りがかり', 'チラシ', 'イベント', 'その他', '未確認'];
+/**
+ * 日報の接客記録：来場のきっかけ（新しく選べる値）。検索は Google／Yahoo!／検索（不明）に分け、合計で検索流入を見る。
+ * 「未確認」はいつでも選べる（来場のきっかけを聞けなかったとき）。
+ */
+const VISIT_TRIGGERS = ['Google検索', 'Yahoo!検索', '検索（不明）', 'Googleマップ', 'Instagram', 'LINE', '紹介', '既存顧客', '看板', '通りがかり',
+  'チラシ', 'イベント（見学会など）', 'その他', '未確認'];
+/** 以前の選択肢（既存データは書き換えず、そのまま読む・保存し直せる。新しく選ぶ候補には出さない） */
+const LEGACY_VISIT_TRIGGERS = ['Web検索', '看板・通りがかり', 'イベント'];
+/** 接客の担当区分（会社の接客件数は主担当だけを数える。副担当は「副担当参加件数」として別に数える）。空欄の旧データは主担当 */
+const CUSTOMER_ROLES = { MAIN: '主担当', SUB: '副担当' };
+/** スタッフマスタの「日報提出対象」「日報確認対象」の値 */
+const REPORT_TARGET = { YES: '対象', NO: '対象外' };
+/** 本人が新しく日報を作れる過去の日数（今日を含めず7日前まで。勤務実績がある日だけ） */
+const REPORT_PAST_DAYS = 7;
 const VISIT_TRIGGER_OTHER = 'その他';
 const CUSTOMER_RESULTS = ['契約', '見積提出', '検討中', '次回予約', '資料渡し', '案内のみ', '対応完了', 'その他'];
 const NEXT_ACTION = { REQUIRED: '必要', NOT_REQUIRED: '不要' };
@@ -235,7 +247,7 @@ const SHEET_DEFINITIONS = [
     headers: ['社員ID', '氏名', 'メールアドレス', '権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤',
       '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考'],
     // 任意の列：setupSystem() が右端に追加する。無くても動く（空欄＝勤怠集計の対象）
-    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象', '有給申請対象'],
+    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象', '有給申請対象', '日報提出対象', '日報確認対象'],
     choices: {
       '権限': [ROLES.STAFF, ROLES.ADMIN],
       '勤務区分': [WORK_TYPES.FIXED, WORK_TYPES.FLEX],
@@ -246,7 +258,8 @@ const SHEET_DEFINITIONS = [
     },
     // 列を新しく作ったときだけ、初期値を入れる（既存の値は変えない）。中身は HolidayWorkService.gs・PaidLeaveService.gs
     onColumnsAdded: function (sheet, added) {
-      return [initHolidayWorkTargetColumn_(sheet, added), initPaidLeaveTargetColumn_(sheet, added)].filter(function (x) { return x; }).join('。');
+      return [initHolidayWorkTargetColumn_(sheet, added), initPaidLeaveTargetColumn_(sheet, added), initReportTargetColumns_(sheet, added)]
+        .filter(function (x) { return x; }).join('。');
     },
     freeChoices: { '雇用区分': EMPLOYMENT_TYPES },
   },
@@ -288,13 +301,19 @@ const SHEET_DEFINITIONS = [
       '明日の予定', '共有事項', '提出日時', 'ステータス'],
     // 新しい日報の列（setupSystem() が右端に追加。以前の列はそのまま残す）
     optionalHeaders: ['日報ステータス', 'バージョン', '接客件数', '課題・気づき', '申し送り内容', '管理者への相談・確認事項',
-      '最終更新日時', '作成日時'],
+      '最終更新日時', '作成日時',
+      // 段階4（なくても動く。setupSystem() で右端に追加）
+      '下書き保存日時'],
     choices: { 'ステータス': [REPORT_STATUS.DRAFT, REPORT_STATUS.SUBMITTED, REPORT_STATUS.CONFIRMED] },
   },
   {
     name: SHEET_NAMES.REPORT_CUSTOMERS,
     headers: ['接客ID', '日報ID', '社員ID', '並び順', '顧客名', '顧客名未確認', '来場のきっかけ', 'その他の内容', '接客内容',
       '対応結果', '補足コメント', '次回対応', '次回対応内容', '削除', '作成日時', '更新日時'],
+    // 段階4：担当区分（主担当／副担当）、副担当のときの主担当者、日付（集計用。列を作るときに既存行は日報から埋める）
+    optionalHeaders: ['担当区分', '主担当者ID', '主担当者名', '日付'],
+    choices: { '担当区分': [CUSTOMER_ROLES.MAIN, CUSTOMER_ROLES.SUB] },
+    onColumnsAdded: function (sheet, added) { return initCustomerDateColumn_(sheet, added); },
   },
   {
     // 確認するたびに1行追加（消さない）。「確認済み」かどうかは、今の日報バージョンの行があるかで決める
@@ -304,6 +323,8 @@ const SHEET_DEFINITIONS = [
   {
     name: SHEET_NAMES.REPORT_COMMENTS,
     headers: ['コメントID', '日報ID', '社員ID', '社員名', 'コメント', '投稿日時'],
+    // 段階4：管理者による削除（行は消さない）と、二重投稿を防ぐ送信ID
+    optionalHeaders: ['削除', '削除者ID', '削除者名', '削除日時', '送信ID'],
   },
   {
     // 保存・提出・修正のたびに1行追加。「内容」はその時点の日報（JSON）

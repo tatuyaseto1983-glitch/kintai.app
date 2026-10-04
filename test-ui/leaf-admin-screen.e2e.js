@@ -192,9 +192,13 @@ test('管理者画面をブラウザで操作する', { skip: !playwright && 'Pl
 
     await t.test('週1日完全休日・日報確認', async () => {
       assert.match(await page.locator('#admRestRange').innerText(), /6\/1（月）〜6\/7（日）/);
-      assert.match(await page.locator('#admReportCount').innerText(), /提出済み 1名／未提出 3名/);
+      // 未提出は「出勤の記録がある日報提出対象者で、提出済みの日報がない」人だけ（出勤なしは対象外）
+      assert.match(await page.locator('#admReportCount').innerText(), /提出済み 1名／未提出 1名（うち下書きあり 0名）／対象外 2名/);
       await page.selectOption('#admReportFilter', 'notSubmitted');
-      assert.equal(await page.locator('#admReports .report').count(), 3);
+      assert.equal(await page.locator('#admReports .report').count(), 1);
+      await page.selectOption('#admReportFilter', 'none');
+      assert.equal(await page.locator('#admReports .report').count(), 2);
+      assert.match(await page.locator('#admReportMonthTitle').innerText(), /日報の月別（2026年6月 期間：2026\/06\/01〜2026\/06\/30）/);
       await page.selectOption('#admReportFilter', 'submitted');
       assert.doesNotMatch(await page.locator('#admReports').innerText(), /現場打合せ/, '一覧には本文を出さない');
       assert.match(await page.locator('#admReports').innerText(), /佐藤 花子[\s\S]*0 \/ 3人 確認済み/);

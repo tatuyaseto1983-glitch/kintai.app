@@ -54,7 +54,7 @@ test('setupSystem：既存シートの足りない見出しだけを右端に足
   assert.deepEqual(sheet.data[1].slice(0, 4), ['E009', '既存', 'x@example.com', 'メモ'], '既存のデータは動かさない');
   assert.equal(sheet.data[1][sheet.data[0].indexOf('休日出勤申請対象')], '対象', '新しく作った「休日出勤申請対象」列にだけ初期値が入る');
   assert.deepEqual(sheet.data[0].slice(0, 4), ['社員ID', '氏名', 'メールアドレス', '自分で足した列']);
-  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象', '休日出勤申請対象', '有給申請対象']);
+  assert.deepEqual(sheet.data[0].slice(4), ['権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤', '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考', '勤怠集計対象', '休日出勤申請対象', '有給申請対象', '日報提出対象', '日報確認対象']);
   assert.ok(sheet.maxColumns >= 17, '列が足りなければシートの列を増やす');
   assert.equal(empty.data[0][0], '中断ID');
   assert.deepEqual(noHeader.data, [[], ['データだけある行']]);
@@ -773,7 +773,7 @@ test('管理者画面 11：週1日完全休日の警告（問題のある人だ�
   assert.deepEqual(now.previous.rows.map((x) => x.name + ':' + x.status), ['佐藤:不足'], '前の週の確定した不足は警告に出す');
 });
 
-test('管理者画面 12：日報の提出状況（下書きは管理者にも「未提出」として内容を返さない）', () => {
+test('管理者画面 12：日報の提出状況（出勤ありで日報なし＝未提出、下書きだけ＝未提出（下書きあり）・内容は返さない、出勤なし＝対象外）', () => {
   const gas = adminReady();
   gas.loginAs(FIXED);
   gas.setNow('2026-06-01 19:20');
@@ -782,8 +782,8 @@ test('管理者画面 12：日報の提出状況（下書きは管理者にも�
   gas.g.saveDailyReport({ workContent: '下書きの秘密メモ', status: '下書き' });
   gas.loginAs(ADMIN);
   let rep = gas.g.getAdminDashboard({ date: '2026-06-01', parts: ['reports'] }).data.reports;
-  assert.deepEqual(rep.rows.map((x) => x.name + ':' + x.status), ['山田:未提出', '佐藤:提出済み', '鈴木:未提出', '田中:未提出']);
-  assert.deepEqual([rep.submittedCount, rep.notSubmittedCount], [1, 3]);
+  assert.deepEqual(rep.rows.map((x) => x.name + ':' + x.status), ['山田:対象外', '佐藤:提出済み', '鈴木:未提出（下書きあり）', '田中:対象外']);
+  assert.deepEqual([rep.submittedCount, rep.notSubmittedCount, rep.draftOnlyCount, rep.noneCount], [1, 1, 1, 2]);
   assert.doesNotMatch(JSON.stringify(rep), /下書きの秘密メモ|資材の遅れ/, '管理者画面の一覧に本文は返さない（下書きは特に）');
   assert.equal(rep.rows.find((x) => x.name === '鈴木').workStyle, '在宅');
   const sato = rep.rows.find((x) => x.name === '佐藤');

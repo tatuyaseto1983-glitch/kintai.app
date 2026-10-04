@@ -47,7 +47,7 @@ test('setupSystem：「休日出勤申請対象」列を右端に追加し、勤
     row('E005', '中津井祐貴', ''), row('E006', '久保亜弓', '')];
   const before = JSON.stringify(staff.data.map((r) => r.slice(0, 16)));
   const log = gas.g.setupSystem();
-  assert.match(log, /スタッフマスタ：足りない列を右端に追加しました（休日出勤申請対象、有給申請対象）。休日出勤申請対象の初期値を入れました（対象 4名・対象外 2名/);
+  assert.match(log, /スタッフマスタ：足りない列を右端に追加しました（休日出勤申請対象、有給申請対象、日報提出対象、日報確認対象）。休日出勤申請対象の初期値を入れました（対象 4名・対象外 2名/);
   assert.equal(staff.data[0][16], '休日出勤申請対象', '右端（Q列）に追加');
   assert.deepEqual(staff.data.slice(1).map((r) => r[16]), ['対象外', '対象外', '対象', '対象', '対象', '対象']);
   assert.equal(JSON.stringify(staff.data.map((r) => r.slice(0, 16))), before, '既存の列・値は変えない');

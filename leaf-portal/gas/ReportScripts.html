@@ -2,7 +2,7 @@
 /* ============================================================
  * ReportScripts.html — 日報の画面の動き（一覧・閲覧・入力）
  *
- * ・社員ID・氏名・日付は画面から送りません（サーバーがログイン中の社員と今日の日付で決めます）
+ * ・社員ID・氏名は画面から送りません（サーバーがログイン中の社員で決めます）。日付は今日（書き忘れた日だけ、その日付を送り、サーバーが確認）
  * ・下書きはサーバーが本人にしか返しません。確認・コメントもサーバー側で権限を確認します
  * ・表示する文字はすべて textContent で入れています（HTMLとして解釈しないので安全）
  * ・保存・提出・確認・コメントは処理中に全ボタンを無効化し、連打しても1回だけ送ります
@@ -15,6 +15,8 @@
 
   /** 日報の画面から呼んでよいサーバーの関数 */
   var REPORT_FUNCTIONS = ['getReportList', 'getReportDetail', 'getReportEditor', 'saveReportDraft', 'submitReport', 'confirmReport', 'addReportComment'];
+  /** 管理者だけが使う関数（サーバーが canDeleteComment を返したときだけ呼ぶ。サーバーでも requireAdmin で確認） */
+  var REPORT_ADMIN_FUNCTIONS = ['deleteReportComment'];
   var WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
   var R = {
@@ -29,7 +31,9 @@
   };
 
   function $(id) { return document.getElementById(id); }
-  function call(fn, args) { return App.callAllowed(REPORT_FUNCTIONS, fn, args); }
+  function call(fn, args) { return App.callAllowed(REPORT_FUNCTIONS.concat(R.detail && R.detail.canDeleteComment ? REPORT_ADMIN_FUNCTIONS : []), fn, args); }
+  /** コメントの送信ID（連打・通信の再送で二重に投稿しないため。投稿ごとに1つ） */
+  function newSendId() { return 'S' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
 
   function formatDateLong(dateKey) {
     if (!dateKey) return '';
@@ -117,6 +121,17 @@
       $('reportMonthLabel').textContent = App.formatMonth(d.month);
       $('btnReportNextMonth').disabled = d.month >= R.currentMonth;
 
+      var missing = $('reportMissingList');
+      missing.textContent = '';
+      (d.missingDates || []).forEach(function (date) {
+        var b = el('button', 'btn btn-outline btn-sm', formatDateLong(date) + 'の日報を書く');
+        b.type = 'button';
+        b.setAttribute('data-missing-date', date);
+        b.addEventListener('click', function () { openEditor('', date); });
+        missing.appendChild(b);
+      });
+      $('reportMissing').hidden = !(d.missingDates || []).length;
+
       var drafts = $('reportDraftCards');
       drafts.textContent = '';
       d.myDrafts.forEach(function (item) { drafts.appendChild(listCard(item)); });
@@ -136,6 +151,8 @@
     var meta = el('div', 'report-card-meta');
     meta.appendChild(el('span', '', '接客 ' + item.customerCount + '件'));
     if (!isDraft && !item.legacy) meta.appendChild(el('span', '', item.confirmedCount + ' / ' + item.targetCount + '人 確認済み'));
+    if (!isDraft && !item.legacy) meta.appendChild(el('span', '', 'コメント ' + (item.commentCount || 0) + '件'));
+    if (!isDraft && !item.legacy && item.pendingNames && item.pendingNames.length) meta.appendChild(el('span', 'report-pending', '未確認：' + item.pendingNames.join('、')));
     if (isDraft) meta.appendChild(el('span', '', '最終保存 ' + shortTime(item.updatedAt)));
     main.appendChild(meta);
     var badges = el('div', 'report-card-badges');
@@ -192,10 +209,11 @@
     var dl = document.createElement('dl');
     var add = function (label, value) { dl.appendChild(el('dt', '', label)); dl.appendChild(el('dd', '', value || '—')); };
     add('顧客名', c.customerNameUnknown ? '未確認' : c.customerName);
+    add('担当区分', c.role + (c.role === '副担当' ? '（主担当：' + (c.mainStaffName || '未入力') + '）' : ''));
     add('来場のきっかけ', c.visitTrigger + (c.visitTrigger === 'その他' && c.visitTriggerOther ? '（' + c.visitTriggerOther + '）' : ''));
     add('接客内容', c.content);
     add('対応結果', c.result);
-    if (c.resultNote) add('補足コメント', c.resultNote);
+    if (c.resultNote) add('備考', c.resultNote); // シートの列は「補足コメント」
     add('次回対応', c.nextAction + (c.nextAction === '必要' && c.nextActionDetail ? '：' + c.nextActionDetail : ''));
     box.appendChild(dl);
     return box;
@@ -320,8 +338,19 @@
     if (!d.comments.length) list.appendChild(el('li', 'empty', 'コメントはまだありません。'));
     d.comments.forEach(function (c) {
       var li = el('li', 'comment-item');
+      li.setAttribute('data-comment-id', c.commentId);
       li.appendChild(el('div', 'comment-meta', c.name + '　' + c.postedAt.slice(0, 16)));
       li.appendChild(el('div', 'comment-text', c.text));
+      if (d.canDeleteComment) {
+        // 管理者だけ：削除（行は残し、削除の印と削除者・日時を記録。画面からは消える）
+        var del = el('button', 'btn btn-remove btn-sm', '削除（管理者）');
+        del.type = 'button';
+        del.addEventListener('click', function () {
+          if (!window.confirm('このコメントを削除しますか？（記録は残り、画面には表示されなくなります）')) return;
+          act(del, 'deleteReportComment', [c.commentId], '削除中...').then(function (res) { if (res && res.success && res.data) renderDetail(res.data); });
+        });
+        li.appendChild(del);
+      }
       list.appendChild(li);
     });
     card.appendChild(list);
@@ -340,11 +369,13 @@
       var btn = el('button', 'btn btn-outline', 'コメントを投稿');
       btn.type = 'button';
       btn.id = 'btnPostComment';
+      var sendId = newSendId(); // 投稿が成功するまで同じ送信IDを使う（再送しても1件だけ）
       btn.addEventListener('click', function () {
         var text = ta.value.trim();
         if (!text) { App.showToast('warn', 'コメントを入力してください'); return; }
-        act(btn, 'addReportComment', [d.report.reportId, text], '投稿中...').then(function (res) { if (res && res.success) renderDetail(res.data); });
+        act(btn, 'addReportComment', [d.report.reportId, text, sendId], '投稿中...').then(function (res) { if (res && res.success) renderDetail(res.data); });
       });
+      card.appendChild(el('p', 'card-note', 'コメントは投稿後に編集できません。'));
       actions.appendChild(btn);
       card.appendChild(actions);
     }
@@ -353,12 +384,12 @@
 
   // ============================================================ 入力
 
-  function openEditor(reportId) {
+  function openEditor(reportId, date) {
     showPane('editor');
     $('customerCards').textContent = '';
     $('reportEditorState').textContent = '読み込み中...';
     var seq = ++R.seq;
-    return call('getReportEditor', [reportId || '']).then(function (res) {
+    return call('getReportEditor', [reportId || '', date || '']).then(function (res) {
       if (seq !== R.seq) return;
       if (!res.success) {
         $('reportEditorState').textContent = '';
@@ -372,7 +403,7 @@
   function fillEditor(data) {
     R.choices = data.choices;
     var r = data.report;
-    R.editor = { reportId: r ? r.reportId : '', status: r ? r.status : 'new', version: r ? r.version : 0 };
+    R.editor = { reportId: r ? r.reportId : '', status: r ? r.status : 'new', version: r ? r.version : 0, date: data.date };
     $('reportDateText').value = formatDateLong(data.date);
     $('reportAuthorText').value = data.employeeName;
     $('repWorkContent').value = r ? r.workContent : '';
@@ -440,19 +471,57 @@
     var syncName = function () { name.disabled = unknown.checked; if (unknown.checked) name.value = ''; };
     unknown.addEventListener('change', syncName);
 
-    // 来場のきっかけ ＋ その他の内容
-    var trigger = selectRow(card, '来場のきっかけ', 'custTrigger' + n, ch.visitTriggers, data.visitTrigger, 'js-trigger');
+    // 担当区分（主担当／副担当）＋ 副担当のときの主担当者
+    var roleRow = el('div', 'form-row');
+    roleRow.appendChild(el('span', 'label-like', '担当区分'));
+    var roleChoice = el('div', 'choice-row');
+    var currentRole = data.role || ch.roles[0]; // 新しい接客は主担当から
+    ch.roles.forEach(function (v) {
+      var lab = el('label');
+      var radio = el('input');
+      radio.type = 'radio'; radio.name = 'custRole' + n; radio.value = v; radio.className = 'js-role';
+      radio.checked = currentRole === v;
+      lab.appendChild(radio);
+      lab.appendChild(document.createTextNode(v));
+      roleChoice.appendChild(lab);
+    });
+    roleRow.appendChild(roleChoice);
+    card.appendChild(roleRow);
+    var mainSelect = selectRow(card, '主担当者', 'custMain' + n, [], '', 'js-main');
+    ch.staffOptions.forEach(function (s) { var opt = el('option', '', s.name); opt.value = s.employeeId; mainSelect.appendChild(opt); });
+    if (data.mainStaffId && !ch.staffOptions.some(function (s) { return s.employeeId === data.mainStaffId; })) {
+      var gone = el('option', '', (data.mainStaffName || data.mainStaffId) + '（現在は選べません）');
+      gone.value = data.mainStaffId;
+      mainSelect.appendChild(gone);
+    }
+    mainSelect.value = data.mainStaffId || '';
+    var mainRow = mainSelect.parentNode;
+    var syncRole = function () {
+      var checked = card.querySelector('.js-role:checked');
+      mainRow.hidden = !checked || checked.value !== ch.roleSub;
+    };
+    roleChoice.addEventListener('change', syncRole);
+
+    // 来場のきっかけ ＋ その他の内容（以前の選択肢の値は、その記録のときだけ選べる）
+    var triggerOptions = ch.visitTriggers.slice();
+    if (data.visitTrigger && triggerOptions.indexOf(data.visitTrigger) === -1) triggerOptions.push(data.visitTrigger);
+    var trigger = selectRow(card, '来場のきっかけ', 'custTrigger' + n, triggerOptions, data.visitTrigger, 'js-trigger');
+    if (data.visitTrigger && ch.visitTriggers.indexOf(data.visitTrigger) === -1) {
+      for (var oi = 0; oi < trigger.options.length; oi++) {
+        if (trigger.options[oi].value === data.visitTrigger) trigger.options[oi].textContent = data.visitTrigger + '（以前の選択肢）';
+      }
+    }
     var otherRow = inputRow(card, 'その他の内容', 'custOther' + n, data.visitTriggerOther, 'js-other', '例：知人のSNS投稿を見て');
     var syncOther = function () { otherRow.hidden = trigger.value !== ch.visitTriggerOther; };
     trigger.addEventListener('change', syncOther);
 
-    textareaRow(card, '接客内容', 'custContent' + n, data.content, 'js-content', 4);
-    selectRow(card, '対応結果', 'custResult' + n, ch.results, data.result, 'js-result');
-    textareaRow(card, '補足コメント（任意）', 'custNote' + n, data.resultNote, 'js-note', 2);
+    textareaRow(card, '接客内容（任意）', 'custContent' + n, data.content, 'js-content', 4);
+    selectRow(card, '対応結果（任意）', 'custResult' + n, ch.results, data.result, 'js-result');
+    textareaRow(card, '備考（任意）', 'custNote' + n, data.resultNote, 'js-note', 2);
 
     // 次回対応（必要／不要）＋ 次回対応内容
     var nextRow = el('div', 'form-row');
-    nextRow.appendChild(el('span', 'label-like', '次回対応'));
+    nextRow.appendChild(el('span', 'label-like', '次回対応（任意）'));
     var choice = el('div', 'choice-row');
     ch.nextActions.forEach(function (v) {
       var lab = el('label');
@@ -473,7 +542,7 @@
     choice.addEventListener('change', syncNext);
 
     $('customerCards').appendChild(card);
-    syncName(); syncOther(); syncNext();
+    syncName(); syncOther(); syncNext(); syncRole();
     renumberCustomers();
     return card;
   }
@@ -533,7 +602,11 @@
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
       var next = c.querySelector('.js-next:checked');
+      var role = c.querySelector('.js-role:checked');
+      var roleValue = role ? role.value : '';
       customers.push({
+        role: roleValue,
+        mainStaffId: roleValue === R.choices.roleSub ? c.querySelector('.js-main').value : '',
         customerRecordId: c.getAttribute('data-customer-id') || '',
         customerName: c.querySelector('.js-name').value.trim(),
         customerNameUnknown: c.querySelector('.js-unknown').checked,
@@ -548,6 +621,7 @@
     }
     return {
       reportId: R.editor ? R.editor.reportId : '',
+      date: R.editor && !R.editor.reportId ? R.editor.date : '', // 新しい日報のときだけ（書き忘れた日）。サーバーで確認する
       workContent: $('repWorkContent').value,
       issues: $('repIssues').value,
       handover: $('repHandover').value,
@@ -563,11 +637,9 @@
       var c = input.customers[i];
       var label = '接客' + (i + 1) + '：';
       if (!c.customerNameUnknown && !c.customerName) return label + '顧客名を入力するか、「未確認」にチェックしてください';
-      if (!c.visitTrigger) return label + '来場のきっかけを選んでください';
-      if (c.visitTrigger === R.choices.visitTriggerOther && !c.visitTriggerOther) return label + '「その他の内容」を入力してください';
-      if (!c.result) return label + '対応結果を選んでください';
-      if (!c.nextAction) return label + '次回対応（必要／不要）を選んでください';
-      if (c.nextAction === R.choices.nextActionRequired && !c.nextActionDetail) return label + '次回対応内容を入力してください';
+      if (!c.role) return label + '担当区分（主担当／副担当）を選んでください';
+      if (c.role === R.choices.roleSub && !c.mainStaffId) return label + '副担当のときは主担当者を選んでください';
+      if (!c.visitTrigger) return label + '来場のきっかけを選んでください（分からないときは「未確認」）';
     }
     return '';
   }

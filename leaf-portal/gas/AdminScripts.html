@@ -784,33 +784,37 @@
   function renderReports() {
     var rep = S.data.reports;
     $('admReportDate').textContent = App.formatDateShort(rep.date);
-    $('admReportCount').textContent = '提出済み ' + rep.submittedCount + '名／未提出 ' + rep.notSubmittedCount + '名';
+    $('admReportCount').textContent = '提出済み ' + rep.submittedCount + '名／未提出 ' + rep.notSubmittedCount + '名（うち下書きあり ' + (rep.draftOnlyCount || 0) + '名）／対象外 ' + (rep.noneCount || 0) + '名';
+    renderReportMonthly(rep.monthly);
     var filter = $('admReportFilter').value;
     var box = $('admReports');
     box.textContent = '';
     var rows = rep.rows.filter(function (r) {
-      if (filter === 'submitted') return r.submitted;
-      if (filter === 'notSubmitted') return !r.submitted;
+      if (filter === 'submitted') return r.state === 'submitted';
+      if (filter === 'notSubmitted') return r.state === 'missing' || r.state === 'draft';
+      if (filter === 'none') return r.state === 'none';
       return true;
     });
     if (!rows.length) { box.appendChild(el('p', 'empty', '該当する日報はありません')); return; }
     rows.forEach(function (r) {
       // 下書きはサーバーが「未提出」として返す（内容は管理者にも返さない）
-      var item = el('div', 'report report-row' + (r.submitted ? '' : ' not-submitted'));
+      var item = el('div', 'report report-row' + (r.state === 'missing' || r.state === 'draft' ? ' not-submitted' : ''));
       var left = el('div', 'report-row-main');
       var name = el('span', 'report-row-name', r.name);
       name.appendChild(el('span', 'section-sub', '　' + [r.department, r.workStyle].filter(Boolean).join('・')));
       left.appendChild(name);
       if (r.submitted) {
-        var meta = '接客 ' + (r.customerCount || 0) + '件';
+        var meta = '接客 ' + (r.customerCount || 0) + '件　コメント ' + (r.commentCount || 0) + '件';
         if (r.targetCount !== undefined) meta += '　' + r.confirmedCount + ' / ' + r.targetCount + '人 確認済み';
+        if (r.pendingNames && r.pendingNames.length) meta += '　未確認：' + r.pendingNames.join('、');
         if (r.legacy) meta += '　以前の日報（本人・管理者のみ閲覧）';
         if (r.version > 1) meta += '　修正あり（バージョン' + r.version + '）';
         left.appendChild(el('span', 'report-row-meta', meta));
       }
       item.appendChild(left);
       var right = el('div', 'report-row-actions');
-      right.appendChild(el('span', 'badge ' + (r.submitted ? 'badge-working' : 'badge-ng'), r.submitted ? '提出済み' : '未提出'));
+      var badgeClass = r.state === 'submitted' ? 'badge-working' : r.state === 'none' ? 'badge-notstarted' : 'badge-ng';
+      right.appendChild(el('span', 'badge ' + badgeClass, r.status));
       if (r.submitted) {
         var btn = el('button', 'btn btn-outline btn-sm', '日報を見る');
         btn.type = 'button';
@@ -819,6 +823,32 @@
       }
       item.appendChild(right);
       box.appendChild(item);
+    });
+  }
+
+  /** 日報の月別（暦月）：勤務日数・提出数・未提出数・下書きのみ数（未提出・下書きのみは前日まで） */
+  function renderReportMonthly(m) {
+    var body = $('admReportMonthBody');
+    body.textContent = '';
+    if (!m) return;
+    $('admReportMonthTitle').textContent = '日報の月別（' + m.periodText + '）';
+    if (!m.rows.length) {
+      var tr0 = document.createElement('tr');
+      var c0 = el('td', 'empty', '日報提出対象の社員がいません');
+      c0.colSpan = 5;
+      tr0.appendChild(c0);
+      body.appendChild(tr0);
+      return;
+    }
+    m.rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      if (r.notSubmittedCount || r.draftOnlyCount) tr.className = 'row-alert';
+      tr.appendChild(td(r.name, 'left'));
+      tr.appendChild(td(r.workDays + '日'));
+      tr.appendChild(td(r.submittedCount + '件'));
+      tr.appendChild(td(r.notSubmittedCount ? r.notSubmittedCount + '件' : '—', r.notSubmittedCount ? 'cell-alert' : ''));
+      tr.appendChild(td(r.draftOnlyCount ? r.draftOnlyCount + '件' : '—', r.draftOnlyCount ? 'cell-alert' : ''));
+      body.appendChild(tr);
     });
   }
 

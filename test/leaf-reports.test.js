@@ -27,7 +27,7 @@ function office() {
   return gas;
 }
 const customer = (over) => ({
-  customerName: '山田様', customerNameUnknown: false, visitTrigger: 'Instagram', visitTriggerOther: '',
+  customerName: '山田様', customerNameUnknown: false, role: '主担当', visitTrigger: 'Instagram', visitTriggerOther: '',
   content: '新築の相談', result: '見積提出', resultNote: '', nextAction: '必要', nextActionDetail: '電話', ...over,
 });
 
@@ -86,11 +86,12 @@ test('勤務状況：「勤怠集計対象」列がない以前のスタッフ�
 
 // ============================================================ 日報：保存・提出
 
-test('日報：日付・担当者はサーバーが決める（画面から送った日付・社員ID・氏名は使わない）', () => {
+test('日報：日付・担当者はサーバーが決める（画面から送った社員ID・氏名は使わない。8日以上前の日付は作れない）', () => {
   const gas = office();
   gas.loginAs(OMORI);
   gas.setNow('2026-10-02 18:00');
-  const r = gas.g.saveReportDraft({ date: '2026-01-01', employeeId: 'E005', name: '中津井祐貴', workContent: '現場' });
+  assert.match(gas.g.saveReportDraft({ date: '2026-01-01', workContent: '現場' }).message, /7日より前のため、日報を新しく作れません/);
+  const r = gas.g.saveReportDraft({ employeeId: 'E005', name: '中津井祐貴', workContent: '現場' });
   assert.equal(r.success, true, r.message);
   assert.deepEqual([r.data.date, r.data.employeeId, r.data.name], ['2026-10-02', 'E003', '大森紗智子']);
   const row = gas.main.rows('日報')[0];
@@ -117,10 +118,7 @@ test('日報：接客記録（件数は自動・未確認は別項目・条件�
   const submit = (customers) => gas.g.submitReport({ reportId: r.data.reportId, workContent: '業務', customers });
   assert.match(submit([customer({ customerName: '' })]).message, /接客1：顧客名を入力するか、「未確認」にチェックしてください/);
   assert.match(submit([customer({ visitTrigger: '' })]).message, /来場のきっかけを選んでください/);
-  assert.match(submit([customer({ visitTrigger: 'その他' })]).message, /「その他の内容」を入力してください/);
-  assert.match(submit([customer({ result: '' })]).message, /対応結果を選んでください/);
-  assert.match(submit([customer({ nextAction: '' })]).message, /次回対応（必要／不要）を選んでください/);
-  assert.match(submit([customer({ nextAction: '必要', nextActionDetail: '' })]).message, /次回対応内容を入力してください/);
+  assert.match(submit([customer({ role: '' })]).message, /担当区分（主担当／副担当）を選んでください/);
   assert.match(submit([customer({ visitTrigger: 'テレビ' })]).message, /来場のきっかけは/);
   assert.match(gas.g.submitReport({ reportId: r.data.reportId, workContent: ' ' }).message, /本日の業務内容/);
 
@@ -144,6 +142,16 @@ test('日報：接客記録（件数は自動・未確認は別項目・条件�
   assert.equal(gas.main.rows('日報_接客').length, 5, '下書きの2件＋提出の3件。削除した記録も行は残っている');
   assert.equal(gas.main.rows('日報_接客').filter((x) => x['削除'] !== '1').length, 2);
   assert.deepEqual(r.data.customers.map((c) => c.customerName), ['', '佐々木様']);
+});
+
+test('日報（段階4）：対応結果・次回対応・その他の内容は任意。空欄でも提出できる', () => {
+  for (const optional of [{ visitTrigger: 'その他' }, { result: '' }, { nextAction: '' }, { nextAction: '必要', nextActionDetail: '' }]) {
+    const gas = office();
+    gas.loginAs(OMORI);
+    gas.setNow('2026-10-02 18:00');
+    const r = gas.g.submitReport({ workContent: '業務', customers: [customer(optional)] });
+    assert.equal(r.success, true, JSON.stringify(optional) + ' ' + r.message);
+  }
 });
 
 test('日報：提出で提出日時・最終更新日時・バージョン1、更新履歴を残す。変更なしの再提出はバージョンを上げない', () => {

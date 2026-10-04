@@ -108,8 +108,9 @@ test('日報の画面', { skip: !playwright && 'Playwright がないため省略
       const yamada = await open('yamada@example.com', '/?view=reports');
       await yamada.waitForSelector('#reportListPane:not([hidden]) .report-card');
       const list = await yamada.locator('#reportListPane').innerText();
-      assert.match(list, /2026年10月2日（金）\s+佐藤 花子\s+接客 2件\s+0 \/ 4人 確認済み[\s\S]*未確認/);
-      assert.doesNotMatch(list, /鈴木/, '鈴木の下書きは管理者にも見えない');
+      assert.match(list, /2026年10月2日（金）\s+佐藤 花子\s+接客 2件\s+0 \/ 4人 確認済み\s+コメント 0件\s+未確認：山田 太郎、鈴木 一郎、田中 美咲、猪倉 厚[\s\S]*未確認/);
+      assert.deepEqual(await yamada.locator('.report-card-name').allInnerTexts(), ['佐藤 花子'], '鈴木の下書きは管理者にも見えない（一覧に出るのは提出済みだけ）');
+      assert.doesNotMatch(list, /下書き/);
       assert.equal(await yamada.locator('#reportMyDrafts').isHidden(), true);
       await yamada.close();
     });

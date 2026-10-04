@@ -94,8 +94,20 @@ function getAllStaff_() {
         holidayWorkTarget: r['休日出勤申請対象'] !== undefined && String(r['休日出勤申請対象']).trim() === HOLIDAY_WORK_TARGET.YES,
         // 有給申請対象：「対象」と書かれた人だけ true（空欄・列なし＝申請できない）
         paidLeaveTarget: r['有給申請対象'] !== undefined && String(r['有給申請対象']).trim() === PAID_LEAVE_TARGET.YES,
+        // 日報提出対象：未提出の判定の対象か。「対象外」＝対象外、「対象」＝対象。空欄・列なしは勤怠集計対象に合わせる
+        reportSubmitTarget: reportTargetFlag_(r['日報提出対象'], r['勤怠集計対象'] === undefined || String(r['勤怠集計対象']).trim() !== ATTENDANCE_TARGET.NO),
+        // 日報確認対象：他の人の日報を「確認しました」する人（確認の分母）か。「対象外」だけ外す。空欄・列なし＝対象
+        reportConfirmTarget: reportTargetFlag_(r['日報確認対象'], true),
       };
     });
+}
+
+/** 「対象」→ true、「対象外」→ false、空欄・列なし → fallback */
+function reportTargetFlag_(value, fallback) {
+  const text = value === undefined ? '' : String(value).trim();
+  if (text === REPORT_TARGET.YES) return true;
+  if (text === REPORT_TARGET.NO) return false;
+  return fallback;
 }
 
 /**

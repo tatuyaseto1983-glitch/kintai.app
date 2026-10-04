@@ -16,6 +16,11 @@
       <span class="month-label" id="reportMonthLabel"></span>
       <button type="button" class="btn btn-ghost btn-sm" id="btnReportNextMonth" aria-label="次の月">›</button>
     </div>
+    <!-- 書き忘れた日（7日前まで・勤務の記録あり・まだ日報がない日）。8日以上前は管理者に相談 -->
+    <div id="reportMissing" class="card report-missing" hidden>
+      <h2 class="section-title">書き忘れた日の日報 <span class="section-sub">（7日前までの勤務した日）</span></h2>
+      <div class="report-missing-list" id="reportMissingList"></div>
+    </div>
     <div id="reportMyDrafts" class="report-drafts" hidden>
       <h2 class="section-title">自分の下書き <span class="section-sub">（あなただけに表示されています）</span></h2>
       <div class="report-cards" id="reportDraftCards"></div>
