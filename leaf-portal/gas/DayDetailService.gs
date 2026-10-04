@@ -201,11 +201,14 @@ function buildDayDetailForEmployee_(employeeId, dateKey, record, now) {
     hasSegments: segRows.length > 0,
     dayNote: record ? toPlainText_(record['日備考']) : '',
     businessTrip: record ? !isBlank_(record['出張']) : false,
+    // 勤務場所（会社＋在宅）と、付帯情報（直行・直帰・現場名）は分けて返す
+    workPlace: workPlaceCategoryLabel_(workStyleCategory_(segments)),
+    sites: segments.map(function (s) { return (s.site || '').trim(); }).filter(function (v, i, a) { return v && a.indexOf(v) === i; }),
     direct: !!(summary && summary.direct && segRows.length),
     directReturn: !!(summary && summary.directReturn && segRows.length),
     segments: segments.map(function (s) {
       return {
-        number: s.number, style: s.style,
+        number: s.number, style: s.style, place: workPlaceLabel_(s.style), legacy: punchWorkStyles_().indexOf(s.style) === -1,
         start: minutesToClock_(s.startMinutes), end: s.endMinutes === null ? '' : minutesToClock_(s.endMinutes),
         direct: !!s.direct, directReturn: !!s.directReturn, site: s.site || '', note: s.note || '', virtual: s.virtual,
       };

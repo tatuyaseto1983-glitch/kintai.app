@@ -78,14 +78,13 @@
         <section class="card actions-card" aria-labelledby="actionsTitle">
           <h2 class="card-title" id="actionsTitle">打刻</h2>
 
-          <div class="style-select" role="radiogroup" aria-label="勤務形態">
-            <span class="style-select-label">勤務形態</span>
-            <button type="button" class="style-option" data-style="出社" role="radio" aria-checked="false">出社</button>
+          <!-- 勤務場所：画面は「会社」、内部の値は「出社」。現場は勤務場所ではなく付帯情報（直行・直帰・現場名） -->
+          <div class="style-select" role="radiogroup" aria-label="勤務場所">
+            <span class="style-select-label">勤務場所</span>
+            <button type="button" class="style-option" data-style="出社" role="radio" aria-checked="false">会社</button>
             <button type="button" class="style-option" data-style="在宅" role="radio" aria-checked="false">在宅</button>
-            <button type="button" class="style-option" data-style="現場" role="radio" aria-checked="false">現場</button>
-            <button type="button" class="style-option" data-style="外出" role="radio" aria-checked="false">外出</button>
           </div>
-          <!-- 現場・外出を選んだときの付帯情報（時刻には影響しない。あとから「詳細・交通費」で直せる） -->
+          <!-- 出勤・再出勤のときの付帯情報（任意。時刻には影響しない。あとから「詳細・交通費」で直せる） -->
           <div class="punch-extras" id="punchExtras" hidden>
             <label class="check-inline" id="punchDirectBox"><input type="checkbox" id="punchDirect"> 直行（自宅から直接）</label>
             <label class="punch-site" for="punchSite">現場名（任意）
@@ -99,10 +98,9 @@
             <button type="button" class="btn btn-resume btn-lg" id="btnResume" data-label="再開" disabled>再開</button>
             <button type="button" class="btn btn-dark btn-lg" id="btnClockOut" data-label="退勤" disabled>退勤</button>
           </div>
-          <!-- 勤務中の切替（出社⇄在宅）と、中断中に別の勤務形態で再開するボタン。状態に合わせて表示する -->
+          <!-- 勤務中の［勤務場所を切替］（上で選んだ勤務場所へ。今と同じなら押せない） -->
           <div class="action-grid action-grid-sub" id="actionSub" hidden>
-            <button type="button" class="btn btn-outline" id="btnSwitchStyle" data-label="在宅勤務へ切替" hidden>在宅勤務へ切替</button>
-            <button type="button" class="btn btn-resume" id="btnResumeOther" data-label="在宅で再開" hidden>在宅で再開</button>
+            <button type="button" class="btn btn-outline" id="btnSwitchStyle" data-label="勤務場所を切替" hidden>勤務場所を切替</button>
           </div>
 
           <div class="break-reason" id="breakReasonBox">
@@ -135,7 +133,7 @@
               <table class="table">
                 <thead>
                   <tr>
-                    <th>日付</th><th>勤務形態</th><th>出勤</th><th>退勤</th><th>中断合計</th><th>実働</th><th>修正申請</th>
+                    <th>日付</th><th>勤務場所</th><th>出勤</th><th>退勤</th><th>中断合計</th><th>実働</th><th>修正申請</th>
                   </tr>
                 </thead>
                 <tbody id="monthRows"><tr><td colspan="7" class="empty">読み込み中...</td></tr></tbody>
@@ -238,10 +236,10 @@
             <option value="退勤">退勤</option>
             <option value="中断">中断</option>
             <option value="再開">再開</option>
-            <option value="勤務形態">勤務形態</option>
+            <option value="勤務形態">勤務場所</option>
             <option value="区間開始">勤務区間の開始</option>
             <option value="区間終了">勤務区間の終了</option>
-            <option value="区間勤務形態">勤務区間の勤務形態</option>
+            <option value="区間勤務形態">勤務区間の勤務場所</option>
           </select>
         </div>
         <div class="form-row" id="corSegmentRow" hidden>
@@ -258,7 +256,7 @@
           <label for="corAfterTime">修正後</label>
           <input type="time" id="corAfterTime">
           <select id="corAfterStyle" hidden>
-            <option value="出社">出社</option>
+            <option value="出社">会社</option>
             <option value="在宅">在宅</option>
           </select>
         </div>

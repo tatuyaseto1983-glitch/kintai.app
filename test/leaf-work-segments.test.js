@@ -53,7 +53,7 @@ test('1・2・3. 出社→在宅、在宅→出社、出社→在宅→出社（
   const gas = ready();
   gas.loginAs(FIXED);
   const [, sw] = run(gas, '2026-09-01', [['09:30', 'clockIn', '出社'], ['12:00', 'switchWorkStyle', '在宅'], ['18:30', 'clockOut']]);
-  assert.match(sw.message, /出社から在宅に切り替えました（12:00）/);
+  assert.match(sw.message, /勤務場所を会社から在宅に切り替えました（12:00）/);
   assert.deepEqual(segs(gas, 'AT-20260901-E002'), ['1:出社 09:30-12:00', '2:在宅 12:00-18:30']);
   assert.deepEqual(pick(att(gas, 'AT-20260901-E002'), SUMMARY), ['09:30', '18:30', '出社', '出社＋在宅', '2', '02:30', '06:30', '01:00', '08:00', '退勤済み']);
 
@@ -69,7 +69,7 @@ test('1・2・3. 出社→在宅、在宅→出社、出社→在宅→出社（
   // 同じ勤務形態への切替・中断中の切替はできない
   run(gas, '2026-09-04', [['09:30', 'clockIn', '出社']]);
   gas.setNow('2026-09-04 10:00');
-  assert.match(gas.g.switchWorkStyle('出社').message, /すでに出社で勤務中です/);
+  assert.match(gas.g.switchWorkStyle('出社').message, /現在と同じ勤務場所です/);
   gas.g.startBreak('');
   assert.match(gas.g.switchWorkStyle('在宅').message, /中断中は切り替えできません/);
   assert.match(gas.g.switchWorkStyle('自宅').message, /切り替え先の勤務形態/, '選べるのは出社・在宅・現場・外出だけ');
@@ -87,7 +87,7 @@ test('4・5. 退勤後の再出勤（09:30〜16:00 出社＋18:00〜20:00 在宅
   assert.equal(a['早退'], '', '早退は最後の終了（20:00）で判定');
   assert.equal(gas.main.rows('勤怠記録').length, 1, '1日1行のまま');
 
-  // 1日3区間：出社 → 在宅へ切替 → 退勤 → 出社で再出勤 → 退勤
+  // 1日3区間：出社 → 勤務場所を在宅へ切替 → 退勤 → 会社で再出勤 → 退勤
   run(gas, '2026-09-02', [['09:30', 'clockIn', '出社'], ['12:00', 'switchWorkStyle', '在宅'], ['15:00', 'clockOut'], ['16:00', 'clockIn', '出社'], ['18:30', 'clockOut']]);
   assert.deepEqual(segs(gas, 'AT-20260902-E002'), ['1:出社 09:30-12:00', '2:在宅 12:00-15:00', '3:出社 16:00-18:30']);
   assert.deepEqual(pick(att(gas, 'AT-20260902-E002'), SUMMARY), ['09:30', '18:30', '出社', '出社＋在宅', '3', '05:00', '03:00', '01:00', '07:00', '退勤済み']);
@@ -110,7 +110,7 @@ test('6・7・8・9. 中断→同じ形態で再開／出社中断→在宅再�
 
   // 12:00 出社を中断 → 12:30 在宅で再開：出社は 12:00 で終わり、在宅は 12:30 から
   const r = run(gas, '2026-09-03', [['09:30', 'clockIn', '出社'], ['12:00', 'startBreak', '移動'], ['12:30', 'resumeWork', '在宅'], ['18:30', 'clockOut']]);
-  assert.match(r[2].message, /在宅で再開しました（出社から在宅に切り替え／中断 00:30/);
+  assert.match(r[2].message, /在宅勤務で再開しました（会社から在宅に切り替え／中断 00:30/);
   assert.deepEqual(segs(gas, 'AT-20260903-E002'), ['1:出社 09:30-12:00', '2:在宅 12:30-18:30']);
   const a = att(gas, 'AT-20260903-E002');
   assert.deepEqual(pick(a, ['中断合計', '出社時間', '在宅時間', '自動休憩', '実働時間']), ['00:30', '02:30', '06:00', '01:00', '07:30'],
@@ -309,7 +309,7 @@ test('29・30. 他人の勤務区間は取得できない／同じ操作を続�
   assert.match(gas.g.getAttendanceDetail('AT-20260901-E002').message, /管理者/);
   const status = gas.g.getTodayStaffStatus().data.staff.find((s) => s.name === '佐藤');
   assert.deepEqual(Object.keys(status).sort(), ['isSelf', 'label', 'name', 'status', 'workStyle']);
-  assert.equal(status.label, '勤務中（在宅）');
+  assert.equal(status.label, '在宅勤務中');
   const dash = gas.g.getStaffDashboard(['today']).data.today.data;
   assert.equal(dash.record, null, '自分（鈴木）の今日の記録だけ。佐藤さんの区間は入らない');
   assert.doesNotMatch(JSON.stringify(gas.g.getStaffDashboard().data), /WS-|"09:30"|出社＋在宅/, "佐藤さんの区間・出勤時刻は返さない");
@@ -369,7 +369,7 @@ test('36・37・38. フレックス138時間・月次CSV・管理者の月次は
   assert.deepEqual(csv.data.csv.split('\r\n').slice(1).map((l) => l.slice(0, 10)), ['2026-08-21', '2026-08-21', '2026-09-20', '2026-09-20']);
   const old = gas.g.exportAttendanceCsv('2026-09');
   assert.equal(old.data.csv.split('\r\n').length, 5);
-  assert.ok(old.data.csv.split('\r\n')[0].endsWith(',勤務形態区分,勤務区間数,出社時間,在宅時間,現場外出時間,日備考,出張,直行,直帰'), '以前のCSVも新しい列は右端に');
+  assert.ok(old.data.csv.split('\r\n')[0].endsWith(',勤務形態区分,勤務区間数,出社時間,在宅時間,日備考,出張,直行,直帰'), '以前のCSVも新しい列は右端に');
   const monthly = gas.g.getAdminDashboard({ month: '2026-09', parts: ['monthly'] }).data.monthly;
   assert.equal(monthly.periodText, '2026年9月分 対象期間：2026/08/21〜2026/09/20');
   assert.equal(monthly.rows.find((r) => r.name === '鈴木').flex.worked, '16:00');
@@ -435,7 +435,7 @@ test('不具合の再現：同じ分に 出勤→中断→再開→中断→在�
   const id = 'AT-20261005-E002';
   assert.deepEqual(segs(gas, id), ['1:出社 12:10-12:10', '2:在宅 12:11-12:11'], '最初の区間の開始・勤務形態を書き換えない');
   assert.deepEqual(pick(att(gas, id), ['出勤', '退勤', '勤務形態', '勤務区間数', '中断合計', '実働時間']), ['12:10', '12:11', '出社', '2', '00:01', '00:00']);
-  assert.deepEqual(events(gas, id), ['12:10 出社で出勤', '12:10 中断', '12:10 再開（出社）', '12:10 中断', '12:11 再開（在宅）', '12:11 退勤'], '時刻順・操作の順');
+  assert.deepEqual(events(gas, id), ['12:10 会社で出勤', '12:10 中断', '12:10 再開（会社）', '12:10 中断', '12:11 再開（在宅）', '12:11 退勤'], '時刻順・操作の順');
 });
 
 test('再出勤しても最初の出勤時刻が変わらない／2回再出勤しても変わらない／最終退勤だけが更新される', () => {
@@ -453,7 +453,7 @@ test('再出勤しても最初の出勤時刻が変わらない／2回再出勤�
   run(gas, '2026-10-05', [['12:40', 'clockIn', '出社'], ['12:45', 'clockOut']]);
   assert.deepEqual(pick(att(gas, id), SEQ), ['12:05', '12:45', '4']);
   assert.deepEqual(segs(gas, id).slice(2), ['3:出社 12:30-12:40', '4:出社 12:40-12:45']);
-  assert.deepEqual(events(gas, id), ['12:05 出社で出勤', '12:10 退勤', '12:11 在宅で再出勤', '12:20 退勤', '12:30 出社で再出勤', '12:40 退勤', '12:40 出社で再出勤', '12:45 退勤']);
+  assert.deepEqual(events(gas, id), ['12:05 会社で出勤', '12:10 退勤', '12:11 在宅で再出勤', '12:20 退勤', '12:30 会社で再出勤', '12:40 退勤', '12:40 会社で再出勤', '12:45 退勤']);
 });
 
 test('日次再計算後も、出勤＝最初の開始・退勤＝最後の終了になる。シート直接修正→再計算でも同じ原則', () => {
@@ -501,14 +501,14 @@ test('勤務区間と中断を時刻順に並べたとき矛盾しない（指�
   run(gas, '2026-10-05', [['12:05', 'clockIn', '出社'], ['12:07', 'startBreak', ''], ['12:08', 'resumeWork', '出社'], ['12:09', 'switchWorkStyle', '在宅'],
     ['12:10', 'startBreak', ''], ['12:11', 'resumeWork', '在宅'], ['12:12', 'clockOut'], ['12:15', 'clockIn', '在宅'], ['12:20', 'clockOut']]);
   const list = events(gas, id);
-  assert.deepEqual(list, ['12:05 出社で出勤', '12:07 中断', '12:08 再開（出社）', '12:09 在宅へ切替', '12:10 中断', '12:11 再開（在宅）', '12:12 退勤', '12:15 在宅で再出勤', '12:20 退勤']);
+  assert.deepEqual(list, ['12:05 会社で出勤', '12:07 中断', '12:08 再開（会社）', '12:09 勤務場所を在宅へ切替', '12:10 中断', '12:11 再開（在宅）', '12:12 退勤', '12:15 在宅で再出勤', '12:20 退勤']);
   assert.deepEqual(pick(att(gas, id), SEQ), ['12:05', '12:20', '3']);
   // 中断 → 別の勤務形態で再開：「中断」と「再開（在宅）」が1回ずつ（再開が二重に出ない）
   run(gas, '2026-10-06', [['09:30', 'clockIn', '出社'], ['12:00', 'startBreak', ''], ['12:30', 'resumeWork', '在宅'], ['18:30', 'clockOut']]);
-  assert.deepEqual(events(gas, 'AT-20261006-E002'), ['09:30 出社で出勤', '12:00 中断', '12:30 再開（在宅）', '18:30 退勤']);
+  assert.deepEqual(events(gas, 'AT-20261006-E002'), ['09:30 会社で出勤', '12:00 中断', '12:30 再開（在宅）', '18:30 退勤']);
   // 日付またぎ：翌日の時刻は後ろに並ぶ
   run(gas, '2026-10-07', [['2026-10-07 22:00', 'clockIn', '出社'], ['2026-10-07 23:30', 'startBreak', ''], ['2026-10-08 00:10', 'resumeWork', '在宅'], ['2026-10-08 01:00', 'clockOut']]);
-  assert.deepEqual(events(gas, 'AT-20261007-E002'), ['22:00 出社で出勤', '23:30 中断', '00:10 再開（在宅）', '01:00 退勤']);
+  assert.deepEqual(events(gas, 'AT-20261007-E002'), ['22:00 会社で出勤', '23:30 中断', '00:10 再開（在宅）', '01:00 退勤']);
   // 並びの時刻は単調に増える（矛盾しない）
   const tl = plain(gas.g.buildTimelineEvents_(gas.g.getDaySegments_(gas.g.findAttendance_('E002', '2026-10-05'), gas.g.getSegmentRowsOfAttendance_(id)),
     gas.main.rows('中断履歴').filter((b) => b['勤怠ID'] === id).map((b) => ({ segmentId: b['勤務区間ID'], startMinutes: gas.g.toMinutes_(b['中断開始']), endMinutes: gas.g.toMinutes_(b['再開']) }))));
@@ -523,8 +523,8 @@ test('テスト環境の詳細表示だけ、打刻した時刻を秒まで（HH
   nowSec(gas, '2026-10-05 12:10:20'); gas.g.startBreak('');
   nowSec(gas, '2026-10-05 12:10:40'); gas.g.resumeWork('在宅');
   nowSec(gas, '2026-10-05 12:10:55'); gas.g.clockOut();
-  assert.deepEqual(events(gas, id, { showSeconds: true }), ['12:10:05 出社で出勤', '12:10:20 中断', '12:10:40 再開（在宅）', '12:10:55 退勤']);
-  assert.deepEqual(events(gas, id, { showSeconds: false }), ['12:10 出社で出勤', '12:10 中断', '12:10 再開（在宅）', '12:10 退勤'], '本番の通常画面は分まで');
+  assert.deepEqual(events(gas, id, { showSeconds: true }), ['12:10:05 会社で出勤', '12:10:20 中断', '12:10:40 再開（在宅）', '12:10:55 退勤']);
+  assert.deepEqual(events(gas, id, { showSeconds: false }), ['12:10 会社で出勤', '12:10 中断', '12:10 再開（在宅）', '12:10 退勤'], '本番の通常画面は分まで');
   assert.equal(plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-05'))).showSeconds, false, 'スプレッドシート名に「テスト」がなければ秒は出さない');
   gas.main.setName && gas.main.setName('【テスト】リーフ勤怠管理');
   if (gas.main.getName() === '【テスト】リーフ勤怠管理') assert.equal(plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-05'))).showSeconds, true);

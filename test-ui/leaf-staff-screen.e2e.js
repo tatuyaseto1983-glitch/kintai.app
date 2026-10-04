@@ -50,7 +50,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       assert.equal(await page.locator('#userDept').innerText(), '設計部');
       assert.equal(await page.locator('#userWorkType').innerText(), '固定勤務');
       assert.equal(await status(), '未出勤');
-      assert.deepEqual(await enabled(), { clockIn: false, break: false, resume: false, clockOut: false }, '勤務形態を選ぶまで出勤は押せない');
+      assert.deepEqual(await enabled(), { clockIn: false, break: false, resume: false, clockOut: false }, '勤務場所を選ぶまで出勤は押せない');
       assert.match(await page.locator('#clockDate').innerText(), /^\d{4}年\d{1,2}月\d{1,2}日（[日月火水木金土]）$/);
       // ブラウザのタイムゾーンがニューヨークでも、日本時間で表示する
       const jst = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
@@ -59,9 +59,9 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await shot(page, '01-initial');
     });
 
-    await t.test('3・5・20. 出社で出勤（連打しても1回だけ送信）', async () => {
+    await t.test('3・5・20. 会社で出勤（連打しても1回だけ送信）', async () => {
       await page.click('.style-option[data-style="出社"]');
-      assert.equal(await page.locator('#btnClockIn').innerText(), '出社で出勤する');
+      assert.equal(await page.locator('#btnClockIn').innerText(), '出勤する');
       await post('/__test/delay', { ms: 400 });
       const before = calls.filter((c) => c === 'clockIn').length;
       await page.locator('#btnClockIn').click();
@@ -72,11 +72,11 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await waitIdle();
       await post('/__test/delay', { ms: 0 });
       assert.equal(calls.filter((c) => c === 'clockIn').length - before, 1, '連打しても clockIn は1回だけ');
-      assert.match(await toastText(), /出勤しました（出社・09:25）/);
-      assert.equal(await status(), '出社勤務中');
+      assert.match(await toastText(), /出勤しました（会社・09:25）/);
+      assert.equal(await status(), '会社勤務中');
       assert.deepEqual(await enabled(), { clockIn: false, break: true, resume: false, clockOut: true });
       assert.match(await page.locator('#todayBody').innerText(), /出勤\s+09:25/);
-      assert.match(await page.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*勤務中（出社）/);
+      assert.match(await page.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*会社勤務中/);
     });
 
     await t.test('5. 二重出勤：画面が古くてもサーバー側で止まり、エラーが表示される', async () => {
@@ -87,7 +87,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await waitIdle();
       assert.match(await toastText(), /本日はすでに出勤済みです/);
       assert.equal(await page.locator('#toasts .toast-error').count() > 0, true);
-      assert.equal(await status(), '出社勤務中');
+      assert.equal(await status(), '会社勤務中');
     });
 
     await t.test('6・9. 中断すると退勤できない', async () => {
@@ -96,7 +96,7 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await page.click('#btnBreak');
       await waitIdle();
       assert.match(await toastText(), /中断しました/);
-      assert.equal(await status(), '中断中');
+      assert.equal(await status(), '中断中（会社）');
       assert.equal(await page.locator('#statusCard').getAttribute('class'), 'card status-card status-break');
       assert.deepEqual(await enabled(), { clockIn: false, break: false, resume: true, clockOut: false });
       assert.match(await page.locator('#actionHint').innerText(), /中断中は退勤できません/);
@@ -108,8 +108,8 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await post('/__test/now', { now: '2026-06-01 12:20' });
       await page.click('#btnResume');
       await waitIdle();
-      assert.match(await toastText(), /再開しました（中断 00:20/);
-      assert.equal(await status(), '出社勤務中');
+      assert.match(await toastText(), /再開しました（会社勤務・中断 00:20/);
+      assert.equal(await status(), '会社勤務中');
       assert.match(await page.locator('#todayBody').innerText(), /中断合計\s+00:20/);
     });
 
@@ -118,23 +118,23 @@ test('スタッフ画面をブラウザで操作する', { skip: !playwright && 
       await page.click('#btnClockOut');
       assert.equal(await page.locator('#confirmModal').isVisible(), true);
       await page.click('#btnConfirmCancel');
-      assert.equal(await status(), '出社勤務中', 'キャンセルなら何も起きない');
+      assert.equal(await status(), '会社勤務中', 'キャンセルなら何も起きない');
       await page.click('#btnClockOut');
       await page.click('#btnConfirmOk');
       await waitIdle();
       assert.match(await page.locator('#toasts').innerText(), /退勤しました（退勤 19:00／実働 08:15）/);
       assert.equal(await page.locator('#toasts .toast-warn').count() > 0, true, '要確認はオレンジで通知');
       assert.equal(await status(), '退勤済み');
-      // 退勤後は、勤務形態を選んで「再出勤」できる（勤務区間がもう1つ増える）
+      // 退勤後は、勤務場所を選んで［再出勤］できる（勤務区間がもう1つ増える）
       assert.deepEqual(await enabled(), { clockIn: true, break: false, resume: false, clockOut: false });
-      assert.equal(await page.locator('#btnClockIn').innerText(), '出社で再出勤する');
+      assert.equal(await page.locator('#btnClockIn').innerText(), '再出勤');
       assert.equal(await page.locator('.style-option[data-style="出社"]').isDisabled(), false);
       const today = await page.locator('#todayBody').innerText();
       assert.match(today, /実働時間\s+08:15/);
       assert.match(today, /社内超過時間\s+00:30/);
       assert.match(today, /要確認：社内超過時間が30分以上ですが/, '要確認の説明は設定値（30分）で表示');
       const row = await page.locator('#monthRows tr').first().innerText();
-      assert.match(row, /6\/1（月）\s+出社\s+09:25\s+19:00\s+00:20\s+08:15/);
+      assert.match(row, /6\/1（月）\s+会社\s+09:25\s+19:00\s+00:20\s+08:15/);
       assert.match(await page.locator('#staffList').innerText(), /佐藤 花子（あなた）\s*退勤済み/);
       await shot(page, '03-finished');
     });

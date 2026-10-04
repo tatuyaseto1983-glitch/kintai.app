@@ -188,7 +188,8 @@ function exportAttendanceCsv(month) {
     const monthKey = range.monthKey;
     // 以前からの列の順番のまま、新しい列（勤務形態区分など）はシートにある分だけ右端に足す
     const definition = getSheetDefinition_(SHEET_NAMES.ATTENDANCE);
-    const headers = definition.headers.concat((definition.optionalHeaders || []).filter(function (h) { return hasColumn_(SHEET_NAMES.ATTENDANCE, h); }));
+    // 「現場外出時間」は新しい集計では使わないので出さない（列はシートに残す）
+    const headers = definition.headers.concat((definition.optionalHeaders || []).filter(function (h) { return h !== '現場外出時間' && hasColumn_(SHEET_NAMES.ATTENDANCE, h); }));
     const lines = [headers.map(csvEscape_).join(',')];
     onlyAttendanceTargets_(getAttendanceInRange_(range.from, range.to)).forEach(function (r) {
       lines.push(headers.map(function (h) { return csvEscape_(h === '日付' ? toDateKey_(r[h]) : toPlainText_(r[h])); }).join(','));

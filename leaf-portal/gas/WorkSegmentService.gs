@@ -307,6 +307,14 @@ function calculateSegmentedWorkTime_(p) {
   return result;
 }
 
+/**
+ * 画面に出す勤務場所の区分：出社→会社、出社＋在宅→会社＋在宅。旧データの現場・外出は「（旧）」を付けて残す。
+ */
+function workPlaceCategoryLabel_(category) {
+  if (!category) return '';
+  return String(category).split('＋').map(function (s) { return workPlaceLabel_(s.trim()); }).join('＋');
+}
+
 /** 「出社＋在宅」のような勤務形態区分（決まった順番で並べる） */
 function workStyleCategory_(segments) {
   const used = {};
@@ -420,12 +428,12 @@ function switchWorkStyle_(workStyle, options) {
   const rows = ensureSegmentsForCurrent_(record, now.timestamp);
   const open = findOpenSegmentRow_(rows);
   if (!open) fail_('今の勤務区間が見つかりません。管理者に連絡してください');
-  if (toPlainText_(open['勤務形態']) === style) fail_('すでに' + style + 'で勤務中です');
+  if (toPlainText_(open['勤務形態']) === style) fail_('現在と同じ勤務場所です（' + workPlaceLabel_(style) + '）。切り替えるときは、上で別の勤務場所を選んでください');
 
   const from = toPlainText_(open['勤務形態']);
   closeAndStartSegment_(record, open, now.time, style, now.time, now.timestamp, now.timestamp, now.timestamp, extras);
   recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
-  return { message: from + 'から' + style + 'に切り替えました（' + now.time + '）', data: toAttendanceView_(record) };
+  return { message: '勤務場所を' + workPlaceLabel_(from) + 'から' + workPlaceLabel_(style) + 'に切り替えました（' + now.time + '）', data: toAttendanceView_(record) };
 }
 
 // ============================================================ 画面へ返す形
@@ -533,25 +541,27 @@ function buildTimelineEvents_(segments, breaks) {
   segments.forEach(function (s, k) {
     const cur = segAbs[k];
     const base = k * 10000;
-    const extra = (s.direct ? '・直行' : '') + (s.site ? '（' + s.site + '）' : '');
+    // 直行・現場名は補足として付ける（現場は勤務形態ではなく付帯情報）。例：会社で出勤・直行（○○様邸）
+    const extra = (s.direct ? '・直行' : '') + (s.site ? '（' + (s.direct ? '' : '現場：') + s.site + '）' : '');
+    const place = workPlaceLabel_(s.style);
     if (k === 0) {
-      add(cur.start, base, 'start', s.style + 'で出勤' + extra, s.style, s.startStamp);
+      add(cur.start, base, 'start', place + 'で出勤' + extra, s.style, s.startStamp);
     } else {
       const prev = segAbs[k - 1];
       const resumed = resumedBy[k];
       if (resumed) {
-        add(cur.start, base, 'resume', '再開（' + s.style + '）' + extra, s.style, s.startStamp || resumed.b.endStamp);
+        add(cur.start, base, 'resume', '再開（' + place + '）' + extra, s.style, s.startStamp || resumed.b.endStamp);
       } else if (prev.end !== null && prev.end === cur.start && isSwitchBoundary_(segments, k - 1)) {
-        add(cur.start, base, 'switch', s.style + 'へ切替' + extra, s.style, s.startStamp);
+        add(cur.start, base, 'switch', '勤務場所を' + place + 'へ切替' + extra, s.style, s.startStamp);
       } else {
-        add(cur.start, base, 'reclockin', s.style + 'で再出勤' + extra, s.style, s.startStamp);
+        add(cur.start, base, 'reclockin', place + 'で再出勤' + extra, s.style, s.startStamp);
       }
     }
     brs.filter(function (x) { return x.owner === k; }).forEach(function (x) {
       add(x.start, base + 1 + x.i * 2, 'break', '中断', '', x.b.startStamp);
       if (x.end !== null && !x.consumed) {
         const owner = segments[k];
-        add(x.end, base + 2 + x.i * 2, 'resume', '再開（' + owner.style + '）', owner.style, x.b.endStamp);
+        add(x.end, base + 2 + x.i * 2, 'resume', '再開（' + workPlaceLabel_(owner.style) + '）', owner.style, x.b.endStamp);
       }
     });
     if (cur.end !== null) {

@@ -46,34 +46,67 @@ test('setupSystem：交通費明細シートと勤怠記録の4列を追加す�
   assert.equal(gas.main.getSheetByName('勤怠記録').data[0].length, 31, '22列＋段階1の5列＋段階2の4列');
 });
 
-test('直行・直帰・直行直帰・現場名（打刻のときに入れる／勤務形態は現場・外出も選べる。現場と外出は別々に保存）', () => {
+test('勤務場所は会社（出社）・在宅の2択だけ。直行・直帰・直行直帰・現場名は付帯情報として保存する', () => {
   const gas = ready();
   gas.loginAs(FIXED);
-  // 直行：現場に直行 → 会社に戻る
-  run(gas, '2026-10-05', [['09:30', 'clockIn', '現場', { direct: true, site: '堺市○○様邸' }], ['14:00', 'switchWorkStyle', '出社'], ['18:30', 'clockOut']]);
-  assert.deepEqual(seg(gas, 'AT-20261005-E002'), ['現場|09:30-14:00|○||堺市○○様邸|', '出社|14:00-18:30||||']);
-  assert.deepEqual(pick(att(gas, 'AT-20261005-E002'), ['直行', '直帰', '勤務形態区分', '現場外出時間', '出社時間']), ['○', '', '出社＋現場', '04:30', '04:30']);
-  // 直帰：会社 → 外出して直帰
-  run(gas, '2026-10-06', [['09:30', 'clockIn', '出社'], ['15:00', 'switchWorkStyle', '外出', { site: '大阪市△△' }], ['18:30', 'clockOut', { directReturn: true }]]);
-  assert.deepEqual(seg(gas, 'AT-20261006-E002'), ['出社|09:30-15:00||||', '外出|15:00-18:30||○|大阪市△△|']);
+  // 1. 勤務場所は2択だけ（現場・外出は打刻できない）
+  assert.deepEqual(plain(gas.g.punchWorkStyles_()), ['出社', '在宅']);
+  gas.setNow('2026-10-04 09:00');
+  for (const bad of ['現場', '外出']) assert.match(gas.g.clockIn(bad).message, /勤務形態/, bad + 'は選べない');
+  assert.equal(gas.main.rows('勤怠記録').length, 0);
+  // 4. 直行＋現場名：会社（勤務場所）のまま、直行と現場名を付帯情報として持つ
+  run(gas, '2026-10-05', [['09:30', 'clockIn', '出社', { direct: true, site: '堺市○○様邸' }], ['14:00', 'switchWorkStyle', '在宅'], ['18:30', 'clockOut']]);
+  assert.deepEqual(seg(gas, 'AT-20261005-E002'), ['出社|09:30-14:00|○||堺市○○様邸|', '在宅|14:00-18:30||||']);
+  assert.deepEqual(pick(att(gas, 'AT-20261005-E002'), ['直行', '直帰', '勤務形態区分', '出社時間', '在宅時間', '現場外出時間']), ['○', '', '出社＋在宅', '04:30', '04:30', ''],
+    '現場外出時間は新しい集計では使わない');
+  // 5. 直帰
+  run(gas, '2026-10-06', [['09:30', 'clockIn', '出社'], ['18:30', 'clockOut', { directReturn: true }]]);
   assert.deepEqual(pick(att(gas, 'AT-20261006-E002'), ['直行', '直帰']), ['', '○']);
-  // 直行直帰：現場に直行して直帰
-  run(gas, '2026-10-07', [['08:30', 'clockIn', '現場', { direct: true, site: '和泉市□□様邸' }], ['17:00', 'clockOut', { directReturn: true }]]);
-  assert.deepEqual(pick(att(gas, 'AT-20261007-E002'), ['直行', '直帰', '勤務形態']), ['○', '○', '現場']);
-  assert.deepEqual(seg(gas, 'AT-20261007-E002'), ['現場|08:30-17:00|○|○|和泉市□□様邸|']);
-  // 時系列にも出る
+  // 6. 直行直帰
+  run(gas, '2026-10-07', [['08:30', 'clockIn', '出社', { direct: true, site: '和泉市□□様邸' }], ['17:00', 'clockOut', { directReturn: true }]]);
+  assert.deepEqual(pick(att(gas, 'AT-20261007-E002'), ['直行', '直帰', '勤務形態']), ['○', '○', '出社']);
+  assert.deepEqual(seg(gas, 'AT-20261007-E002'), ['出社|08:30-17:00|○|○|和泉市□□様邸|']);
   const tl = plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-07'), { showSeconds: false })).events.map((e) => e.time + ' ' + e.label);
-  assert.deepEqual(tl, ['08:30 現場で出勤・直行（和泉市□□様邸）', '17:00 退勤（直帰）']);
-  // 現場と外出は別々に保存（集計は現場外出時間にまとめる）
-  run(gas, '2026-10-08', [['09:00', 'clockIn', '現場'], ['12:00', 'switchWorkStyle', '外出'], ['13:00', 'clockOut']]);
-  assert.deepEqual(gas.main.rows('勤務区間履歴').filter((r) => r['勤怠ID'] === 'AT-20261008-E002').map((r) => r['勤務形態']), ['現場', '外出']);
-  assert.deepEqual(pick(att(gas, 'AT-20261008-E002'), ['勤務形態区分', '現場外出時間']), ['現場＋外出', '04:00']);
+  assert.deepEqual(tl, ['08:30 会社で出勤・直行（和泉市□□様邸）', '17:00 退勤（直帰）']);
+  // 現場名だけ（直行なし）は「現場：」を付ける
+  run(gas, '2026-10-08', [['09:00', 'clockIn', '在宅', { site: '見積先' }], ['10:00', 'clockOut']]);
+  assert.deepEqual(plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-08'), { showSeconds: false })).events.map((e) => e.label),
+    ['在宅で出勤（現場：見積先）', '退勤']);
+});
+
+test('以前に保存された「現場」「外出」の勤務区間があっても、読み取り・集計・表示で壊れない（書き換えない）', () => {
+  const gas = ready();
+  // 段階2の途中の版で保存された旧データ（現場・外出の区間）をそのまま入れる
+  gas.g.appendRecords_('勤怠記録', [{ '勤怠ID': 'AT-20261003-E002', '日付': '2026-10-03', '社員ID': 'E002', '氏名': '佐藤', '勤務区分': '固定勤務',
+    '勤務形態': '現場', '出勤': '09:00', '退勤': '13:00', '状態': '退勤済み', '勤務形態区分': '現場＋外出', '現場外出時間': '04:00' }]);
+  gas.g.appendRecords_('勤務区間履歴', [
+    { '勤務区間ID': 'WS-20261003-E002-01', '勤怠ID': 'AT-20261003-E002', '日付': '2026-10-03', '社員ID': 'E002', '氏名': '佐藤', '区間番号': '1', '勤務形態': '現場', '開始時刻': '09:00', '終了時刻': '12:00', '現場名': '堺市○○様邸' },
+    { '勤務区間ID': 'WS-20261003-E002-02', '勤怠ID': 'AT-20261003-E002', '日付': '2026-10-03', '社員ID': 'E002', '氏名': '佐藤', '区間番号': '2', '勤務形態': '外出', '開始時刻': '12:00', '終了時刻': '13:00' },
+  ]);
+  const segBefore = JSON.stringify(gas.main.getSheetByName('勤務区間履歴').data);
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-10-05 09:00');
+  const d = ok(gas.g.getAdminDayDetail('E002', '2026-10-03')).data;
+  assert.deepEqual(d.detail.segments.map((x) => [x.place, x.legacy]), [['現場（旧）', true], ['外出（旧）', true]], '旧データとして表示');
+  assert.equal(d.detail.workPlace, '現場（旧）＋外出（旧）');
+  assert.deepEqual(d.events.map((e) => e.label), ['現場（旧）で出勤（現場：堺市○○様邸）', '勤務場所を外出（旧）へ切替', '退勤']);
+  ok(gas.g.getAdminDashboard({ month: '2026-10' }));
+  ok(gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }));
+  ok(gas.g.recalculateThisMonth());
+  const a = att(gas, 'AT-20261003-E002');
+  assert.deepEqual(pick(a, ['実働時間', '出社時間', '在宅時間', '現場外出時間', '勤務形態区分']), ['03:00', '00:00', '00:00', '04:00', '現場＋外出'],
+    '旧データも実働には入る（4:00−自動休憩1:00）。現場外出時間の以前の値は書き換えない');
+  assert.equal(JSON.stringify(gas.main.getSheetByName('勤務区間履歴').data.map((r) => r.slice(0, 9))), JSON.stringify(JSON.parse(segBefore).map((r) => r.slice(0, 9))), '勤務形態・時刻は書き換えない');
+  // 本人の画面でも読める
+  gas.loginAs(FIXED);
+  const mine = ok(gas.g.getMyDayDetail('2026-10-03')).data;
+  assert.deepEqual(mine.segments.map((x) => x.place), ['現場（旧）', '外出（旧）']);
 });
 
 test('付帯情報は本人が当月分を承認なしで直せる（直行・直帰・現場名・備考・日備考・出張）。時刻は変えない', () => {
   const gas = ready();
   gas.loginAs(FIXED);
-  run(gas, '2026-10-05', [['09:30', 'clockIn', '出社'], ['13:00', 'switchWorkStyle', '現場'], ['18:30', 'clockOut']]);
+  run(gas, '2026-10-05', [['09:30', 'clockIn', '出社'], ['13:00', 'switchWorkStyle', '在宅'], ['18:30', 'clockOut']]);
   const before = pick(att(gas, 'AT-20261005-E002'), ['出勤', '退勤', '実働時間', '社内超過時間', '出社時間']);
   gas.setNow('2026-10-06 09:00');
   const r = ok(gas.g.saveMyDayDetail({
@@ -81,7 +114,7 @@ test('付帯情報は本人が当月分を承認なしで直せる（直行・�
     segments: [{ number: 1, direct: false, directReturn: false, site: '', note: '図面作成' }, { number: 2, direct: false, directReturn: true, site: '堺市○○様邸', note: '' }],
   }));
   assert.match(r.message, /日の情報・区間の情報を保存しました/);
-  assert.deepEqual(seg(gas, 'AT-20261005-E002'), ['出社|09:30-13:00||||図面作成', '現場|13:00-18:30||○|堺市○○様邸|']);
+  assert.deepEqual(seg(gas, 'AT-20261005-E002'), ['出社|09:30-13:00||||図面作成', '在宅|13:00-18:30||○|堺市○○様邸|']);
   const a = att(gas, 'AT-20261005-E002');
   assert.deepEqual(pick(a, ['日備考', '出張', '直行', '直帰']), ['午後は現場対応', '○', '', '○']);
   assert.deepEqual(pick(a, ['出勤', '退勤', '実働時間', '社内超過時間', '出社時間']), before, '時刻・実働は変わらない');
@@ -104,7 +137,7 @@ test('付帯情報は本人が当月分を承認なしで直せる（直行・�
 test('自家用車の距離（小数可）は交通費明細の自家用車の1行として保存し、勤怠記録には保存しない', () => {
   const gas = ready();
   gas.loginAs(FIXED);
-  run(gas, '2026-10-05', [['09:30', 'clockIn', '現場', { direct: true, site: '堺市○○様邸' }], ['17:00', 'clockOut']]);
+  run(gas, '2026-10-05', [['09:30', 'clockIn', '出社', { direct: true, site: '堺市○○様邸' }], ['17:00', 'clockOut']]);
   gas.setNow('2026-10-05 17:10');
   ok(gas.g.saveMyDayDetail({ date: '2026-10-05', car: { use: true, km: '32.5' } }));
   let rows = trRows(gas);
@@ -233,7 +266,7 @@ test('他人の交通費は取得・修正・削除できない。管理者は�
 test('日次・月次の集計（月次CSVの列）と、走行距離を二重に計上しない', () => {
   const gas = ready();
   gas.loginAs(FIXED);
-  run(gas, '2026-10-05', [['09:30', 'clockIn', '現場', { direct: true, site: '堺市○○様邸' }], ['17:00', 'clockOut', { directReturn: true }]]);
+  run(gas, '2026-10-05', [['09:30', 'clockIn', '出社', { direct: true, site: '堺市○○様邸' }], ['17:00', 'clockOut', { directReturn: true }]]);
   gas.setNow('2026-10-05 17:10');
   ok(gas.g.saveMyDayDetail({ date: '2026-10-05', dayNote: '直行直帰', businessTrip: true, car: { use: true, km: '32.5' } }));
   ok(gas.g.addTransportExpense(tr({ mode: '高速道路', amount: '1320', privateCar: true })));
@@ -250,8 +283,8 @@ test('日次・月次の集計（月次CSVの列）と、走行距離を二重�
   gas.loginAs(ADMIN);
   gas.setNow('2026-10-07 09:00');
   const csv = ok(gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' })).data.csv.split('\r\n');
-  assert.ok(csv[0].endsWith(',日備考,出張,直行,直帰,業務走行距離,交通費合計'));
-  assert.match(csv[1], /,直行直帰,○,○,○,32\.5,1920$/);
+  assert.ok(csv[0].endsWith(',日備考,出張,直行,直帰,現場,業務走行距離,交通費合計'));
+  assert.match(csv[1], /,直行直帰,○,○,○,堺市○○様邸,32\.5,1920$/);
   const sato = gas.g.getAdminDashboard({ month: '2026-10', parts: ['monthly'] }).data.monthly.rows.find((x) => x.name === '佐藤');
   assert.deepEqual([sato.mileageKm, sato.transportAmount], [40, 1920]);
 });
@@ -264,4 +297,39 @@ test('画面：スタッフ画面の許可リストに交通費・詳細の関�
   for (const fn of ['getMyDayDetail', 'saveMyDayDetail', 'getMyTransportExpenses', 'addTransportExpense', 'updateTransportExpense', 'deleteTransportExpense']) assert.match(list, new RegExp("'" + fn + "'"));
   assert.doesNotMatch(list, /Admin|approve|getAttendanceDetail/);
   assert.doesNotMatch(src, /innerHTML/);
+});
+
+test('勤務場所の切替・再開・再出勤：同じ勤務場所なら区間を作らない。表示は会社／在宅（中断中（会社）など）', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  const id = 'AT-20261005-E002';
+  const segs = () => gas.main.rows('勤務区間履歴').filter((r) => r['勤怠ID'] === id).map((r) => r['勤務形態'] + ' ' + r['開始時刻'] + '-' + r['終了時刻']);
+  const label = () => gas.g.getTodayStaffStatus().data.staff.find((s) => s.name === '佐藤').label;
+  run(gas, '2026-10-05', [['09:00', 'clockIn', '出社']]);
+  assert.equal(label(), '会社勤務中');
+  gas.setNow('2026-10-05 09:30');
+  const same = gas.g.switchWorkStyle('出社');
+  assert.deepEqual([same.success, /現在と同じ勤務場所です（会社）/.test(same.message)], [false, true]);
+  assert.deepEqual(segs(), ['出社 09:00-'], '同じ勤務場所の切替では区間を作らない');
+  // 15. 在宅→会社 の切替も
+  run(gas, '2026-10-05', [['10:00', 'switchWorkStyle', '在宅'], ['11:00', 'switchWorkStyle', '出社']]);
+  assert.equal(label(), '会社勤務中');
+  // 13. 中断中に同じ勤務場所で再開 → 区間は増えない
+  run(gas, '2026-10-05', [['12:00', 'startBreak', '']]);
+  assert.equal(label(), '中断中（会社）');
+  const r = ok(gas.g.resumeWork('出社'));
+  assert.match(r.message, /再開しました（会社勤務・中断/);
+  assert.deepEqual(segs(), ['出社 09:00-10:00', '在宅 10:00-11:00', '出社 11:00-']);
+  // 16. 中断中に 会社→在宅 へ変えて再開（中断は区間の外）
+  run(gas, '2026-10-05', [['13:00', 'startBreak', ''], ['13:30', 'resumeWork', '在宅']]);
+  assert.deepEqual(segs().slice(-2), ['出社 11:00-13:00', '在宅 13:30-']);
+  assert.equal(label(), '在宅勤務中');
+  // 19. 再出勤は選んだ勤務場所
+  run(gas, '2026-10-05', [['15:00', 'clockOut'], ['16:00', 'clockIn', '出社'], ['17:00', 'clockOut']]);
+  assert.deepEqual(segs().slice(-1), ['出社 16:00-17:00']);
+  const ev = plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-05'), { showSeconds: false })).events.map((e) => e.label);
+  assert.deepEqual(ev, ['会社で出勤', '勤務場所を在宅へ切替', '勤務場所を会社へ切替', '中断', '再開（会社）', '中断', '再開（在宅）', '退勤', '会社で再出勤', '退勤']);
+  assert.equal(att(gas, id)['勤務形態区分'], '出社＋在宅', '内部の値は出社のまま');
+  assert.equal(ok(gas.g.getMyAttendance()).data.records[0].workPlace, '会社＋在宅', '画面用は会社＋在宅');
+  assert.equal(att(gas, id)['現場外出時間'], '', '現場外出時間は新しい集計では使わない');
 });

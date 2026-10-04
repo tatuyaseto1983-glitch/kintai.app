@@ -122,7 +122,7 @@
       d.segments.forEach(function (sg) {
         var box = el('div', 'dd-segment');
         box.setAttribute('data-number', String(sg.number));
-        box.appendChild(el('p', 'subhead', '区間' + sg.number + '　' + sg.style + '　' + sg.start + '〜' + (sg.end || '勤務中')));
+        box.appendChild(el('p', 'subhead', '区間' + sg.number + '　' + (sg.place || sg.style) + '　' + sg.start + '〜' + (sg.end || '勤務中')));
         var checks = el('div', 'dd-checks');
         checks.appendChild(checkbox('ddDirect' + sg.number, '直行', sg.direct, locked));
         checks.appendChild(checkbox('ddReturn' + sg.number, '直帰', sg.directReturn, locked));

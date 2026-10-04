@@ -92,10 +92,10 @@ function exportAdminAttendanceCsv(params) {
     }
     const headers = ['日付', '社員ID', '氏名', '部署', '勤務区分', '勤務形態', '出勤', '退勤', '自動休憩', '中断合計', '実働',
       '遅刻', '早退', '社内超過', '事前残業申請', '要確認', '打刻漏れ', '打刻修正状況', '状態',
-      // 勤務区間の列（以前の列の右に足す。以前の記録で計算していない日は空欄）
-      '勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間',
-      // 段階2：付帯情報と交通費（業務走行距離・交通費合計は交通費明細から集計。削除済みは入れない）
-      '日備考', '出張', '直行', '直帰', '業務走行距離', '交通費合計'];
+      // 勤務区間の列（以前の列の右に足す。以前の記録で計算していない日は空欄）。勤務場所は 会社・在宅（出社→会社と表示）
+      '勤務場所', '勤務区間数', '出社時間', '在宅時間',
+      // 段階2：付帯情報と交通費（現場は勤務場所ではなく付帯情報。業務走行距離・交通費合計は交通費明細から集計。削除済みは入れない）
+      '日備考', '出張', '直行', '直帰', '現場', '業務走行距離', '交通費合計'];
     const transportByDay = {};
     listTransportRows_('', range.from, range.to).forEach(function (r) {
       const key = String(r['社員ID']).trim() + '|' + toDateKey_(r['日付']);
@@ -108,8 +108,8 @@ function exportAdminAttendanceCsv(params) {
       lines.push([row.date, row.employeeId, row.name, row.department, row.workType, row.workStyle, row.clockIn, row.clockOut,
         row.autoBreak, row.breakTotal, row.workTime, row.late, row.earlyLeave, row.internalExcess, row.preOvertimeRequest,
         row.needsCheck, row.issues.join('・'), row.correctionStatus, row.status,
-        row.workStyleCategory, row.segmentCount, row.officeTime, row.remoteTime, row.siteOutingTime,
-        row.dayNote, row.businessTrip, row.direct, row.directReturn].concat(transportCsvCells_(transportByDay[row.employeeId + '|' + row.date])).map(csvCell_).join(','));
+        row.workPlace, row.segmentCount, row.officeTime, row.remoteTime,
+        row.dayNote, row.businessTrip, row.direct, row.directReturn, row.sites.join('・')].concat(transportCsvCells_(transportByDay[row.employeeId + '|' + row.date])).map(csvCell_).join(','));
     });
     return {
       message: (range.periodText || label) + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
@@ -206,6 +206,11 @@ function transportCsvCells_(items) {
 
 function toAdminAttendanceRow_(record, ctx) {
   const view = toAttendanceView_(record);
+  // 勤務場所（会社＋在宅）と、付帯情報の現場名（勤務区間から。重なりは1つに）を分けて持つ
+  view.workPlace = workPlaceCategoryLabel_(view.workStyleCategory || view.workStyle);
+  view.sites = ((ctx.calc && ctx.calc.segmentsByAttendance[view.attendanceId]) || [])
+    .map(function (r) { return toPlainText_(r['現場名']).trim(); })
+    .filter(function (v, i, a) { return v && a.indexOf(v) === i; });
   const staff = ctx.staffById[view.employeeId] || null;
   view.department = staff ? staff.department : '';
   view.issues = detectPunchIssues_(record, ctx);

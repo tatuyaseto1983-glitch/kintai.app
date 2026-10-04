@@ -106,7 +106,7 @@ function resumeWork_(workStyle, options) {
       if (!open) fail_('今の勤務区間が見つかりません。管理者に連絡してください');
       closeAndStartSegment_(record, open, toClockText_(latest['中断開始']), requestedStyle, now.time, now.timestamp,
         toPlainText_(latest['中断打刻日時']), now.timestamp, extras);
-      switched = currentStyle + 'から' + requestedStyle + 'に切り替え';
+      switched = workPlaceLabel_(currentStyle) + 'から' + workPlaceLabel_(requestedStyle) + 'に切り替え';
     }
   }
 
@@ -125,7 +125,7 @@ function resumeWork_(workStyle, options) {
   if (switched) recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
 
   return {
-    message: (switched ? requestedStyle + 'で再開しました（' + switched + '／' : '再開しました（') +
+    message: (switched ? workPlaceLabel_(requestedStyle) + '勤務で再開しました（' + switched + '／' : '再開しました（' + (requestedStyle ? workPlaceLabel_(requestedStyle) + '勤務・' : '')) +
       '中断 ' + formatMinutes_(minutes) + '／本日の中断合計 ' + formatMinutes_(total) + '）',
     data: toAttendanceView_(record),
   };

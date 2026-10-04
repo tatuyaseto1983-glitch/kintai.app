@@ -50,17 +50,28 @@ const EMPLOYMENT_STATUS = { ACTIVE: '在籍', ON_LEAVE: '休職', RETIRED: '退�
 /** 雇用区分（選択肢の例。リスト外の値も入力できます） */
 const EMPLOYMENT_TYPES = ['正社員', '契約社員', 'パート・アルバイト'];
 
-/** 勤務形態（打刻で選べるのは出社・在宅。現場・外出は勤務区間の値として受け付けるだけで、段階2で画面に出す） */
+/**
+ * 勤務形態（内部の値）。新しい打刻で保存するのは 出社・在宅 の2つだけ（画面の表記は「勤務場所：会社／在宅」）。
+ * 現場・外出は以前のテストデータに残っていることがあるので、読み取りと表示（旧データ）だけ受け付ける。
+ * 現場は勤務形態ではなく、勤務区間の付帯情報（直行・直帰・現場名）で表す。
+ */
 const WORK_STYLES = { OFFICE: '出社', REMOTE: '在宅', SITE: '現場', OUTING: '外出' };
 
-/** 勤務区間の「勤務形態」に入れてよい値（この順番で「出社＋在宅」のように並べる） */
+/** 勤務区間の「勤務形態」として読める値（この順番で「出社＋在宅」のように並べる。現場・外出は旧データ） */
 function segmentWorkStyles_() {
   return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE, WORK_STYLES.SITE, WORK_STYLES.OUTING];
 }
 
-/** 打刻（出勤・切替・再開・再出勤）で選べる勤務形態。現場と外出は別々に保存する（集計は「現場外出時間」） */
+/** 打刻（出勤・切替・再開・再出勤）で選べる勤務形態＝勤務場所。出社（画面は「会社」）・在宅 だけ */
 function punchWorkStyles_() {
-  return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE, WORK_STYLES.SITE, WORK_STYLES.OUTING];
+  return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE];
+}
+
+/** 画面に出す勤務場所の名前（出社→会社。旧データの現場・外出は「（旧）」を付ける） */
+function workPlaceLabel_(style) {
+  if (style === WORK_STYLES.OFFICE) return '会社';
+  if (style === WORK_STYLES.REMOTE) return '在宅';
+  return style ? style + '（旧）' : '';
 }
 
 /** 交通費明細の交通手段 */

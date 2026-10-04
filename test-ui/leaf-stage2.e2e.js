@@ -40,29 +40,29 @@ test('段階2の画面（直行・直帰・現場・1日の詳細・交通費・
     await post('/__test/now', { now: '2026-10-05 09:30' });
     const p = await open('sato@example.com');
 
-    await t.test('現場を選ぶと直行・現場名が出る → 現場で直行して出勤', async () => {
-      assert.equal(await p.locator('#punchExtras').isHidden(), true);
-      await p.click('.style-option[data-style="現場"]');
-      assert.equal(await p.locator('#punchExtras').isVisible(), true);
-      assert.equal(await p.locator('#btnClockIn').innerText(), '現場で出勤する');
+    await t.test('4. 出勤のときに直行・現場名を入れる（勤務場所は会社のまま。現場は付帯情報）', async () => {
+      assert.equal(await p.locator('#punchExtras').isVisible(), true, '未出勤のときは直行・現場名を入れられる');
+      await p.click('.style-option[data-style="出社"]');
+      assert.equal(await p.locator('#btnClockIn').innerText(), '出勤する');
       await p.check('#punchDirect');
       await p.fill('#punchSite', '堺市○○様邸');
       await p.click('#btnClockIn');
       await idle(p);
-      assert.match(await lastToast(p), /出勤しました（現場・09:30）/);
+      assert.match(await lastToast(p), /出勤しました（会社・09:30）/);
       assert.equal(await p.inputValue('#punchSite'), '', '出勤したら入力欄は空に戻る');
-      assert.match(await p.locator('#todayBody .timeline').innerText(), /09:30\s+現場で出勤・直行（堺市○○様邸）/);
-      assert.equal(await p.locator('#punchDirectBox').isHidden(), true, '勤務中は直行の欄は出ない');
+      assert.match(await p.locator('#todayBody .timeline').innerText(), /09:30\s+会社で出勤・直行（堺市○○様邸）/);
+      assert.equal(await p.locator('#punchExtras').isHidden(), true, '勤務中は直行・現場名の欄は出ない（詳細・交通費から直す）');
+      const seg = gas.main.rows('勤務区間履歴')[0];
+      assert.deepEqual([seg['勤務形態'], seg['直行'], seg['現場名']], ['出社', '○', '堺市○○様邸']);
     });
 
-    await t.test('勤務中に「出社」を選んで切替 → 退勤（直帰なし）', async () => {
-      await p.click('.style-option[data-style="出社"]');
-      assert.equal(await p.locator('#btnSwitchStyle').innerText(), '出社勤務へ切替');
-      assert.equal(await p.locator('#punchExtras').isHidden(), true);
+    await t.test('在宅を選んで［勤務場所を切替］→ 退勤（直帰なし）', async () => {
+      await p.click('.style-option[data-style="在宅"]');
+      assert.equal(await p.locator('#btnSwitchStyle').innerText(), '勤務場所を切替');
       await post('/__test/now', { now: '2026-10-05 14:00' });
       await p.click('#btnSwitchStyle');
       await idle(p);
-      assert.match(await lastToast(p), /現場から出社に切り替えました/);
+      assert.match(await lastToast(p), /勤務場所を会社から在宅に切り替えました/);
       await post('/__test/now', { now: '2026-10-05 18:30' });
       await p.click('#btnClockOut');
       assert.equal(await p.locator('#confirmDirectReturn').isChecked(), false);
@@ -70,7 +70,7 @@ test('段階2の画面（直行・直帰・現場・1日の詳細・交通費・
       await idle(p);
       const body = await p.locator('#todayBody').innerText();
       assert.match(body, /日の属性\s+直行/);
-      assert.match(body, /勤務形態\s+出社＋現場/);
+      assert.match(body, /勤務場所\s+会社＋在宅/);
     });
 
     await t.test('1日の詳細：区間の現場名・直帰、日備考・出張、自家用車の距離を保存', async () => {
@@ -152,9 +152,11 @@ test('段階2の画面（直行・直帰・現場・1日の詳細・交通費・
       await a.locator('#admTableBody tr', { hasText: '佐藤 花子' }).locator('button[data-detail]').click();
       await a.waitForSelector('.segment-detail');
       const detail = await a.locator('.segment-detail').innerText();
-      assert.match(detail, /区間1\s+現場\s+09:30〜14:00.*直行／現場：堺市○○様邸/);
-      assert.match(detail, /区間2\s+出社\s+14:00〜18:30.*直帰／備考：見積の打合せ/);
-      assert.match(detail, /日の属性：出張・直行・直帰\s+日備考：午前は現場、午後は会社\s+自家用車の業務走行距離：32.5km/);
+      assert.match(detail, /区間1\s+会社\s+09:30〜14:00.*直行／現場：堺市○○様邸/);
+      assert.match(detail, /区間2\s+在宅\s+14:00〜18:30.*直帰／備考：見積の打合せ/);
+      // 勤務場所と、直行・直帰・現場・出張は分けて表示する
+      assert.match(detail, /勤務場所\s+会社＋在宅\s+直行\s+あり\s+直帰\s+あり\s+現場\s+堺市○○様邸\s+出張\s+あり\s+日備考\s+午前は現場、午後は会社\s+自家用車の業務走行距離\s+32.5km/);
+      assert.match(await a.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText(), /会社＋在宅\s+直行／直帰／現場：堺市○○様邸/);
       assert.match(detail, /交通費（2件・1,320円・32.5km）/);
       assert.doesNotMatch(detail, /打合せ<\/b>/, '削除済みは出さない');
       await shot(a, 's2-03-admin-detail');

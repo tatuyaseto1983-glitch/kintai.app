@@ -215,6 +215,11 @@
     state.timeline = res.data ? res.data.timeline || null : null;
     state.serverDate = res.data ? res.data.date : '';
     state.todayLoaded = true;
+    // 勤務中・中断中は、今の勤務場所が変わったときだけ上の選択を今の勤務場所に合わせる（選び直した途中では戻さない）
+    var st = currentStatus();
+    var cur = st === STATUS.WORKING || st === STATUS.ON_BREAK ? currentStyle() : '';
+    if (cur && cur !== state.syncedStyle && STYLES.indexOf(cur) !== -1) state.workStyle = cur;
+    state.syncedStyle = cur;
     renderStatus();
     renderTodayRecord();
   }
@@ -341,39 +346,36 @@
     return (state.timeline && state.timeline.currentStyle) || r.currentStyle || r.workStyle || '';
   }
 
-  var STYLES = ['出社', '在宅', '現場', '外出'];
-  function otherStyle(style) { return style === '在宅' ? '出社' : '在宅'; }
-  function isFieldStyle(style) { return style === '現場' || style === '外出'; }
+  /** 勤務場所（内部の値）。画面の表記は 出社→会社、在宅→在宅。以前の現場・外出は旧データとして表示だけする */
+  var STYLES = ['出社', '在宅'];
+  function placeLabel(style) { return style === '出社' ? '会社' : style === '在宅' ? '在宅' : style ? style + '（旧）' : ''; }
+  function placeCategory(category) {
+    return String(category || '').split('＋').filter(function (x) { return x; }).map(placeLabel).join('＋');
+  }
 
-  /**
-   * 次の操作で使う勤務形態。未出勤・退勤済みなら選んだ勤務形態。
-   * 勤務中・中断中なら、選んだ勤務形態が今と違えばそれ、同じなら「出社⇄在宅」のもう一方。
-   */
+  /** 次の操作で使う勤務場所＝上で選んでいる勤務場所（勤務中・中断中で未選択なら今の勤務場所） */
   function targetStyle() {
     var s = currentStatus();
-    if (s === STATUS.WORKING || s === STATUS.ON_BREAK) {
-      var cur = currentStyle() || '出社';
-      return state.workStyle && state.workStyle !== cur ? state.workStyle : otherStyle(cur);
-    }
+    if (s === STATUS.WORKING || s === STATUS.ON_BREAK) return state.workStyle || currentStyle() || '出社';
     return state.workStyle;
   }
 
-  /** 打刻と一緒に送る付帯情報（直行・現場名）。時刻には影響しない */
-  function punchOptions(withDirect) {
+  /** 出勤・再出勤と一緒に送る付帯情報（直行・現場名）。時刻には影響しない（現場は勤務場所ではない） */
+  function punchOptions() {
     var o = {};
-    if (isFieldStyle(targetStyle())) {
-      var site = $('punchSite').value.trim();
-      if (site) o.site = site;
-      if (withDirect && $('punchDirect').checked) o.direct = true;
-    }
+    var site = $('punchSite').value.trim();
+    if (site) o.site = site;
+    if ($('punchDirect').checked) o.direct = true;
     return o;
   }
   function clearPunchExtras() { $('punchSite').value = ''; $('punchDirect').checked = false; }
 
   /** 「出社勤務中」「在宅勤務中」「中断中」など、画面に出す状態の名前 */
+  /** 「会社勤務中」「在宅勤務中」「中断中（会社）」「退勤済み」など、画面に出す状態の名前 */
   function statusDisplayName(record) {
     var status = record ? record.status : STATUS.NOT_STARTED;
-    if (status === STATUS.WORKING) return (currentStyle() === '在宅' ? '在宅' : '出社') + '勤務中';
+    if (status === STATUS.WORKING) return placeLabel(currentStyle() || '出社') + '勤務中';
+    if (status === STATUS.ON_BREAK) return '中断中（' + placeLabel(currentStyle() || '出社') + '）';
     return status || STATUS.NOT_STARTED;
   }
 
@@ -391,7 +393,7 @@
       sub.push('出勤 ' + (r.clockIn || '--:--') + (r.clockOut ? '　退勤 ' + r.clockOut : ''));
       var count = state.timeline ? state.timeline.segments.length : 0;
       if (count > 1) sub.push('本日の勤務区間 ' + count + 'つ');
-      if (r.status === STATUS.ON_BREAK) sub.push('業務に戻ったら「' + (currentStyle() || '出社') + 'で再開」または「' + otherStyle(currentStyle()) + 'で再開」を押してください');
+      if (r.status === STATUS.ON_BREAK) sub.push('業務に戻ったら［再開］を押してください');
     } else {
       sub.push('まだ出勤の記録がありません');
     }
@@ -422,21 +424,20 @@
         ul.appendChild(li);
       });
       if (r.status === STATUS.WORKING || r.status === STATUS.ON_BREAK) {
-        ul.appendChild(el('li', 'timeline-item timeline-now', r.status === STATUS.ON_BREAK ? '（中断中）' : '（' + (currentStyle() || '出社') + 'で勤務中）'));
+        ul.appendChild(el('li', 'timeline-item timeline-now', r.status === STATUS.ON_BREAK ? '（中断中）' : '（' + placeLabel(currentStyle() || '出社') + 'で勤務中）'));
       }
       body.appendChild(ul);
       if (tl.showSeconds) body.appendChild(el('p', 'card-note', 'テスト環境のため、打刻した時刻を秒まで表示しています。'));
     }
 
     var dl = el('dl', 'record-list');
-    addRow(dl, '勤務形態', r.workStyleCategory || r.workStyle);
+    addRow(dl, '勤務場所', placeCategory(r.workStyleCategory || r.workStyle));
     addRow(dl, '出勤', r.clockIn);
     addRow(dl, '退勤', r.clockOut, finished ? '' : '未退勤');
     if (tl && tl.segments.length > 1) addRow(dl, '区間数', tl.segments.length + 'つ');
     if (finished && (r.officeTime || r.remoteTime)) {
-      addRow(dl, '出社', r.officeTime);
+      addRow(dl, '会社', r.officeTime);
       addRow(dl, '在宅', r.remoteTime);
-      if (r.siteOutingTime && r.siteOutingTime !== '00:00') addRow(dl, '現場・外出', r.siteOutingTime);
     }
     addRow(dl, '中断合計', r.breakTotal || '00:00');
     addRow(dl, '自動休憩', r.autoBreak, finished ? '' : '退勤時に計算');
@@ -448,7 +449,7 @@
     if (r.dayNote) addRow(dl, '日備考', r.dayNote);
     body.appendChild(dl);
     if (finished && (r.officeTime || r.remoteTime)) {
-      body.appendChild(el('p', 'card-note', '出社・在宅の時間は、中断を除いた時間です。その合計から自動休憩（1日1回）を引いたものが実働時間です。'));
+      body.appendChild(el('p', 'card-note', '会社・在宅の時間は、中断を除いた時間です。その合計から自動休憩（1日1回）を引いたものが実働時間です。'));
     }
 
     // 固定勤務の人には、値があるものだけ表示する（空欄の項目は出さない）
@@ -500,7 +501,7 @@
       if (r.date === state.serverDate) tr.className = 'is-today';
       var wd = weekdayOf(r.date);
       tr.appendChild(el('td', wd === 0 ? 'sun' : wd === 6 ? 'sat' : '', formatDateShort(r.date)));
-      tr.appendChild(el('td', '', r.workStyleCategory || r.workStyle || '—'));
+      tr.appendChild(el('td', '', placeCategory(r.workStyleCategory || r.workStyle) || '—'));
       tr.appendChild(el('td', '', r.clockIn || '—'));
       tr.appendChild(el('td', '', r.clockOut || (r.status === STATUS.FINISHED ? '—' : '勤務中')));
       tr.appendChild(el('td', '', r.breakTotal || '—'));
@@ -526,37 +527,35 @@
     var onBreak = ready && s === STATUS.ON_BREAK;
     var style = currentStyle() || '出社';
     var target = targetStyle();
+    var same = !!target && target === style;
 
-    // 未出勤：出勤／退勤済み：再出勤（どちらも勤務形態を選んでから押す）。勤務中・中断中は切替・再開の勤務形態を選ぶ
+    // 勤務場所（会社・在宅）は、どの状態でも上で選ぶ。ボタンは状態ごとに1つずつ
     setStyleButtonsEnabled(notStarted || finished || working || onBreak);
+    // 未出勤：［出勤する］／退勤済み：［再出勤］
     $('btnClockIn').disabled = !((notStarted || finished) && state.workStyle);
-    setLabel($('btnClockIn'), state.workStyle && finished ? state.workStyle + 'で再出勤する'
-      : state.workStyle && notStarted ? state.workStyle + 'で出勤する' : finished ? '再出勤する' : '出勤する');
+    setLabel($('btnClockIn'), finished ? '再出勤' : '出勤する');
     $('btnBreak').disabled = !working;
-    $('btnClockOut').disabled = !working;
+    $('btnClockOut').disabled = !working; // 中断中の退勤はこれまでどおりできない（先に再開）
     $('breakReason').disabled = !working;
-
-    // 中断中：同じ勤務形態で再開／もう一方の勤務形態で再開
+    // 中断中：［再開］1つ（選んでいる勤務場所で再開。今と違えば勤務場所を切り替えて再開）
     $('btnResume').disabled = !onBreak;
-    setLabel($('btnResume'), onBreak ? style + 'で再開' : '再開');
-    $('btnResumeOther').hidden = !onBreak;
-    $('btnResumeOther').disabled = !onBreak;
-    setLabel($('btnResumeOther'), target + 'で再開');
-    // 勤務中：選んだ勤務形態へ切替
-    $('actionSub').hidden = !(working || onBreak);
+    setLabel($('btnResume'), '再開');
+    // 勤務中：［勤務場所を切替］1つ（今と同じ勤務場所を選んでいるときは押せない＝0分の区間を作らない）
+    $('actionSub').hidden = !working;
     $('btnSwitchStyle').hidden = !working;
-    $('btnSwitchStyle').disabled = !working;
-    setLabel($('btnSwitchStyle'), target + '勤務へ切替');
-    // 現場・外出のときだけ、現場名（と出勤・再出勤なら直行）を入れられる
-    $('punchExtras').hidden = !(ready && isFieldStyle(target));
-    $('punchDirectBox').hidden = !(notStarted || finished);
+    $('btnSwitchStyle').disabled = !working || same;
+    setLabel($('btnSwitchStyle'), '勤務場所を切替');
+    // 直行・現場名は出勤・再出勤のときだけ入れる（勤務中は［詳細・交通費］から）
+    $('punchExtras').hidden = !(notStarted || finished);
 
     var hint = '';
     if (!ready) hint = '勤怠の状況を確認できないため、打刻できません。';
-    else if (s === STATUS.NOT_STARTED) hint = state.workStyle ? '「' + state.workStyle + 'で出勤する」を押すと出勤を記録します。' : 'まず「出社」か「在宅」を選んでください。';
-    else if (s === STATUS.WORKING) hint = '業務から離れるときは「中断」、' + target + 'に移るときは「' + target + '勤務へ切替」（上で勤務形態を選べます）、業務を終えるときは「退勤」を押してください。';
-    else if (s === STATUS.ON_BREAK) hint = '中断中は退勤できません。業務に戻ったら「' + style + 'で再開」か「' + target + 'で再開」を押してください（上で勤務形態を選べます）。';
-    else if (s === STATUS.FINISHED) hint = '本日の打刻は完了しています。また働くときは勤務形態を選んで「再出勤する」を押してください。誤りがある場合は「打刻修正申請」から申請してください。';
+    else if (s === STATUS.NOT_STARTED) hint = state.workStyle ? '勤務場所「' + placeLabel(state.workStyle) + '」で［出勤する］を押すと出勤を記録します。' : 'まず勤務場所（会社・在宅）を選んでください。';
+    else if (s === STATUS.WORKING) hint = same
+      ? '業務から離れるときは［中断］、業務を終えるときは［退勤］。勤務場所を変えるときは、上で別の勤務場所を選んで［勤務場所を切替］を押してください。'
+      : '［勤務場所を切替］を押すと、今の区間を終えて「' + placeLabel(target) + '」の区間を始めます。';
+    else if (s === STATUS.ON_BREAK) hint = '中断中は退勤できません。業務に戻るときは［再開］を押してください（「' + placeLabel(target) + '」で再開します。勤務場所は上で選べます）。';
+    else if (s === STATUS.FINISHED) hint = '本日の打刻は完了しています。また働くときは勤務場所を選んで［再出勤］を押してください。誤りがある場合は「打刻修正申請」から申請してください。';
     $('actionHint').textContent = hint;
     if (state.month) {
       $('btnNextMonth').disabled = state.month.month >= state.currentMonth;
@@ -588,20 +587,22 @@
   }
 
   function onClockIn() {
-    if (!state.workStyle) { showToast('warn', '「出社」か「在宅」を選んでください'); return; }
+    if (!state.workStyle) { showToast('warn', '勤務場所（会社・在宅）を選んでください'); return; }
     runAction({
-      button: $('btnClockIn'), fn: 'clockIn', args: [state.workStyle, punchOptions(true)],
+      button: $('btnClockIn'), fn: 'clockIn', args: [state.workStyle, punchOptions()],
       refresh: ['today', 'month', 'staffStatus', 'flex'], refreshOnError: ['today', 'staffStatus'],
     }).then(function (r) { if (r && r.success) clearPunchExtras(); });
   }
 
-  /** 勤務中に、もう一方の勤務形態へ切り替える */
+  /** 勤務中に、上で選んだ勤務場所へ切り替える（今と同じなら何もしない） */
   function onSwitchStyle() {
     if (state.busy || currentStatus() !== STATUS.WORKING) return;
+    var target = targetStyle();
+    if (!target || target === (currentStyle() || '出社')) { showToast('warn', '現在と同じ勤務場所です。切り替えるときは、上で別の勤務場所を選んでください'); return; }
     runAction({
-      button: $('btnSwitchStyle'), fn: 'switchWorkStyle', args: [targetStyle(), punchOptions(false)],
+      button: $('btnSwitchStyle'), fn: 'switchWorkStyle', args: [target],
       refresh: ['today', 'staffStatus'], refreshOnError: ['today', 'staffStatus'],
-    }).then(function (r) { if (r && r.success) clearPunchExtras(); });
+    });
   }
 
   function onStartBreak() {
@@ -610,13 +611,10 @@
       .then(function (r) { if (r && r.success) $('breakReason').value = ''; });
   }
 
-  /** 同じ勤務形態で再開（other=true なら、もう一方の勤務形態で再開） */
-  function onResume(other) {
-    var style = currentStyle() || '出社';
-    var target = other === true ? targetStyle() : style;
-    runAction({ button: other === true ? $('btnResumeOther') : $('btnResume'), fn: 'resumeWork', args: [target, other === true ? punchOptions(false) : {}],
-      refresh: ['today', 'month', 'staffStatus'], refreshOnError: ['today', 'staffStatus'] })
-      .then(function (r) { if (r && r.success && other === true) clearPunchExtras(); });
+  /** 中断中に［再開］：上で選んでいる勤務場所で再開（今と同じなら同じ区間のまま、違えば区間を切り替える） */
+  function onResume() {
+    runAction({ button: $('btnResume'), fn: 'resumeWork', args: [targetStyle() || currentStyle() || '出社'],
+      refresh: ['today', 'month', 'staffStatus'], refreshOnError: ['today', 'staffStatus'] });
   }
 
   function onClockOut() {
@@ -1042,8 +1040,7 @@
     }
     $('btnClockIn').addEventListener('click', onClockIn);
     $('btnBreak').addEventListener('click', onStartBreak);
-    $('btnResume').addEventListener('click', function () { onResume(false); });
-    $('btnResumeOther').addEventListener('click', function () { onResume(true); });
+    $('btnResume').addEventListener('click', onResume);
     $('btnSwitchStyle').addEventListener('click', onSwitchStyle);
     $('btnClockOut').addEventListener('click', onClockOut);
     $('btnConfirmOk').addEventListener('click', onConfirmClockOut);
@@ -1094,7 +1091,7 @@
 
   function start() {
     try { state.workStyle = localStorage.getItem(LAST_STYLE_KEY) || ''; } catch (e) { state.workStyle = ''; }
-    if (STYLES.indexOf(state.workStyle) === -1) state.workStyle = '';
+    if (STYLES.indexOf(state.workStyle) === -1) state.workStyle = ''; // 以前の版で保存した「現場」「外出」は使わない
     bindEvents();
     tickClock();
     setInterval(tickClock, 1000);

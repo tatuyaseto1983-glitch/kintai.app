@@ -180,7 +180,7 @@
     if (S.mode === 'daily') {
       var daily = S.data.daily;
       $('admTableTitle').textContent = '全スタッフ勤怠（日別：' + (daily ? App.formatDateShort(daily.date) : '') + '）';
-      setHead(['氏名', '部署', '勤務区分', '勤務形態', '勤務区間', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
+      setHead(['氏名', '部署', '勤務区分', '勤務場所', '直行・直帰・現場', '勤務区間', '出勤', '退勤', '中断合計', '自動休憩', '実働', '遅刻', '早退', '社内超過', '残業申請', '要確認', '打刻修正', '状態']);
       var rows = daily ? daily.rows : [];
       total = rows.length;
       rows.forEach(function (r) {
@@ -195,7 +195,9 @@
         tr.appendChild(td(r.name, 'sticky-col'));
         tr.appendChild(td(r.department, 'left'));
         tr.appendChild(td(r.workType));
-        tr.appendChild(td(r.workStyleCategory || r.workStyle)); // 出社＋在宅 など（以前の記録は勤務形態）
+        tr.appendChild(td(r.workPlace || '')); // 会社＋在宅 など（勤務場所だけ。現場・直行直帰は次の列）
+        tr.appendChild(td([r.direct ? '直行' : '', r.directReturn ? '直帰' : '', r.sites && r.sites.length ? '現場：' + r.sites.join('・') : '']
+          .filter(function (x) { return x; }).join('／') || '—', 'left'));
         tr.appendChild(segmentCell(r));
         tr.appendChild(td(r.clockIn));
         tr.appendChild(td(r.clockOut));
@@ -268,7 +270,7 @@
     if (!shown) {
       var empty = document.createElement('tr');
       var cell = el('td', 'empty', total ? '条件に合うスタッフはいません' : 'データがありません');
-      cell.colSpan = 17;
+      cell.colSpan = 18;
       empty.appendChild(cell);
       body.appendChild(empty);
     }
@@ -321,7 +323,7 @@
   function detailRow(detail) {
     var tr = el('tr', 'detail-row');
     var cell = el('td', 'left');
-    cell.colSpan = 17;
+    cell.colSpan = 18;
     var box = el('div', 'segment-detail');
     // 操作の順番（勤務区間と中断を1本の時系列に）
     if (detail.events && detail.events.length) {
@@ -343,15 +345,21 @@
       var a = dd.segments[i] || {};
       var attrs = [a.direct ? '直行' : '', a.directReturn ? '直帰' : '', a.site ? '現場：' + a.site : '', a.note ? '備考：' + a.note : ''].filter(function (x) { return x; });
       ul.appendChild(el('li', 'timeline-item style-' + (s.style === '在宅' ? 'remote' : (s.style === '現場' || s.style === '外出') ? 'field' : 'office'),
-        '区間' + s.number + '　' + s.style + '　' + s.start + '〜' + (s.end || '勤務中') + (s.workTime ? '（区間の実働 ' + App.trimHour(s.workTime) + '）' : '') +
+        '区間' + s.number + '　' + (a.place || (s.style === '出社' ? '会社' : s.style)) + '　' + s.start + '〜' + (s.end || '勤務中') + (s.workTime ? '（区間の実働 ' + App.trimHour(s.workTime) + '）' : '') +
         (attrs.length ? '　' + attrs.join('／') : '')));
     });
     box.appendChild(ul);
     // 日の情報・自家用車・交通費（交通費明細から。削除済みは出さない）
     box.appendChild(el('p', 'subhead', 'この日の情報'));
-    var info = [dd.businessTrip ? '出張' : '', dd.direct ? '直行' : '', dd.directReturn ? '直帰' : ''].filter(function (x) { return x; });
-    box.appendChild(el('p', '', '日の属性：' + (info.length ? info.join('・') : 'なし') + '　日備考：' + (dd.dayNote || 'なし') +
-      '　自家用車の業務走行距離：' + (dd.car && dd.car.count ? dd.car.kmText : 'なし')));
+    // 勤務場所（会社・在宅）と、付帯情報（直行・直帰・現場）・日の属性は分けて表示する
+    var place = el('dl', 'record-list record-list-compact');
+    [['勤務場所', dd.workPlace || '—'], ['直行', dd.direct ? 'あり' : 'なし'], ['直帰', dd.directReturn ? 'あり' : 'なし'],
+      ['現場', dd.sites && dd.sites.length ? dd.sites.join('・') : 'なし'], ['出張', dd.businessTrip ? 'あり' : 'なし'],
+      ['日備考', dd.dayNote || 'なし'], ['自家用車の業務走行距離', dd.car && dd.car.count ? dd.car.kmText : 'なし']].forEach(function (x) {
+      place.appendChild(el('dt', '', x[0]));
+      place.appendChild(el('dd', '', x[1]));
+    });
+    box.appendChild(place);
     box.appendChild(el('p', 'subhead', '交通費' + (dd.transportTotals ? '（' + dd.transportTotals.count + '件・' + dd.transportTotals.amountText + '・' + dd.transportTotals.kmText + '）' : '')));
     var ut = el('ul', 'timeline');
     if (!dd.transports.length) ut.appendChild(el('li', 'muted', 'なし'));
@@ -370,10 +378,9 @@
     box.appendChild(ub);
     var r = detail.record || {};
     if (r.officeTime || r.remoteTime) {
-      box.appendChild(el('p', 'card-note', '出社 ' + App.trimHour(r.officeTime || '00:00') + '／在宅 ' + App.trimHour(r.remoteTime || '00:00') +
-        (r.siteOutingTime && r.siteOutingTime !== '00:00' ? '／現場・外出 ' + App.trimHour(r.siteOutingTime) : '') +
+      box.appendChild(el('p', 'card-note', '会社 ' + App.trimHour(r.officeTime || '00:00') + '／在宅 ' + App.trimHour(r.remoteTime || '00:00') +
         '／自動休憩 ' + App.trimHour(r.autoBreak || '00:00') + '／実働 ' + App.trimHour(r.workTime || '00:00') +
-        '（出社・在宅は中断を除いた時間。合計から自動休憩を引いたものが実働）'));
+        '（会社・在宅は中断を除いた時間。合計から自動休憩を引いたものが実働）'));
     }
     cell.appendChild(box);
     tr.appendChild(cell);
