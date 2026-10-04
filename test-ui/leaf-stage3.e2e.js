@@ -131,8 +131,8 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
       await yamada.fill('#admMonth', '2026-10');
       await yamada.dispatchEvent('#admMonth', 'change');
       await yamada.waitForFunction(() => /対象期間/.test(document.getElementById('admTableTitle').textContent));
-      assert.match(await yamada.locator('#admTableHead').innerText(), /有給（1日\/午前\/午後）\s+有給時間\s+在宅日数\s+要確認（申請）/);
-      assert.doesNotMatch(await yamada.locator('#admTableHead').innerText(), /休日出勤|法定休日出勤|シフト/);
+      assert.match(await yamada.locator('#admTableHead').innerText(), /休日出勤\s+有給（1日\/午前\/午後）\s+有給時間\s+在宅日数\s+要確認（申請）/);
+      assert.doesNotMatch(await yamada.locator('#admTableHead').innerText(), /法定休日出勤|シフト/, '法定休日出勤・シフトの列は出さない');
       assert.match(await yamada.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText(), /8:00/);
       await shot(yamada, 's3-03-admin');
       await yamada.close();

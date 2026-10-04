@@ -169,7 +169,7 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
       assert.match(await lastToast(yamada), /却下理由を入力してください/);
       await yamada.click('#btnAdminConfirmCancel');
       await req.locator('button', { hasText: '承認' }).click();
-      assert.match(await yamada.innerText('#adminConfirmText'), /承認しても勤怠記録は変わりません/);
+      assert.match(await yamada.innerText('#adminConfirmText'), /遅刻・早退・社内超過を付けない計算に直します（打刻・実働は変わりません）/);
       await yamada.click('#btnAdminConfirmOk');
       await yamada.waitForFunction(() => /承認待ちの申請はありません|申請はありません/.test(document.getElementById('admHolidayWork').innerText));
       await yamada.check('#hwShowDone');

@@ -205,15 +205,15 @@ function detectPunchIssues_(record, ctx) {
 }
 
 /** 勤怠1件を管理者画面の行にする（部署・打刻漏れを追加） */
-/** CSV の段階3の見出し（シフト管理を使わない間は 有給種別・有給時間・要確認（申請） の3列） */
+/** CSV の段階3の見出し（シフト管理を使わない間は 日の区分・有給種別・有給時間・要確認（申請） の4列） */
 function dayStatusCsvHeaders_() {
-  return isShiftEnabled_() ? ['シフト区分', '日の区分', '有給種別', '有給時間', '要確認（シフト・申請）'] : ['有給種別', '有給時間', '要確認（申請）'];
+  return isShiftEnabled_() ? ['シフト区分', '日の区分', '有給種別', '有給時間', '要確認（シフト・申請）'] : ['日の区分', '有給種別', '有給時間', '要確認（申請）'];
 }
 
 /** CSV の段階3の欄（見出しは dayStatusCsvHeaders_） */
 function dayStatusCsvCells_(st) {
   const leave = [st.leave ? st.leave.type : '', st.leave ? formatMinutes_(st.leave.minutes) : '', st.checks.join('・')];
-  return isShiftEnabled_() ? [st.shiftType, st.kind].concat(leave) : leave;
+  return isShiftEnabled_() ? [st.shiftType, st.kind].concat(leave) : [st.kind].concat(leave); // シフトなし：日の区分は「休日出勤」か空欄
 }
 
 /** CSV の「業務走行距離」「交通費合計」の欄（その日の交通費明細から） */

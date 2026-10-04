@@ -119,7 +119,7 @@ function clockIn_(workStyle, options) {
   if (existing) return reClockIn_(existing, style, now, extras);
 
   // 固定勤務だけ遅刻を判定する（フレックスは出勤時刻が自由なので判定しない）。休日は判定せず、午前半休は基準を変える
-  const judge = dayJudgeFor_(staff.employeeId, now.date, rule, settings, buildShiftMap_(now.date, now.date, staff.employeeId), buildPaidLeaveMap_());
+  const judge = dayJudgeFor_(staff.employeeId, now.date, rule, settings, buildShiftMap_(now.date, now.date, staff.employeeId), buildPaidLeaveMap_(), buildHolidayWorkPlanMap_());
   const lateMinutes = rule.isFixed && judge.judgeLate ? Math.max(0, now.minutes - judge.startBase) : 0;
 
   const record = appendRecord_(SHEET_NAMES.ATTENDANCE, {
@@ -317,6 +317,8 @@ function buildCalcContext_() {
     // 段階3：シフトと承認済みの有給（休日の勤務・半休の日は遅刻・早退・社内超過の判定を変える）
     shiftMap: buildShiftMap_(),
     paidLeaveMap: buildPaidLeaveMap_(),
+    holidayWorkMap: buildHolidayWorkPlanMap_(), // 承認済み（取消申請中を含む）の休日出勤申請
+
     attendanceColumns: readTable_(SHEET_NAMES.ATTENDANCE).columnIndex,
     overtimeStatusByKey: buildOvertimeStatusMap_(),
   };
@@ -390,7 +392,7 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     optional['直行'] = summary.direct ? MARKS.YES : '';
     optional['直帰'] = summary.directReturn ? MARKS.YES : '';
   }
-  const judge = dayJudgeFor_(employeeId, toDateKey_(record['日付']), rule, settings, ctx.shiftMap, ctx.paidLeaveMap);
+  const judge = dayJudgeFor_(employeeId, toDateKey_(record['日付']), rule, settings, ctx.shiftMap, ctx.paidLeaveMap, ctx.holidayWorkMap);
   if (rule.isFixed) {
     fields['所定終了'] = minutesToClock_(rule.standardEndMinutes);
     fields['遅刻'] = judge.judgeLate ? formatMinutesOrBlank_(Math.max(0, summary.clockInMinutes - judge.startBase)) : '';
@@ -423,8 +425,14 @@ function calculateAttendanceDetail_(record, ctx, opts) {
   });
 
   if (rule.isFixed && !judge.judgeExcess) {
-    // 休日・法定休日の勤務：遅刻・早退・社内超過は判定しない（勤務時間は「休日出勤／法定休日出勤」として別に表示する）
+    // 休日出勤の日：遅刻・早退・社内超過は判定しない（勤務時間は「休日出勤」として別に表示する）。
+    // 残業申請の判定（30分以上・事前残業申請・要確認）にも入れない。前に計算した値が残らないよう空欄にする（実働・勤務区間はそのまま）
     fields['遅刻'] = '';
+    fields['早退'] = '';
+    fields['社内超過時間'] = '';
+    fields['30分以上'] = '';
+    fields['事前残業申請'] = '';
+    fields['要確認'] = '';
     return finish();
   }
   if (rule.isFixed) {
@@ -493,16 +501,19 @@ function calculateAttendanceFields_(record, ctx) {
  *   午前半休（通常勤務） … 遅刻の基準を「午前半休_勤務開始」（14:30）に
  *   午後半休（通常勤務） … 早退の基準を「午後半休_勤務終了」（13:30）に
  *   未登録など           … これまでどおり（標準出勤・標準退勤）。管理者画面で「シフト未登録」の要確認
- * ※ 今はシフト管理を使っていない（SHIFT_FEATURE.enabled = false）ので、休日の判定はせず、
- *    有給だけで決める（1日有給は遅刻・早退なし、午前半休は 14:30、午後半休は 13:30 を基準）。
+ * ※ 今はシフト管理を使っていない（SHIFT_FEATURE.enabled = false）ので、シフトの代わりに
+ *    承認済みの休日出勤申請（取消申請中を含む。申請中・却下・取消済みは含めない）がある日を「休日出勤」として、
+ *    遅刻・早退・社内超過を判定しない。休日か法定休日かは判定しない（法定休日出勤とは推測しない）。
+ *    有給は 1日有給は遅刻・早退なし、午前半休は 14:30、午後半休は 13:30 を基準。
  */
-function dayJudgeFor_(employeeId, dateKey, rule, settings, shiftMap, paidLeaveMap) {
+function dayJudgeFor_(employeeId, dateKey, rule, settings, shiftMap, paidLeaveMap, holidayWorkMap) {
   const useShift = isShiftEnabled_(); // シフト管理を使わない間は、休日の判定をせず、半休はいつも半休の基準で判定する
   const shiftType = useShift ? shiftOf_(shiftMap || {}, employeeId, dateKey).type : '';
   const leave = (paidLeaveMap || {})[String(employeeId).trim() + '|' + dateKey] || null;
   const out = { shiftType: shiftType, leave: leave, judgeLate: true, judgeEarly: true, judgeExcess: true,
     startBase: rule.standardStartMinutes, endBase: rule.standardEndMinutes };
-  if (useShift && isHolidayShift_(shiftType)) {
+  const approvedHolidayWork = !useShift && !!(holidayWorkMap || {})[String(employeeId).trim() + '|' + dateKey];
+  if ((useShift && isHolidayShift_(shiftType)) || approvedHolidayWork) {
     out.judgeLate = false; out.judgeEarly = false; out.judgeExcess = false;
     return out;
   }

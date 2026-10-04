@@ -261,8 +261,17 @@ function decideHolidayWork_(requestId, action, reason) {
     message = '取消申請を却下しました（承認済みのまま）';
   }
   changes['更新日時'] = now;
-  // 承認しても勤怠記録（実績）は変更しない
   updateRecord_(SHEET_NAMES.HOLIDAY_WORK, record, changes);
+  // 承認・取消承認で「承認済みの休日出勤」かどうかが変わる → その日の勤怠の遅刻・早退・社内超過だけ計算し直す
+  // （打刻・実働・勤務区間は変えない。却下・取消却下では変わらないので計算しない）
+  if (action === 'approve' || action === 'approveCancel') {
+    const date = toDateKey_(record['休日出勤日']);
+    const att = findAttendance_(String(record['社員ID']).trim(), date);
+    if (att) {
+      recalculateAttendanceRecord_(att, now);
+      message += '（' + date + ' の勤怠の遅刻・早退・社内超過を計算し直しました。打刻・実働は変わりません）';
+    }
+  }
   return { message: message, data: toHolidayWorkView_(record) };
 }
 

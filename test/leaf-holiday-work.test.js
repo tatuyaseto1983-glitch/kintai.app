@@ -222,7 +222,7 @@ test('自分の申請は承認できない（管理者が申請対象になっ�
 
 // ============================================================ 勤怠との関係
 
-test('勤怠：承認・取消をしても勤怠記録は変わらない。予定（申請）と実績（勤怠記録）は 社員ID＋日付 で照合できる', () => {
+test('勤怠：承認しても打刻・実働は変わらない（遅刻・早退・社内超過だけ付けない計算に直す）。予定と実績は 社員ID＋日付 で照合できる', () => {
   const gas = office();
   gas.loginAs(NAKATSUI);
   const a = gas.g.submitHolidayWorkRequest(plan({ workDate: '2026-10-02', plannedStart: '10:00', plannedEnd: '16:00' })).data.requestId;
@@ -230,10 +230,14 @@ test('勤怠：承認・取消をしても勤怠記録は変わらない。予�
   gas.g.clockIn('出社');
   gas.setNow('2026-10-02 16:10');
   gas.g.clockOut();
-  const before = JSON.stringify(gas.main.getSheetByName('勤怠記録').data);
+  const pick = () => { const r = gas.main.rows('勤怠記録')[0]; return [r['出勤'], r['退勤'], r['実働時間'], r['遅刻'], r['社内超過時間']]; };
+  assert.deepEqual(pick(), ['10:02', '16:10', '05:08', '00:32', '00:00'], '承認前は通常勤務日の基準（09:30）で遅刻');
+  const segBefore = JSON.stringify(gas.main.getSheetByName('勤務区間履歴').data);
   gas.loginAs(MITSUYAMA);
-  gas.g.approveHolidayWorkRequest(a);
-  assert.equal(JSON.stringify(gas.main.getSheetByName('勤怠記録').data), before, '承認しても勤怠記録は1文字も変わらない');
+  assert.match(gas.g.approveHolidayWorkRequest(a).message, /遅刻・早退・社内超過を計算し直しました/);
+  assert.deepEqual(pick(), ['10:02', '16:10', '05:08', '', ''], '承認後は遅刻・社内超過を付けない。打刻・実働はそのまま');
+  assert.equal(JSON.stringify(gas.main.getSheetByName('勤務区間履歴').data), segBefore, '勤務区間は変えない');
+  const before = JSON.stringify(gas.main.getSheetByName('勤怠記録').data);
 
   const map = gas.g.buildHolidayWorkPlanMap_();
   assert.deepEqual(Object.keys(map), ['E005|2026-10-02']);

@@ -244,7 +244,7 @@
       setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過', '業務走行距離', '交通費（通勤以外）',
       ].concat(S.data.shiftEnabled
         ? ['休日出勤', '法定休日出勤', '有給（1日/午前/午後）', '有給時間', '在宅日数', '要確認（シフト・申請）']
-        : ['有給（1日/午前/午後）', '有給時間', '在宅日数', '要確認（申請）'])); // 休日出勤の日数はシフト管理を使うときだけ
+        : ['休日出勤', '有給（1日/午前/午後）', '有給時間', '在宅日数', '要確認（申請）'])); // 法定休日出勤はシフト管理を使うときだけ
       var mrows = monthly ? monthly.rows : [];
       total = mrows.length;
       mrows.forEach(function (r) {
@@ -274,10 +274,8 @@
         tr.appendChild(td(r.mileageKm ? r.mileageText : '—'));
         tr.appendChild(td(r.transportAmount ? r.transportAmountText : '—'));
         var dd = r.days || {};
-        if (S.data.shiftEnabled) {
-          tr.appendChild(td(dd.holidayWorkDays ? dd.holidayWorkDays + '日・' + App.trimHour(dd.holidayWorkTime) : '—'));
-          tr.appendChild(td(dd.legalHolidayWorkDays ? dd.legalHolidayWorkDays + '日・' + App.trimHour(dd.legalHolidayWorkTime) : '—'));
-        }
+        tr.appendChild(td(dd.holidayWorkDays ? dd.holidayWorkDays + '日・' + App.trimHour(dd.holidayWorkTime) : '—'));
+        if (S.data.shiftEnabled) tr.appendChild(td(dd.legalHolidayWorkDays ? dd.legalHolidayWorkDays + '日・' + App.trimHour(dd.legalHolidayWorkTime) : '—'));
         tr.appendChild(td((dd.fullLeaveDays || dd.amLeaveDays || dd.pmLeaveDays) ? (dd.fullLeaveDays || 0) + '/' + (dd.amLeaveDays || 0) + '/' + (dd.pmLeaveDays || 0) : '—'));
         tr.appendChild(td(dd.leaveMinutes ? App.trimHour(dd.leaveTime) : '—'));
         tr.appendChild(td(dd.remoteDays ? dd.remoteDays + '日' : '—'));
@@ -383,7 +381,8 @@
         ? [['シフト', detail.day.shiftType], ['区分', detail.day.kind || (detail.day.leave ? '有給' : 'なし')],
           ['休日出勤', hw ? hw.kind + ' ' + App.trimHour(formatHm(hw.minutes)) + (hw.approved ? '（承認済み申請あり）' : '（承認済み申請なし）') : 'なし'],
           ['有給', leaveText], ['要確認（シフト・申請）', checkText]]
-        : [['有給', leaveText], ['要確認（申請）', checkText]]; // シフト管理を使わない間は、シフト・休日の区分を出さない
+        : [['休日出勤', hw ? '承認済みの休日出勤 ' + App.trimHour(formatHm(hw.minutes)) + '（遅刻・早退・社内超過は判定しない）' : 'なし'],
+          ['有給', leaveText], ['要確認（申請）', checkText]]; // シフト管理を使わない間は、シフト・休日／法定休日の区別を出さない
       items.forEach(function (x) {
         dayInfo.appendChild(el('dt', '', x[0]));
         dayInfo.appendChild(el('dd', x[0].indexOf('要確認') === 0 && detail.day.checks.length ? 'cell-alert' : '', x[1]));
@@ -567,7 +566,7 @@
           function () {
             if (!r.approvable) { App.showToast('warn', '今のシフトが「' + r.currentShift + '」のため承認できません。シフトシートで休日・法定休日を登録してください'); return; }
             confirmAction({
-              title: '休日出勤申請を承認しますか？', text: who + (r.currentShift ? '（シフト：' + r.currentShift + '）' : '') + '\n\n承認しても勤怠記録は変わりません。',
+              title: '休日出勤申請を承認しますか？', text: who + (r.currentShift ? '（シフト：' + r.currentShift + '）' : '') + '\n\nその日の勤怠があれば、遅刻・早退・社内超過を付けない計算に直します（打刻・実働は変わりません）。',
               okLabel: '承認する', okClass: 'btn-primary',
               run: function (btn) { return adminAction(btn, 'approveHolidayWorkRequest', [r.requestId]); },
             });

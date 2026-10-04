@@ -188,6 +188,10 @@ function buildDayStatus_(employeeId, dateKey, record, dctx) {
       const statuses = dctx.hwStatusByKey[key] || [];
       checks.push(statuses.indexOf(HOLIDAY_WORK_STATUS.CANCELLED) !== -1 ? DAY_CHECKS.CANCELLED_HOLIDAY_WORK : DAY_CHECKS.NO_HOLIDAY_REQUEST);
     }
+  } else if (!useShift && worked && hwApproved) {
+    // シフト管理を使わない間：承認済みの休日出勤申請がある日の勤務を「休日出勤」とする（法定休日かどうかは判定しない）
+    out.kind = '休日出勤';
+    out.holidayWork = { kind: out.kind, minutes: workMinutes, approved: true };
   } else if (useShift && worked) {
     out.kind = '通常';
   }

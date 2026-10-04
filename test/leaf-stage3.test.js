@@ -138,13 +138,13 @@ test('シフト管理を使わない：シフトがなくても休日出勤・�
   assert.deepEqual([d.paidLeave.pending[0].currentShift, d.paidLeave.pending[0].approvable], ['', true]);
   assert.equal(gas.g.approveHolidayWorkRequest(hw.data.requestId).success, true, 'シフト未登録でも承認できる');
   assert.equal(gas.g.approvePaidLeaveRequest(leave.data.requestId).success, true, 'シフト未登録でも承認できる');
-  // 勤務しても、シフト未登録・未申請休日出勤 などの要確認は出さない。休出・通常のバッジも出さない
+  // 勤務しても、シフト未登録・未申請休日出勤 などの要確認は出さない。申請のない日は区分なし（通常のバッジも出さない）
   work(gas, NAKATSUI, '2026-10-07', '09:00', '12:00');
   work(gas, KUBO, '2026-10-11', '09:00', '12:00');
-  for (const [id, date] of [['E005', '2026-10-07'], ['E006', '2026-10-11']]) {
-    const st = dayOf(gas, id, date);
-    assert.deepEqual([st.shiftType, st.kind, st.holidayWork, st.checks, st.badges], ['', '', null, [], []], id + ' ' + date);
-  }
+  const st = dayOf(gas, 'E006', '2026-10-11');
+  assert.deepEqual([st.shiftType, st.kind, st.holidayWork, st.checks, st.badges], ['', '', null, [], []], '申請のない日曜の勤務');
+  const hwDay = dayOf(gas, 'E005', '2026-10-07');
+  assert.deepEqual([hwDay.kind, hwDay.checks, hwDay.badges.map((b) => b.text)], ['休日出勤', [], ['休出']], '承認済み休日出勤の日は「休日出勤」');
   const row = monthlyRow(gas, '久保亜弓').days;
   assert.deepEqual([row.holidayWorkDays, row.legalHolidayWorkDays, row.checkCount], [0, 0, 0]);
   // スタッフ画面：シフトの表示はしない
@@ -169,14 +169,102 @@ test('シフト管理を使わない：休日出勤申請は「現場」を保�
   gas.loginAs(MITSUYAMA);
   gas.g.approveHolidayWorkCancellation(a.data.requestId);
   assert.equal(row()['ステータス'], '取消済み');
-  // 承認しても勤怠記録は変えない。休日の判定はしないので、遅刻・社内超過は以前どおり標準の時刻で計算する
-  gas.loginAs(KUBO);
-  const b = gas.g.submitHolidayWorkRequest(hwPlan({ workDate: '2026-10-10' })).data.requestId;
+});
+
+// ============================================================ 今回の範囲：承認済みの休日出勤の日の勤怠（シフトなし）
+
+/** 中津井さんの 2026-10-10 の休日出勤申請を出し、status まで進める（承認済み／申請中／却下／取消済み） */
+function holidayWorkWithStatus(gas, status, date) {
+  const workDate = date || '2026-10-10';
+  gas.loginAs(NAKATSUI);
+  const id = gas.g.submitHolidayWorkRequest(hwPlan({ workDate })).data.requestId;
   gas.loginAs(MITSUYAMA);
-  gas.g.approveHolidayWorkRequest(b);
-  work(gas, KUBO, '2026-10-10', '11:00', '20:00');
-  const r = att(gas, 'AT-20261010-E006');
-  assert.deepEqual([r['遅刻'], r['社内超過時間']], ['01:30', '01:30'], '段階2までと同じ計算（休日かどうかはシフト管理を始めてから判定）');
+  if (status === '承認済み' || status === '取消済み' || status === '取消申請中') gas.g.approveHolidayWorkRequest(id);
+  if (status === '却下') gas.g.rejectHolidayWorkRequest(id, '今回は不要');
+  if (status === '取消済み' || status === '取消申請中') {
+    gas.loginAs(NAKATSUI);
+    gas.g.requestHolidayWorkCancellation(id, '不要になった');
+    gas.loginAs(MITSUYAMA);
+    if (status === '取消済み') gas.g.approveHolidayWorkCancellation(id);
+  }
+  assert.equal(gas.main.rows('休日出勤申請').find((r) => r['申請ID'] === id)['ステータス'], status);
+  return id;
+}
+const judgedCols = (r) => [r['遅刻'], r['早退'], r['社内超過時間'], r['30分以上'], r['事前残業申請'], r['要確認']];
+
+test('承認済み休日出勤：11:00開始 → 遅刻なし。20:00終了 → 社内超過なし。実働はそのまま。残業申請の判定にも入れない', () => {
+  const gas = office();
+  holidayWorkWithStatus(gas, '承認済み');
+  work(gas, NAKATSUI, '2026-10-10', '11:00', '20:00');
+  const r = att(gas, 'AT-20261010-E005');
+  assert.deepEqual(judgedCols(r), ['', '', '', '', '', ''], '遅刻・早退・社内超過・30分以上・事前残業申請・要確認（残業）はすべて空欄');
+  assert.deepEqual([r['出勤'], r['退勤'], r['自動休憩'], r['実働時間']], ['11:00', '20:00', '01:00', '08:00'], '実働は通常どおり計算した値のまま');
+  const d = dayOf(gas, 'E005', '2026-10-10');
+  assert.deepEqual([d.kind, d.holidayWork, d.checks], ['休日出勤', { kind: '休日出勤', minutes: 480, approved: true }, []]);
+  const m = monthlyRow(gas, '中津井祐貴');
+  assert.deepEqual([m.days.holidayWorkDays, m.days.holidayWorkTime, m.needsCheckCount], [1, '08:00', 0], '月次の休日出勤 1日・8:00。残業の要確認に数えない');
+});
+
+test('承認済み休日出勤：15:00終了 → 早退なし', () => {
+  const gas = office();
+  holidayWorkWithStatus(gas, '承認済み');
+  work(gas, NAKATSUI, '2026-10-10', '09:30', '15:00');
+  const r = att(gas, 'AT-20261010-E005');
+  assert.deepEqual([r['遅刻'], r['早退'], r['実働時間']], ['', '', '05:30']);
+});
+
+test('承認済み休日出勤：打刻の後に承認しても、遅刻・早退・社内超過だけ消す（打刻・実働・勤務区間は変えない）。取消が承認されたら元の判定に戻す', () => {
+  const gas = office();
+  gas.loginAs(NAKATSUI);
+  const id = gas.g.submitHolidayWorkRequest(hwPlan()).data.requestId;
+  work(gas, NAKATSUI, '2026-10-10', '11:00', '20:00');
+  const before = att(gas, 'AT-20261010-E005');
+  assert.deepEqual(judgedCols(before).slice(0, 3), ['01:30', '', '01:30'], '承認前（申請中）は通常勤務日の基準');
+  const keep = [before['出勤'], before['退勤'], before['実働時間'], before['自動休憩']];
+  const segs = JSON.stringify(gas.main.getSheetByName('勤務区間履歴').data.map((row) => row.filter((_, i) => i !== gas.main.getSheetByName('勤務区間履歴').data[0].indexOf('更新日時'))));
+  gas.loginAs(MITSUYAMA);
+  gas.g.approveHolidayWorkRequest(id);
+  const after = att(gas, 'AT-20261010-E005');
+  assert.deepEqual(judgedCols(after), ['', '', '', '', '', '']);
+  assert.deepEqual([after['出勤'], after['退勤'], after['実働時間'], after['自動休憩']], keep);
+  assert.equal(JSON.stringify(gas.main.getSheetByName('勤務区間履歴').data.map((row) => row.filter((_, i) => i !== gas.main.getSheetByName('勤務区間履歴').data[0].indexOf('更新日時')))), segs, '勤務区間は変えない');
+  // 取消申請中のあいだは、まだ承認済みとして扱う。取消が承認されたら元に戻す
+  gas.loginAs(NAKATSUI);
+  gas.g.requestHolidayWorkCancellation(id, '予定変更');
+  gas.loginAs(MITSUYAMA);
+  gas.g.recalculateThisMonth();
+  assert.deepEqual(judgedCols(att(gas, 'AT-20261010-E005')).slice(0, 3), ['', '', ''], '取消申請中はまだ承認済み');
+  gas.g.approveHolidayWorkCancellation(id);
+  const back = att(gas, 'AT-20261010-E005');
+  assert.deepEqual([back['遅刻'], back['社内超過時間'], back['30分以上'], back['事前残業申請'], back['要確認']], ['01:30', '01:30', '○', 'なし', '要確認'], '取消済み → 通常勤務日の判定（残業の事前申請の確認も戻る）');
+  assert.equal(back['実働時間'], keep[2]);
+});
+
+for (const status of ['申請中', '却下', '取消済み']) {
+  test('休日出勤申請が「' + status + '」の日は 休日出勤として扱わない（遅刻・社内超過は通常どおり、区分なし）', () => {
+    const gas = office();
+    holidayWorkWithStatus(gas, status);
+    work(gas, NAKATSUI, '2026-10-10', '11:00', '20:00');
+    const r = att(gas, 'AT-20261010-E005');
+    assert.deepEqual([r['遅刻'], r['社内超過時間'], r['実働時間']], ['01:30', '01:30', '08:00']);
+    const d = dayOf(gas, 'E005', '2026-10-10');
+    assert.deepEqual([d.kind, d.holidayWork], ['', null]);
+    assert.equal(monthlyRow(gas, '中津井祐貴').days.holidayWorkDays, 0);
+  });
+}
+
+test('シフト無効時は法定休日かどうかを推測しない：日曜の承認済み休日出勤も「休日出勤」（法定休日出勤にしない）', () => {
+  const gas = office();
+  holidayWorkWithStatus(gas, '承認済み', '2026-10-11'); // 日曜
+  work(gas, NAKATSUI, '2026-10-11', '09:00', '13:00');
+  const d = dayOf(gas, 'E005', '2026-10-11');
+  assert.deepEqual([d.kind, d.holidayWork.kind, d.shiftType, d.badges.map((b) => b.text)], ['休日出勤', '休日出勤', '', ['休出']]);
+  const m = monthlyRow(gas, '中津井祐貴').days;
+  assert.deepEqual([m.holidayWorkDays, m.holidayWorkTime, m.legalHolidayWorkDays, m.legalHolidayWorkTime], [1, '04:00', 0, '00:00']);
+  gas.loginAs(MITSUYAMA);
+  const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv;
+  assert.doesNotMatch(csv, /法定休日/);
+  assert.match(csv, /2026-10-11,E005[^\n]*,休日出勤,,,\r?$/m);
 });
 
 test('シフト管理を使わない：手で作ったシフトシートがあっても読まない・変えない', () => {
@@ -571,7 +659,7 @@ test('フレックス：有給算入が未確定のときは実働と有給を�
   assert.equal(monthlyRow(gas, '大森紗智子').flex.worked, '09:00', '算入しても実働の表示は変えない');
 });
 
-test('月次：20日締めの期間で、有給の回数と時間・在宅日数・要確認件数を数える（休日出勤の日数はシフト管理を始めてから）', () => {
+test('月次：20日締めの期間で、承認済み休日出勤・有給の回数と時間・在宅日数・要確認件数を数える（法定休日出勤はシフト管理を始めてから）', () => {
   const gas = office();
   gas.loginAs(NAKATSUI);
   const ids = [
@@ -585,12 +673,12 @@ test('月次：20日締めの期間で、有給の回数と時間・在宅日数
   ids.forEach((id) => assert.equal(gas.g.approvePaidLeaveRequest(id).success, true));
   gas.g.approveHolidayWorkRequest(hw);
   work(gas, NAKATSUI, '2026-10-17', '09:00', '12:00');
-  work(gas, NAKATSUI, '2026-10-18', '09:00', '11:00'); // 申請なし：シフトで休日か分からないので要確認にしない
+  work(gas, NAKATSUI, '2026-10-18', '09:00', '11:00'); // 申請なし：休日か分からないので休日出勤にも要確認にもしない
   work(gas, NAKATSUI, '2026-10-13', '09:30', '18:30', '在宅');
   work(gas, NAKATSUI, '2026-10-20', '09:30', '18:30', '在宅');
   work(gas, NAKATSUI, '2026-10-21', '09:30', '18:30', '在宅'); // 次の期間
   const d = monthlyRow(gas, '中津井祐貴').days;
-  assert.deepEqual([d.holidayWorkDays, d.legalHolidayWorkDays], [0, 0]);
+  assert.deepEqual([d.holidayWorkDays, d.holidayWorkTime, d.legalHolidayWorkDays], [1, '03:00', 0], '承認済みの 10/17 だけ');
   assert.deepEqual([d.fullLeaveDays, d.amLeaveDays, d.pmLeaveDays, d.leaveTime], [1, 1, 1, '16:00']);
   assert.deepEqual([d.remoteDays, d.checkCount], [2, 0]);
   const nov = monthlyRow(gas, '中津井祐貴', '2026-11').days;
@@ -610,7 +698,7 @@ test('将来用 月次：シフト管理を使うときは、休日出勤・法�
   assert.deepEqual(d.checks, [{ date: '2026-10-18', reason: '未申請休日出勤' }]);
 });
 
-test('CSV：有給種別・有給時間・要確認（申請）を右端に出す（シフト区分・日の区分の列は出さない）', () => {
+test('CSV：日の区分（休日出勤か空欄）・有給種別・有給時間・要確認（申請）を右端に出す（シフト区分の列は出さない）', () => {
   const gas = office();
   gas.loginAs(NAKATSUI);
   const id = gas.g.submitPaidLeaveRequest(pl({ date: '2026-10-07', leaveType: '午後半休' })).data.requestId;
@@ -620,9 +708,9 @@ test('CSV：有給種別・有給時間・要確認（申請）を右端に出�
   work(gas, NAKATSUI, '2026-10-10', '09:00', '12:00');
   gas.loginAs(MITSUYAMA);
   const csv = gas.g.exportAdminAttendanceCsv({ type: 'monthly', month: '2026-10' }).data.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
-  assert.match(csv[0], /,交通費合計,有給種別,有給時間,要確認（申請）$/);
-  assert.ok(csv.some((l) => /^2026-10-07,E005/.test(l) && /,午後半休,04:00,$/.test(l)), csv.join('\n'));
-  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,,,$/.test(l) && !/休日|未申請|未登録/.test(l)), '土曜の勤務でも区分・要確認は出さない');
+  assert.match(csv[0], /,交通費合計,日の区分,有給種別,有給時間,要確認（申請）$/);
+  assert.ok(csv.some((l) => /^2026-10-07,E005/.test(l) && /,,午後半休,04:00,$/.test(l)), csv.join('\n'));
+  assert.ok(csv.some((l) => /^2026-10-10,E005/.test(l) && /,,,,$/.test(l) && !/休日|未申請|未登録/.test(l)), '申請のない土曜の勤務は区分・要確認なし');
 });
 
 test('将来用 CSV：シフト管理を使うときは シフト区分・日の区分 も出す', () => {
