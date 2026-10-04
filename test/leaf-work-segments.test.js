@@ -72,7 +72,7 @@ test('1・2・3. 出社→在宅、在宅→出社、出社→在宅→出社（
   assert.match(gas.g.switchWorkStyle('出社').message, /すでに出社で勤務中です/);
   gas.g.startBreak('');
   assert.match(gas.g.switchWorkStyle('在宅').message, /中断中は切り替えできません/);
-  assert.match(gas.g.switchWorkStyle('現場').message, /切り替え先の勤務形態/, '段階1の画面で選べるのは出社・在宅だけ');
+  assert.match(gas.g.switchWorkStyle('自宅').message, /切り替え先の勤務形態/, '選べるのは出社・在宅・現場・外出だけ');
 });
 
 test('4・5. 退勤後の再出勤（09:30〜16:00 出社＋18:00〜20:00 在宅 → 2区間）と1日3区間', () => {
@@ -327,7 +327,7 @@ test('29・30. 他人の勤務区間は取得できない／同じ操作を続�
   assert.equal(gas.g.clockOut().success, true);
   assert.equal(gas.g.clockOut().success, false);
   assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '../leaf-portal/gas/WorkSegmentService.gs'), 'utf8'),
-    /function switchWorkStyle\(workStyle\) \{\s*return runApi_\(function \(\) \{\s*return withLock_/, '切替はロックの中で処理');
+    /function switchWorkStyle\(workStyle, options\) \{\s*return runApi_\(function \(\) \{\s*return withLock_/, '切替はロックの中で処理');
 });
 
 test('31〜35. 20日締めの境界（8/20→8月分、8/21→9月分、9/20→9月分、9/21→10月分、年またぎ・うるう年）', () => {
@@ -369,7 +369,7 @@ test('36・37・38. フレックス138時間・月次CSV・管理者の月次は
   assert.deepEqual(csv.data.csv.split('\r\n').slice(1).map((l) => l.slice(0, 10)), ['2026-08-21', '2026-08-21', '2026-09-20', '2026-09-20']);
   const old = gas.g.exportAttendanceCsv('2026-09');
   assert.equal(old.data.csv.split('\r\n').length, 5);
-  assert.ok(old.data.csv.split('\r\n')[0].endsWith(',勤務形態区分,勤務区間数,出社時間,在宅時間,現場外出時間'), '以前のCSVも新しい列は右端に');
+  assert.ok(old.data.csv.split('\r\n')[0].endsWith(',勤務形態区分,勤務区間数,出社時間,在宅時間,現場外出時間,日備考,出張,直行,直帰'), '以前のCSVも新しい列は右端に');
   const monthly = gas.g.getAdminDashboard({ month: '2026-09', parts: ['monthly'] }).data.monthly;
   assert.equal(monthly.periodText, '2026年9月分 対象期間：2026/08/21〜2026/09/20');
   assert.equal(monthly.rows.find((r) => r.name === '鈴木').flex.worked, '16:00');

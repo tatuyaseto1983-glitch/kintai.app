@@ -514,7 +514,7 @@ test('スタッフ画面：getStaffDashboard() は本人の情報だけをまと
   gas.setNow('2026-06-01 09:30');
   let r = gas.g.getStaffDashboard();
   assert.equal(r.success, true);
-  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'overtime', 'overtimeRule', 'staffStatus', 'today', 'user']);
+  assert.deepEqual(Object.keys(r.data).sort(), ['flex', 'month', 'overtime', 'overtimeRule', 'staffStatus', 'today', 'transport', 'user']);
   assert.deepEqual(plain(r.data.overtimeRule.data), { freeLimitMinutes: 30, freeLimitLabel: '30分' }, '設定シートの 00:30');
   assert.deepEqual(r.data.overtime.data, [], '固定勤務は自分の残業申請（まだ0件）');
   assert.equal(r.data.user.data.employeeId, 'E002');
@@ -745,9 +745,9 @@ test('管理者画面 10：CSV（日別・月別。部署入り・BOM付き・�
   assert.equal(r.success, true);
   assert.equal(r.data.fileName, 'kintai_monthly_2026-06.csv');
   const lines = r.data.csv.split('\r\n');
-  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態,勤務形態区分,勤務区間数,出社時間,在宅時間,現場外出時間'));
+  assert.ok(lines[0].startsWith('﻿日付,社員ID,氏名,部署,勤務区分,勤務形態,出勤,退勤,自動休憩,中断合計,実働,遅刻,早退,社内超過,事前残業申請,要確認,打刻漏れ,打刻修正状況,状態,勤務形態区分,勤務区間数,出社時間,在宅時間,現場外出時間,日備考,出張,直行,直帰,業務走行距離,交通費合計'));
   assert.equal(lines.length, 3);
-  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み,出社,1,09:32,00:00,00:00$/, '勤務区間の列は右端に足す');
+  assert.match(lines[1], /^2026-06-01,E002,佐藤,"'=HYPERLINK\(""x""\)",固定勤務,出社,09:40,19:12,01:00,00:00,08:32,00:10,,00:42,なし,要確認,,,退勤済み,出社,1,09:32,00:00,00:00,,,,,,$/, '勤務区間・付帯情報・交通費の列は右端に足す');
   r = gas.g.exportAdminAttendanceCsv({ type: 'daily', date: '2026-06-02' });
   assert.equal(r.data.csv.split('\r\n').length, 1, 'その日の記録がなければ見出しだけ');
 });

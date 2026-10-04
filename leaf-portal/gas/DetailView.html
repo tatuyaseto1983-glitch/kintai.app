@@ -1,0 +1,116 @@
+<!--
+  DetailView.html — 1日の詳細（付帯情報）と交通費の画面（スタッフ画面）。Index.html の中に読み込まれます。
+    dayDetailModal  … 1日の詳細：区間ごとの直行・直帰・現場名・備考、日備考・出張、自家用車の業務走行距離
+    transportModal  … 交通費：今の20日締め期間の明細の一覧と、追加・修正・削除
+  時刻（開始・終了）と勤務形態はここでは直せません（打刻修正申請から）。
+  社員IDは画面から送りません（サーバーがログイン中の社員で決めます）。
+-->
+
+<!-- ================= 1日の詳細 ================= -->
+<div class="modal" id="dayDetailModal" role="dialog" aria-modal="true" aria-labelledby="dayDetailTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="dayDetailTitle">1日の詳細</h2>
+      <button type="button" class="modal-close" data-detail-close aria-label="閉じる">×</button>
+    </div>
+    <div class="form-row">
+      <label for="ddDate">日付</label>
+      <input type="date" id="ddDate">
+      <p class="form-help" id="ddPeriod"></p>
+    </div>
+    <p class="form-note" id="ddNotice" hidden></p>
+    <div id="ddBody"><p class="empty">読み込み中...</p></div>
+    <p class="form-help">直行・直帰・現場名・備考・出張は、実働時間には影響しないので、今の締め期間の分はご自身で直せます。開始・終了の時刻や勤務形態の誤りは「打刻修正申請」から申請してください。</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" data-detail-close>閉じる</button>
+      <button type="button" class="btn btn-primary" id="btnSaveDayDetail" data-label="保存する">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 交通費 ================= -->
+<div class="modal" id="transportModal" role="dialog" aria-modal="true" aria-labelledby="transportTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="transportTitle">交通費（通勤以外）</h2>
+      <button type="button" class="modal-close" data-detail-close aria-label="閉じる">×</button>
+    </div>
+    <p class="form-help" id="trPeriod"></p>
+    <p class="form-help">通勤（自宅⇔会社）の交通費・距離は入れません。自家用車は業務で走った距離（km）だけを記録します（金額の換算はしません）。今の締め期間の分だけ、ご自身で追加・修正・削除できます。</p>
+
+    <form id="transportForm" novalidate>
+      <h3 class="hw-section-title" id="trFormTitle">交通費を追加する</h3>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="trDate">日付 <span class="req">必須</span></label>
+          <input type="date" id="trDate" required>
+        </div>
+        <div>
+          <label for="trMode">交通手段 <span class="req">必須</span></label>
+          <select id="trMode" required>
+            <option value="電車">電車</option>
+            <option value="バス">バス</option>
+            <option value="タクシー">タクシー</option>
+            <option value="高速道路">高速道路</option>
+            <option value="駐車場">駐車場</option>
+            <option value="自家用車">自家用車</option>
+            <option value="その他">その他</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="trFrom">出発地 <span class="optional">任意</span></label>
+          <input type="text" id="trFrom" maxlength="200">
+        </div>
+        <div>
+          <label for="trTo">到着地 <span class="optional">任意</span></label>
+          <input type="text" id="trTo" maxlength="200">
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="trPurpose">目的・現場 <span class="req">必須</span></label>
+        <input type="text" id="trPurpose" maxlength="200" placeholder="例：堺市○○様邸の現場確認">
+      </div>
+      <div class="form-row form-row-2">
+        <div id="trAmountRow">
+          <label for="trAmount">金額（円） <span class="req" id="trAmountReq">必須</span></label>
+          <input type="number" id="trAmount" min="0" step="1" inputmode="numeric" placeholder="例：1200">
+        </div>
+        <div id="trKmRow" hidden>
+          <label for="trKm">業務走行距離（km） <span class="req">必須</span></label>
+          <input type="number" id="trKm" min="0.1" max="1000" step="0.1" inputmode="decimal" placeholder="例：32.5">
+        </div>
+      </div>
+      <div class="form-row" id="trCarRow">
+        <label class="check-inline"><input type="checkbox" id="trPrivateCar"> 自家用車で使った（高速代・駐車場代など）</label>
+      </div>
+      <div class="form-row">
+        <label for="trNote">備考 <span class="optional">任意</span></label>
+        <textarea id="trNote" rows="2" maxlength="2000"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="btnTrCancelEdit" hidden data-label="修正をやめる">修正をやめる</button>
+        <button type="submit" class="btn btn-primary" id="btnSaveTransport" data-label="追加する">追加する</button>
+      </div>
+    </form>
+
+    <section class="hw-section" aria-labelledby="trListTitle">
+      <h3 class="hw-section-title" id="trListTitle">登録した交通費</h3>
+      <p class="card-note" id="trTotals"></p>
+      <ul class="recent-list" id="trList"><li class="empty">読み込み中...</li></ul>
+    </section>
+  </div>
+</div>
+
+<!-- ================= 交通費の削除の確認 ================= -->
+<div class="modal" id="trDeleteModal" role="dialog" aria-modal="true" aria-labelledby="trDeleteTitle" hidden>
+  <div class="modal-panel modal-small">
+    <h2 id="trDeleteTitle">この交通費を削除しますか？</h2>
+    <p class="confirm-text" id="trDeleteText"></p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnTrDeleteBack">戻る</button>
+      <button type="button" class="btn btn-danger" id="btnTrDeleteOk" data-label="削除する">削除する</button>
+    </div>
+  </div>
+</div>

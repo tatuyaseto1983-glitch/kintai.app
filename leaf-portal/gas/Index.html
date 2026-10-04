@@ -82,6 +82,15 @@
             <span class="style-select-label">勤務形態</span>
             <button type="button" class="style-option" data-style="出社" role="radio" aria-checked="false">出社</button>
             <button type="button" class="style-option" data-style="在宅" role="radio" aria-checked="false">在宅</button>
+            <button type="button" class="style-option" data-style="現場" role="radio" aria-checked="false">現場</button>
+            <button type="button" class="style-option" data-style="外出" role="radio" aria-checked="false">外出</button>
+          </div>
+          <!-- 現場・外出を選んだときの付帯情報（時刻には影響しない。あとから「詳細・交通費」で直せる） -->
+          <div class="punch-extras" id="punchExtras" hidden>
+            <label class="check-inline" id="punchDirectBox"><input type="checkbox" id="punchDirect"> 直行（自宅から直接）</label>
+            <label class="punch-site" for="punchSite">現場名（任意）
+              <input type="text" id="punchSite" maxlength="200" placeholder="例：堺市○○様邸">
+            </label>
           </div>
 
           <div class="action-grid">
@@ -106,7 +115,10 @@
         <!-- ============ 本日の記録 ／ 今月の勤怠 ============ -->
         <section class="grid grid-2 grid-records">
           <div class="card" id="todayCard">
-            <h2 class="card-title">本日の記録</h2>
+            <div class="card-head">
+              <h2 class="card-title">本日の記録</h2>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnOpenDayDetail">詳細・交通費</button>
+            </div>
             <div id="todayBody"><p class="empty">読み込み中...</p></div>
           </div>
 
@@ -164,6 +176,15 @@
             <div class="link-card-actions">
               <button type="button" class="btn btn-outline" id="btnOpenHolidayWork">休日出勤を申請する</button>
               <button type="button" class="btn btn-ghost" id="btnOpenHolidayWorkHistory">申請状況を見る</button>
+            </div>
+          </div>
+
+          <!-- 交通費（通勤以外）と自家用車の業務走行距離。今の20日締め期間の分を本人が追加・修正・削除できる -->
+          <div class="card link-card" id="transportCard">
+            <h2 class="card-title">交通費</h2>
+            <p id="transportCardText">通勤以外の交通費と、自家用車で業務に走った距離を登録します。</p>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenTransport">交通費を入力</button>
             </div>
           </div>
 
@@ -260,6 +281,9 @@
   <!-- ================= 休日出勤申請のフォーム（HolidayWorkView.html） ================= -->
   <?!= includeHtml_('HolidayWorkView') ?>
 
+  <!-- ================= 1日の詳細・交通費（DetailView.html） ================= -->
+  <?!= includeHtml_('DetailView') ?>
+
   <!-- ================= 残業申請のフォーム ================= -->
   <div class="modal" id="overtimeModal" role="dialog" aria-modal="true" aria-labelledby="overtimeTitle" hidden>
     <div class="modal-panel">
@@ -309,6 +333,7 @@
     <div class="modal-panel modal-small">
       <h2 id="confirmTitle">退勤しますか？</h2>
       <p id="confirmText">退勤を記録します。退勤後に誤りがあった場合は、打刻修正申請をしてください。</p>
+      <label class="check-inline"><input type="checkbox" id="confirmDirectReturn"> 直帰（現場などから直接帰宅）</label>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" id="btnConfirmCancel">キャンセル</button>
         <button type="button" class="btn btn-dark" id="btnConfirmOk">退勤する</button>
@@ -320,5 +345,6 @@
   <?!= includeHtml_('AdminScripts') ?>
   <?!= includeHtml_('ReportScripts') ?>
   <?!= includeHtml_('HolidayWorkScripts') ?>
+  <?!= includeHtml_('DetailScripts') ?>
 </body>
 </html>

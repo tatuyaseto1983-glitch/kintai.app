@@ -160,7 +160,7 @@ test('勤務区間の画面（切替・別の勤務形態で再開・再出勤�
       assert.match(detail, /15:00〜15:30（0:30）/);
       assert.match(detail, /出社 4:00／在宅 4:00／自動休憩 1:00／実働 7:00/);
       await shot(a, 'seg-03-admin');
-      await a.locator('#admTableBody button[data-detail]').first().click();
+      await a.locator('#admTableBody tr', { hasText: '佐藤 花子' }).locator('button[data-detail]').click();
       assert.equal(await a.locator('.segment-detail').count(), 0, 'もう一度押すと閉じる');
       await a.click('#adminView .tab[data-mode="monthly"]');
       await a.fill('#admMonth', '2026-09');

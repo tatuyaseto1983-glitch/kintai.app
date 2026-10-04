@@ -34,6 +34,8 @@ const REQUIRED_FILES = [
   'HolidayWorkService.gs', 'HolidayWorkView.html', 'HolidayWorkScripts.html',
   // 勤務区間（出社⇄在宅の切替・再出勤）
   'WorkSegmentService.gs',
+  // 段階2：交通費明細・1日の付帯情報
+  'TransportService.gs', 'DayDetailService.gs', 'DetailView.html', 'DetailScripts.html',
 ];
 
 const PROD_CONFIG = '.clasp.json';

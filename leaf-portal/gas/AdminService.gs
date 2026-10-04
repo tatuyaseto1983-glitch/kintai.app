@@ -66,7 +66,27 @@ function getAttendanceDetail(attendanceId) {
     if (!record) fail_('勤怠記録が見つかりません（勤怠ID：' + id + '）');
     const timeline = buildAttendanceTimeline_(record);
     timeline.record = toAttendanceView_(record);
+    timeline.detail = buildDayDetailForEmployee_(String(record['社員ID']).trim(), toDateKey_(record['日付']), record, getNowInfo_());
     return { message: toDateKey_(record['日付']) + ' ' + toPlainText_(record['氏名']) + ' の勤務区間を取得しました', data: timeline };
+  });
+}
+
+/**
+ * 【管理者】社員1人・1日の詳細（勤務区間・中断・直行／直帰・現場・日備考・出張・自家用車の走行距離・交通費明細）。
+ * 勤怠記録がない日（交通費だけの日）も見られる。
+ */
+function getAdminDayDetail(employeeId, date) {
+  return runApi_(function () {
+    requireAdmin();
+    const id = requireText_(employeeId, '社員ID', { max: TEXT_LIMITS.SHORT });
+    const dateKey = requireDateKey_(date, '日付');
+    const staff = findStaffById_(id);
+    if (!staff) fail_('社員ID「' + id + '」のスタッフが見つかりません');
+    const record = findAttendance_(id, dateKey);
+    const data = record ? buildAttendanceTimeline_(record) : { events: [], segments: [], breaks: [], currentStyle: '', segmentCount: 0, showSeconds: false };
+    data.record = record ? toAttendanceView_(record) : null;
+    data.detail = buildDayDetailForEmployee_(id, dateKey, record, getNowInfo_());
+    return { message: dateKey + ' ' + staff.name + ' の詳細を取得しました', data: data };
   });
 }
 

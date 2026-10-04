@@ -34,6 +34,8 @@ const SHEET_NAMES = {
   HOLIDAY_WORK: '休日出勤申請',
   // 1日の中の勤務の区切り（出社→在宅への切替、退勤後の再出勤など）。勤怠記録は1日の合計のまま
   WORK_SEGMENTS: '勤務区間履歴',
+  // 通勤以外の交通費と、自家用車の業務走行距離（走行距離はここだけに保存する）
+  TRANSPORT: '交通費明細',
 };
 
 /** 権限 */
@@ -56,10 +58,16 @@ function segmentWorkStyles_() {
   return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE, WORK_STYLES.SITE, WORK_STYLES.OUTING];
 }
 
-/** 打刻（出勤・切替・再開）で選べる勤務形態 */
+/** 打刻（出勤・切替・再開・再出勤）で選べる勤務形態。現場と外出は別々に保存する（集計は「現場外出時間」） */
 function punchWorkStyles_() {
-  return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE];
+  return [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE, WORK_STYLES.SITE, WORK_STYLES.OUTING];
 }
+
+/** 交通費明細の交通手段 */
+const TRANSPORT_MODES = ['電車', 'バス', 'タクシー', '高速道路', '駐車場', '自家用車', 'その他'];
+const TRANSPORT_MODE_CAR = '自家用車';
+/** 自家用車の業務走行距離の上限（km。1件あたり） */
+const TRANSPORT_MAX_KM = 1000;
 
 /** 勤怠の状態 */
 const ATTENDANCE_STATUS = {
@@ -195,7 +203,10 @@ const SHEET_DEFINITIONS = [
       '打刻修正状況', '更新日時', '備考'],
     // 勤務区間の合計（setupSystem() が右端に追加。無くても動く）。
     // 出勤＝最初の開始、退勤＝最後の終了、勤務形態＝最初の区間の勤務形態（以前と同じ意味）
-    optionalHeaders: ['勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間'],
+    optionalHeaders: ['勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間',
+      // 段階2：日の付帯情報。日備考・出張は本人が入力。直行・直帰は勤務区間から自動で写す（正は勤務区間）
+      // 自家用車の走行距離はここには持たない（交通費明細だけが正）
+      '日備考', '出張', '直行', '直帰'],
   },
   {
     name: SHEET_NAMES.BREAKS,
@@ -266,6 +277,14 @@ const SHEET_DEFINITIONS = [
       '直行', '直帰', '現場名', '備考', '作成日時', '更新日時'],
     // 実際に打刻した日時（秒まで）。打刻修正で時刻を直すと空欄にする（直した時刻は 開始時刻・終了時刻 が正）
     optionalHeaders: ['開始打刻日時', '終了打刻日時'],
+  },
+  {
+    // 通勤以外の交通費（1日に何件でも）。削除は行を消さずに「削除フラグ」に ○
+    // 業務走行距離は交通手段＝自家用車の行だけ。金額と距離は別の列（将来 1kmあたりの単価で金額を出せるように）
+    name: SHEET_NAMES.TRANSPORT,
+    headers: ['明細ID', '日付', '社員ID', '氏名', '交通手段', '出発地', '到着地', '目的・現場', '金額', '自家用車使用',
+      '業務走行距離', '備考', '削除フラグ', '登録日時', '更新日時'],
+    choices: { '交通手段': TRANSPORT_MODES },
   },
   {
     name: SHEET_NAMES.SETTINGS,

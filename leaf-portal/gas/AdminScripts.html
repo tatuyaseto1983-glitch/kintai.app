@@ -20,7 +20,7 @@
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
     'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
     'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
-    'getAttendanceDetail',
+    'getAttendanceDetail', 'getAdminDayDetail',
   ];
   var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'flex', 'restDays', 'reports'];
 
@@ -229,13 +229,13 @@
         st.appendChild(badges);
         tr.appendChild(st);
         body.appendChild(tr);
-        if (r.attendanceId && S.openDetail[r.attendanceId]) body.appendChild(detailRow(S.openDetail[r.attendanceId]));
+        if (S.openDetail[detailKey(r)]) body.appendChild(detailRow(S.openDetail[detailKey(r)]));
       });
     } else {
       var monthly = S.data.monthly;
       // 「2026年9月分 対象期間：2026/08/21〜2026/09/20」（締め日の設定による期間をそのまま表示）
       $('admTableTitle').textContent = '全スタッフ勤怠（月別：' + (monthly ? (monthly.periodText || App.formatMonth(monthly.month) + '　' + App.formatDateShort(monthly.from) + '〜' + App.formatDateShort(monthly.to)) : '') + '）';
-      setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過']);
+      setHead(['氏名', '部署', '勤務区分', '出勤日数', '実働合計', '遅刻合計', '早退合計', '社内超過合計', '打刻漏れ', '修正申請', '残業要確認', '月所定', '実働（フレックス）', '残り', '超過', '業務走行距離', '交通費（通勤以外）']);
       var mrows = monthly ? monthly.rows : [];
       total = mrows.length;
       mrows.forEach(function (r) {
@@ -260,6 +260,8 @@
         tr.appendChild(td(r.flex ? r.flex.worked : '—'));
         tr.appendChild(td(r.flex ? r.flex.remaining : '—'));
         tr.appendChild(td(r.flex ? r.flex.excess : '—', r.flex && r.flex.excess !== '00:00' ? 'cell-alert' : ''));
+        tr.appendChild(td(r.mileageKm ? r.mileageText : '—'));
+        tr.appendChild(td(r.transportAmount ? r.transportAmountText : '—'));
         body.appendChild(tr);
       });
     }
@@ -274,38 +276,43 @@
   }
 
   /** 勤務区間の数と「開く」ボタン（押すとその日の勤務区間と中断を下に表示） */
+  /** 明細を開く単位（社員ID＋日付）。勤怠記録がない日（交通費だけの日）も開ける */
+  function detailKey(r) { return r.employeeId + '|' + ((S.data.daily && S.data.daily.date) || r.date); }
+
   function segmentCell(r) {
     var cell = el('td');
-    if (!r.attendanceId) { cell.textContent = '—'; return cell; }
+    if (!r.employeeId) { cell.textContent = '—'; return cell; }
     var count = r.segmentCount || '';
     cell.appendChild(document.createTextNode(count ? count + '区間 ' : ''));
-    var opened = !!S.openDetail[r.attendanceId];
+    var key = detailKey(r);
+    var opened = !!S.openDetail[key];
     var btn = el('button', 'btn btn-ghost btn-sm', opened ? '閉じる' : '開く');
     btn.type = 'button';
     btn.setAttribute('aria-expanded', opened ? 'true' : 'false');
-    btn.setAttribute('data-detail', r.attendanceId);
-    btn.addEventListener('click', function () { toggleDetail(r.attendanceId, btn); });
+    btn.setAttribute('data-detail', key);
+    btn.addEventListener('click', function () { toggleDetail(key, btn); });
     cell.appendChild(btn);
     return cell;
   }
 
-  function toggleDetail(attendanceId, button) {
+  function toggleDetail(key, button) {
     if (S.busy) return;
-    if (S.openDetail[attendanceId]) {
-      delete S.openDetail[attendanceId];
+    if (S.openDetail[key]) {
+      delete S.openDetail[key];
       renderTable();
       return;
     }
     button.disabled = true;
     button.textContent = '読み込み中...';
-    call('getAttendanceDetail', [attendanceId]).then(function (res) {
+    var parts = key.split('|');
+    call('getAdminDayDetail', [parts[0], parts[1]]).then(function (res) {
       if (!res.success) {
         App.showToast('error', res.message);
         button.disabled = false;
         button.textContent = '開く';
         return;
       }
-      S.openDetail[attendanceId] = res.data;
+      S.openDetail[key] = res.data;
       renderTable();
     });
   }
@@ -321,20 +328,39 @@
       box.appendChild(el('p', 'subhead', '操作の順番' + (detail.showSeconds ? '（テスト環境のため秒まで表示）' : '')));
       var ue = el('ul', 'timeline');
       detail.events.forEach(function (ev) {
-        var li = el('li', 'timeline-item ' + (ev.kind === 'break' ? 'style-break' : ev.kind === 'end' ? 'style-end' : ev.style === '在宅' ? 'style-remote' : 'style-office'));
+        var li = el('li', 'timeline-item ' + (ev.kind === 'break' ? 'style-break' : ev.kind === 'end' ? 'style-end' : ev.style === '在宅' ? 'style-remote' : (ev.style === '現場' || ev.style === '外出') ? 'style-field' : 'style-office'));
         li.appendChild(el('span', 'timeline-time', ev.time));
         li.appendChild(document.createTextNode(' ' + ev.label));
         ue.appendChild(li);
       });
       box.appendChild(ue);
     }
+    var dd = detail.detail || { segments: [], transports: [], car: { count: 0 } };
+    if (!detail.record) box.appendChild(el('p', 'muted', 'この日は勤怠記録がありません。'));
     box.appendChild(el('p', 'subhead', '勤務区間' + (detail.segments.length && detail.segments[0].virtual ? '（以前の記録のため、出勤〜退勤を1区間として表示）' : '')));
     var ul = el('ul', 'timeline');
-    detail.segments.forEach(function (s) {
-      ul.appendChild(el('li', 'timeline-item style-' + (s.style === '在宅' ? 'remote' : 'office'),
-        '区間' + s.number + '　' + s.style + '　' + s.start + '〜' + (s.end || '勤務中') + (s.workTime ? '（区間の実働 ' + App.trimHour(s.workTime) + '）' : '')));
+    detail.segments.forEach(function (s, i) {
+      var a = dd.segments[i] || {};
+      var attrs = [a.direct ? '直行' : '', a.directReturn ? '直帰' : '', a.site ? '現場：' + a.site : '', a.note ? '備考：' + a.note : ''].filter(function (x) { return x; });
+      ul.appendChild(el('li', 'timeline-item style-' + (s.style === '在宅' ? 'remote' : (s.style === '現場' || s.style === '外出') ? 'field' : 'office'),
+        '区間' + s.number + '　' + s.style + '　' + s.start + '〜' + (s.end || '勤務中') + (s.workTime ? '（区間の実働 ' + App.trimHour(s.workTime) + '）' : '') +
+        (attrs.length ? '　' + attrs.join('／') : '')));
     });
     box.appendChild(ul);
+    // 日の情報・自家用車・交通費（交通費明細から。削除済みは出さない）
+    box.appendChild(el('p', 'subhead', 'この日の情報'));
+    var info = [dd.businessTrip ? '出張' : '', dd.direct ? '直行' : '', dd.directReturn ? '直帰' : ''].filter(function (x) { return x; });
+    box.appendChild(el('p', '', '日の属性：' + (info.length ? info.join('・') : 'なし') + '　日備考：' + (dd.dayNote || 'なし') +
+      '　自家用車の業務走行距離：' + (dd.car && dd.car.count ? dd.car.kmText : 'なし')));
+    box.appendChild(el('p', 'subhead', '交通費' + (dd.transportTotals ? '（' + dd.transportTotals.count + '件・' + dd.transportTotals.amountText + '・' + dd.transportTotals.kmText + '）' : '')));
+    var ut = el('ul', 'timeline');
+    if (!dd.transports.length) ut.appendChild(el('li', 'muted', 'なし'));
+    dd.transports.forEach(function (t) {
+      ut.appendChild(el('li', 'timeline-item', [t.mode, (t.from || t.to) ? (t.from || '') + '→' + (t.to || '') : '', t.purpose,
+        t.km ? t.km + 'km' : '', t.amount !== '' ? Number(t.amount).toLocaleString('ja-JP') + '円' : '', t.privateCar && t.mode !== '自家用車' ? '自家用車' : '', t.note]
+        .filter(function (x) { return x; }).join('　')));
+    });
+    box.appendChild(ut);
     box.appendChild(el('p', 'subhead', '中断'));
     var ub = el('ul', 'timeline');
     if (!detail.breaks.length) ub.appendChild(el('li', 'muted', 'なし'));

@@ -20,18 +20,22 @@
 
 /**
  * 【画面から呼ぶ】出勤する。退勤済みの日にもう一度押すと「再出勤」（新しい勤務区間）になります。
- * @param {string} workStyle 「出社」または「在宅」
+ * @param {string} workStyle 「出社」「在宅」「現場」「外出」
+ * @param {object} [options] { direct: true（直行）, site: '現場名' }（勤務区間の付帯情報。時刻には影響しない）
  */
-function clockIn(workStyle) {
+function clockIn(workStyle, options) {
   return runApi_(function () {
-    return withLock_(function () { return clockIn_(workStyle); });
+    return withLock_(function () { return clockIn_(workStyle, options); });
   });
 }
 
-/** 【画面から呼ぶ】退勤する。 */
-function clockOut() {
+/**
+ * 【画面から呼ぶ】退勤する。
+ * @param {object} [options] { directReturn: true（直帰） }
+ */
+function clockOut(options) {
   return runApi_(function () {
-    return withLock_(function () { return clockOut_(); });
+    return withLock_(function () { return clockOut_(options); });
   });
 }
 
@@ -99,8 +103,9 @@ function getTodayStaffStatus() {
 
 // ============================================================ 出勤・退勤の中身
 
-function clockIn_(workStyle) {
-  const style = requireChoice_(workStyle, [WORK_STYLES.OFFICE, WORK_STYLES.REMOTE], '勤務形態');
+function clockIn_(workStyle, options) {
+  const style = requireChoice_(workStyle, punchWorkStyles_(), '勤務形態');
+  const extras = normalizeSegmentExtras_(options, { direct: true });
   const staff = getCurrentStaff_();
   requireActiveStaff_(staff);
   const settings = getSettings_();
@@ -108,7 +113,7 @@ function clockIn_(workStyle) {
   const now = getNowInfo_();
 
   const existing = findAttendance_(staff.employeeId, now.date);
-  if (existing) return reClockIn_(existing, style, now);
+  if (existing) return reClockIn_(existing, style, now, extras);
 
   // 固定勤務だけ遅刻を判定する（フレックスは出勤時刻が自由なので判定しない）
   const lateMinutes = rule.isFixed ? Math.max(0, now.minutes - rule.standardStartMinutes) : 0;
@@ -128,9 +133,9 @@ function clockIn_(workStyle) {
     '更新日時': now.timestamp,
   });
   if (hasWorkSegmentSchema_()) {
-    appendSegment_(record, style, now.time, '', now.timestamp, now.timestamp);
+    appendSegment_(record, style, now.time, '', now.timestamp, now.timestamp, extras);
     updateRecord_(SHEET_NAMES.ATTENDANCE, record, onlyExistingColumns_(SHEET_NAMES.ATTENDANCE, {
-      '勤務形態区分': style, '勤務区間数': '1',
+      '勤務形態区分': style, '勤務区間数': '1', '直行': extras['直行'] || '',
     }));
   }
 
@@ -149,7 +154,7 @@ function clockIn_(workStyle) {
 /**
  * 退勤済みの日の「再出勤」。新しい勤務区間をこの時刻から始める（1日に何回でもできる）。
  */
-function reClockIn_(record, style, now) {
+function reClockIn_(record, style, now, extras) {
   const status = String(record['状態']);
   if (status === ATTENDANCE_STATUS.WORKING) fail_('本日はすでに出勤済みです（勤務中・出勤 ' + toClockText_(record['出勤']) + '）');
   if (status === ATTENDANCE_STATUS.ON_BREAK) fail_('中断中です。業務に戻るときは「再開」を押してください');
@@ -158,7 +163,7 @@ function reClockIn_(record, style, now) {
 
   ensureSegmentsForCurrent_(record, now.timestamp);
   // 再出勤は必ず新しい区間を足す（前の区間の開始・終了は書き換えない＝出勤＝最初の開始は変わらない）
-  appendSegment_(record, style, now.time, '', now.timestamp, now.timestamp);
+  appendSegment_(record, style, now.time, '', now.timestamp, now.timestamp, extras);
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, { '退勤': '', '状態': ATTENDANCE_STATUS.WORKING, '更新日時': now.timestamp });
   recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
   syncOvertimeActual_(record);
@@ -168,7 +173,8 @@ function reClockIn_(record, style, now) {
   };
 }
 
-function clockOut_() {
+function clockOut_(options) {
+  const extras = normalizeSegmentExtras_(options, { directReturn: true });
   const staff = getCurrentStaff_();
   requireActiveStaff_(staff);
   const now = getNowInfo_();
@@ -182,7 +188,10 @@ function clockOut_() {
 
   if (hasWorkSegmentSchema_()) {
     const open = findOpenSegmentRow_(ensureSegmentsForCurrent_(record, now.timestamp));
-    if (open) closeSegmentRow_(open, now.time, now.timestamp, now.timestamp);
+    if (open) {
+      closeSegmentRow_(open, now.time, now.timestamp, now.timestamp);
+      if (extras['直帰']) updateRecord_(SHEET_NAMES.WORK_SEGMENTS, open, { '直帰': extras['直帰'] });
+    }
   }
   updateRecord_(SHEET_NAMES.ATTENDANCE, record, { '退勤': now.time });
   recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
@@ -348,7 +357,8 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     '自動休憩': '', '実働時間': '', '所定終了': '', '社内超過時間': '', '30分以上': '',
     '事前残業申請': '', '要確認': '', '遅刻': '', '早退': '',
   };
-  const optional = { '勤務形態区分': '', '勤務区間数': '', '出社時間': '', '在宅時間': '', '現場外出時間': '' };
+  // 計算で決まる任意の列（日備考・出張は本人の入力なのでここには入れない＝再計算で消さない）
+  const optional = { '勤務形態区分': '', '勤務区間数': '', '出社時間': '', '在宅時間': '', '現場外出時間': '', '直行': '', '直帰': '' };
   const finish = function () {
     Object.keys(optional).forEach(function (k) { if (columns[k] !== undefined) fields[k] = optional[k]; });
     return { fields: fields, segmentChanges: segmentChanges };
@@ -368,6 +378,10 @@ function calculateAttendanceDetail_(record, ctx, opts) {
   }
   optional['勤務形態区分'] = workStyleCategory_(segments);
   optional['勤務区間数'] = String(segments.length);
+  if (hasRealSegments) {
+    optional['直行'] = summary.direct ? MARKS.YES : '';
+    optional['直帰'] = summary.directReturn ? MARKS.YES : '';
+  }
   if (rule.isFixed) {
     fields['所定終了'] = minutesToClock_(rule.standardEndMinutes);
     fields['遅刻'] = formatMinutesOrBlank_(Math.max(0, summary.clockInMinutes - rule.standardStartMinutes));
@@ -508,5 +522,10 @@ function toAttendanceView_(record) {
     officeTime: toDurationText_(record['出社時間']),
     remoteTime: toDurationText_(record['在宅時間']),
     siteOutingTime: toDurationText_(record['現場外出時間']),
+    // 段階2：日の付帯情報（直行・直帰は勤務区間から写した値）
+    dayNote: toPlainText_(record['日備考']),
+    businessTrip: toPlainText_(record['出張']),
+    direct: toPlainText_(record['直行']),
+    directReturn: toPlainText_(record['直帰']),
   };
 }

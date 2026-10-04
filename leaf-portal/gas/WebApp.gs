@@ -20,7 +20,7 @@ const APP_BRAND_NAME = 'Leaf Co.,Ltd';
  * 画面の一番下に出る「版」。どのコードが動いているか（push とデプロイ更新が済んでいるか）を画面で確かめるためのもの。
  * コードを変えて反映するときは、この値も変えてください（npm run check の表示と見比べます）。
  */
-const APP_BUILD = '2026.10.04-3';
+const APP_BUILD = '2026.10.04-4';
 
 /** 画面のタイトル（ブラウザのタブに表示） */
 const WEB_APP_TITLE = 'Leaf Co.,Ltd｜勤怠管理';
@@ -33,7 +33,7 @@ const WEB_APP_TITLE = 'Leaf Co.,Ltd｜勤怠管理';
 const APP_FAVICON_URL = '';
 
 /** getStaffDashboard() で取得できる情報の種類 */
-const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime', 'overtimeRule'];
+const DASHBOARD_PARTS = ['user', 'today', 'month', 'staffStatus', 'flex', 'overtime', 'overtimeRule', 'transport'];
 
 /**
  * WebアプリのURLを開いたときに呼ばれ、画面を返します。
@@ -137,6 +137,8 @@ function getStaffDashboard(parts) {
         result.overtime = { success: true, message: '残業申請の対象外です', data: null };
       }
     }
+
+    if (wanted.indexOf('transport') !== -1) result.transport = getMyTransportExpenses(); // 本人の今の期間の交通費だけ
 
     if (wanted.indexOf('overtimeRule') !== -1) {
       result.overtimeRule = runApi_(function () {

@@ -27,14 +27,31 @@
 // ============================================================ 画面から呼ぶ関数
 
 /**
- * 【画面から呼ぶ】勤務中に勤務形態を切り替える（出社 ⇄ 在宅）。
+ * 【画面から呼ぶ】勤務中に勤務形態を切り替える（出社・在宅・現場・外出）。
  * 今の区間をこの時刻で終え、新しい勤務形態の区間をこの時刻から始めます。
- * @param {string} workStyle 切り替え先（「出社」または「在宅」）
+ * @param {string} workStyle 切り替え先
+ * @param {object} [options] { site: '現場名' }
  */
-function switchWorkStyle(workStyle) {
+function switchWorkStyle(workStyle, options) {
   return runApi_(function () {
-    return withLock_(function () { return switchWorkStyle_(workStyle); });
+    return withLock_(function () { return switchWorkStyle_(workStyle, options); });
   });
+}
+
+/**
+ * 打刻のときに一緒に受け取る勤務区間の付帯情報（直行・直帰・現場名）を、シートに入れる形にする。
+ * 時刻には影響しない。allowed で受け付ける項目を決める（例：直行は出勤・再出勤のときだけ）。
+ */
+function normalizeSegmentExtras_(options, allowed) {
+  const o = options && typeof options === 'object' ? options : {};
+  const out = {};
+  if (allowed && allowed.direct && o.direct === true) out['直行'] = MARKS.YES;
+  if (allowed && allowed.directReturn && o.directReturn === true) out['直帰'] = MARKS.YES;
+  if (!(allowed && allowed.directReturn)) {
+    const site = requireText_(o.site, '現場名', { required: false, max: TEXT_LIMITS.SHORT });
+    if (site) out['現場名'] = site;
+  }
+  return out;
 }
 
 // ============================================================ シートの確認
@@ -113,6 +130,10 @@ function getDaySegments_(record, segmentRows) {
         style: toPlainText_(row['勤務形態']) || WORK_STYLES.OFFICE,
         startMinutes: toMinutes_(row['開始時刻']),
         endMinutes: toMinutes_(row['終了時刻']),
+        direct: !isBlank_(row['直行']),
+        directReturn: !isBlank_(row['直帰']),
+        site: toPlainText_(row['現場名']),
+        note: toPlainText_(row['備考']),
         startStamp: toPlainText_(row['開始打刻日時']),
         endStamp: toPlainText_(row['終了打刻日時']),
         row: row,
@@ -164,6 +185,9 @@ function summarizeDaySegments_(segments) {
     clockOut: open || lastEnd === null ? '' : minutesToClock_(lastEnd),
     workStyle: segments[first].style,
     hasOpen: !!open,
+    // 日の属性「直行」「直帰」：最初に始まった区間が直行、最後に終わった区間が直帰なら ○（正は勤務区間）
+    direct: !!segments[first].direct,
+    directReturn: !open && lastEnd !== null && !!segments[lastIndex].directReturn,
   };
 }
 
@@ -303,7 +327,7 @@ function makeSegmentId_(attendanceId, number) {
  * 区間を1つ追加する（すでにある区間の開始時刻・勤務形態は書き換えない）。
  * @param {string} [startStamp] 実際に打刻した日時（秒まで）。以前の記録から作るときは空
  */
-function appendSegment_(record, style, startText, endText, timestamp, startStamp) {
+function appendSegment_(record, style, startText, endText, timestamp, startStamp, extras) {
   const attendanceId = String(record['勤怠ID']).trim();
   const number = getSegmentRowsOfAttendance_(attendanceId).reduce(function (m, r) { return Math.max(m, Number(r['区間番号']) || 0); }, 0) + 1;
   return appendRecord_(SHEET_NAMES.WORK_SEGMENTS, onlyExistingColumns_(SHEET_NAMES.WORK_SEGMENTS, {
@@ -319,6 +343,8 @@ function appendSegment_(record, style, startText, endText, timestamp, startStamp
     '作成日時': timestamp,
     '更新日時': timestamp,
     '開始打刻日時': startStamp || '',
+    '直行': (extras && extras['直行']) || '',
+    '現場名': (extras && extras['現場名']) || '',
   }));
 }
 
@@ -369,15 +395,16 @@ function findOpenSegmentRow_(rows) {
  * 同じ分の中の操作で今の区間が0分になっても、今の区間の開始・勤務形態は書き換えない（出勤＝最初の開始を守る）。
  * @param {string} endStamp / startStamp 実際の打刻日時（秒まで）
  */
-function closeAndStartSegment_(record, openRow, endText, style, startText, timestamp, endStamp, startStamp) {
+function closeAndStartSegment_(record, openRow, endText, style, startText, timestamp, endStamp, startStamp, extras) {
   closeSegmentRow_(openRow, endText, timestamp, endStamp);
-  return appendSegment_(record, style, startText, '', timestamp, startStamp);
+  return appendSegment_(record, style, startText, '', timestamp, startStamp, extras);
 }
 
 // ============================================================ 切替
 
-function switchWorkStyle_(workStyle) {
+function switchWorkStyle_(workStyle, options) {
   const style = requireChoice_(workStyle, punchWorkStyles_(), '切り替え先の勤務形態');
+  const extras = normalizeSegmentExtras_(options, {});
   const staff = getCurrentStaff_();
   requireActiveStaff_(staff);
   requireWorkSegmentSchema_();
@@ -396,7 +423,7 @@ function switchWorkStyle_(workStyle) {
   if (toPlainText_(open['勤務形態']) === style) fail_('すでに' + style + 'で勤務中です');
 
   const from = toPlainText_(open['勤務形態']);
-  closeAndStartSegment_(record, open, now.time, style, now.time, now.timestamp, now.timestamp, now.timestamp);
+  closeAndStartSegment_(record, open, now.time, style, now.time, now.timestamp, now.timestamp, now.timestamp, extras);
   recalculateAttendanceRecord_(record, now.timestamp, { segmentsWin: true });
   return { message: from + 'から' + style + 'に切り替えました（' + now.time + '）', data: toAttendanceView_(record) };
 }
@@ -506,17 +533,18 @@ function buildTimelineEvents_(segments, breaks) {
   segments.forEach(function (s, k) {
     const cur = segAbs[k];
     const base = k * 10000;
+    const extra = (s.direct ? '・直行' : '') + (s.site ? '（' + s.site + '）' : '');
     if (k === 0) {
-      add(cur.start, base, 'start', s.style + 'で出勤', s.style, s.startStamp);
+      add(cur.start, base, 'start', s.style + 'で出勤' + extra, s.style, s.startStamp);
     } else {
       const prev = segAbs[k - 1];
       const resumed = resumedBy[k];
       if (resumed) {
-        add(cur.start, base, 'resume', '再開（' + s.style + '）', s.style, s.startStamp || resumed.b.endStamp);
+        add(cur.start, base, 'resume', '再開（' + s.style + '）' + extra, s.style, s.startStamp || resumed.b.endStamp);
       } else if (prev.end !== null && prev.end === cur.start && isSwitchBoundary_(segments, k - 1)) {
-        add(cur.start, base, 'switch', s.style + 'へ切替', s.style, s.startStamp);
+        add(cur.start, base, 'switch', s.style + 'へ切替' + extra, s.style, s.startStamp);
       } else {
-        add(cur.start, base, 'reclockin', s.style + 'で再出勤', s.style, s.startStamp);
+        add(cur.start, base, 'reclockin', s.style + 'で再出勤' + extra, s.style, s.startStamp);
       }
     }
     brs.filter(function (x) { return x.owner === k; }).forEach(function (x) {
@@ -532,7 +560,7 @@ function buildTimelineEvents_(segments, breaks) {
       const intoBreak = next && brs.some(function (x) { return x.owner === k && x.start === cur.end && x.end === next.start; });
       // 次の区間がこの終わりから続く（切替・中断からの再開）なら「退勤」は出さない
       if (!switched && !intoBreak) {
-        add(cur.end, base + 9999, 'end', '退勤', s.style, s.endStamp);
+        add(cur.end, base + 9999, 'end', s.directReturn ? '退勤（直帰）' : '退勤', s.style, s.endStamp);
       }
     }
   });

@@ -27,11 +27,12 @@ function startBreak(reason) {
 
 /**
  * 【画面から呼ぶ】中断から再開する。
- * @param {string} [workStyle] 再開する勤務形態（「出社」「在宅」）。省略すると中断前と同じ
+ * @param {string} [workStyle] 再開する勤務形態（出社・在宅・現場・外出）。省略すると中断前と同じ
+ * @param {object} [options] { site: '現場名' }（違う勤務形態で再開するとき、新しい区間に入れる）
  */
-function resumeWork(workStyle) {
+function resumeWork(workStyle, options) {
   return runApi_(function () {
-    return withLock_(function () { return resumeWork_(workStyle); });
+    return withLock_(function () { return resumeWork_(workStyle, options); });
   });
 }
 
@@ -76,8 +77,9 @@ function startBreak_(reason) {
   };
 }
 
-function resumeWork_(workStyle) {
+function resumeWork_(workStyle, options) {
   const requestedStyle = isBlank_(workStyle) ? '' : requireChoice_(workStyle, punchWorkStyles_(), '再開する勤務形態');
+  const extras = normalizeSegmentExtras_(options, {});
   const staff = getCurrentStaff_();
   requireActiveStaff_(staff);
   const now = getNowInfo_();
@@ -103,7 +105,7 @@ function resumeWork_(workStyle) {
       requireWorkSegmentSchema_();
       if (!open) fail_('今の勤務区間が見つかりません。管理者に連絡してください');
       closeAndStartSegment_(record, open, toClockText_(latest['中断開始']), requestedStyle, now.time, now.timestamp,
-        toPlainText_(latest['中断打刻日時']), now.timestamp);
+        toPlainText_(latest['中断打刻日時']), now.timestamp, extras);
       switched = currentStyle + 'から' + requestedStyle + 'に切り替え';
     }
   }

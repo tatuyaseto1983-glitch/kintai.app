@@ -93,7 +93,14 @@ function exportAdminAttendanceCsv(params) {
     const headers = ['日付', '社員ID', '氏名', '部署', '勤務区分', '勤務形態', '出勤', '退勤', '自動休憩', '中断合計', '実働',
       '遅刻', '早退', '社内超過', '事前残業申請', '要確認', '打刻漏れ', '打刻修正状況', '状態',
       // 勤務区間の列（以前の列の右に足す。以前の記録で計算していない日は空欄）
-      '勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間'];
+      '勤務形態区分', '勤務区間数', '出社時間', '在宅時間', '現場外出時間',
+      // 段階2：付帯情報と交通費（業務走行距離・交通費合計は交通費明細から集計。削除済みは入れない）
+      '日備考', '出張', '直行', '直帰', '業務走行距離', '交通費合計'];
+    const transportByDay = {};
+    listTransportRows_('', range.from, range.to).forEach(function (r) {
+      const key = String(r['社員ID']).trim() + '|' + toDateKey_(r['日付']);
+      (transportByDay[key] = transportByDay[key] || []).push(toTransportView_(r));
+    });
     const lines = [headers.map(csvCell_).join(',')];
     getAttendanceInRange_(range.from, range.to).forEach(function (record) {
       if (ctx.excludedIds[String(record['社員ID']).trim()]) return; // 勤怠集計の対象外（役員など）は出さない
@@ -101,7 +108,8 @@ function exportAdminAttendanceCsv(params) {
       lines.push([row.date, row.employeeId, row.name, row.department, row.workType, row.workStyle, row.clockIn, row.clockOut,
         row.autoBreak, row.breakTotal, row.workTime, row.late, row.earlyLeave, row.internalExcess, row.preOvertimeRequest,
         row.needsCheck, row.issues.join('・'), row.correctionStatus, row.status,
-        row.workStyleCategory, row.segmentCount, row.officeTime, row.remoteTime, row.siteOutingTime].map(csvCell_).join(','));
+        row.workStyleCategory, row.segmentCount, row.officeTime, row.remoteTime, row.siteOutingTime,
+        row.dayNote, row.businessTrip, row.direct, row.directReturn].concat(transportCsvCells_(transportByDay[row.employeeId + '|' + row.date])).map(csvCell_).join(','));
     });
     return {
       message: (range.periodText || label) + ' の勤怠CSVを作成しました（' + (lines.length - 1) + '件）',
@@ -189,6 +197,13 @@ function detectPunchIssues_(record, ctx) {
 }
 
 /** 勤怠1件を管理者画面の行にする（部署・打刻漏れを追加） */
+/** CSV の「業務走行距離」「交通費合計」の欄（その日の交通費明細から） */
+function transportCsvCells_(items) {
+  if (!items || !items.length) return ['', ''];
+  const t = summarizeTransportItems_(items);
+  return [t.km ? String(t.km) : '', t.amount ? String(t.amount) : ''];
+}
+
 function toAdminAttendanceRow_(record, ctx) {
   const view = toAttendanceView_(record);
   const staff = ctx.staffById[view.employeeId] || null;
@@ -272,6 +287,7 @@ function buildAdminDaily_(ctx, date) {
 function buildAdminMonthly_(ctx, month) {
   const settings = ctx.settings;
   const range = getPayrollPeriodByMonthKey_(month, settings.monthClosingDay);
+  const transport = summarizeTransportByEmployee_(range.from, range.to);
   const correctionCount = {};
   readTable_(SHEET_NAMES.CORRECTIONS).records.forEach(function (r) {
     const date = toDateKey_(r['対象日']);
@@ -299,6 +315,11 @@ function buildAdminMonthly_(ctx, month) {
       correctionCount: correctionCount[s.employeeId] || 0,
       needsCheckCount: records.filter(function (r) { return r['要確認'] === MARKS.NEEDS_CHECK; }).length,
       flex: null,
+      // 交通費明細から（20日締めの期間・削除済みは入れない）
+      mileageKm: transport[s.employeeId] ? transport[s.employeeId].km : 0,
+      mileageText: formatKm_(transport[s.employeeId] ? transport[s.employeeId].km : 0),
+      transportAmount: transport[s.employeeId] ? transport[s.employeeId].amount : 0,
+      transportAmountText: (transport[s.employeeId] ? transport[s.employeeId].amount : 0).toLocaleString('ja-JP') + '円',
     };
     if (s.workType === WORK_TYPES.FLEX) {
       const balance = calculateFlexBalance_(buildWorkRule_(s.workType, s, settings).monthlyMinutes, worked);

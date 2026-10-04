@@ -1,0 +1,388 @@
+<script>
+/* ============================================================
+ * DetailScripts.html — 1日の詳細（付帯情報）と交通費の動き（スタッフ画面）
+ *
+ * ・1日の詳細：区間ごとの直行・直帰・現場名・備考、日備考・出張、自家用車の業務走行距離（交通費明細の自家用車の行）
+ * ・交通費：今の20日締め期間の明細の一覧と、追加・修正・削除（削除は行を残して削除フラグ）
+ * ・時刻と勤務形態はここでは直せません（打刻修正申請から）
+ * ・社員IDは画面から送りません。どの人の分かはサーバーがログイン中のアカウントで決めます
+ * ・表示する文字はすべて textContent で入れています（HTMLとして解釈しないので安全）
+ * ・処理中はボタンを無効化し、連打しても1回だけ送ります
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var App = window.LeafApp;
+  var el = App.el;
+
+  /** この画面から呼んでよいサーバーの関数（管理者用の関数は入れない） */
+  var DETAIL_FUNCTIONS = ['getMyDayDetail', 'saveMyDayDetail', 'getMyTransportExpenses', 'addTransportExpense', 'updateTransportExpense', 'deleteTransportExpense'];
+  var CAR = '自家用車';
+
+  var D = { busy: false, detail: null, transport: null, editingId: '', deleteId: '', seq: 0 };
+
+  function $(id) { return document.getElementById(id); }
+  function call(fn, args) { return App.callAllowed(DETAIL_FUNCTIONS, fn, args); }
+  function today() { return App.getServerDate() || App.jstDateKey(new Date()); }
+  function yen(n) { return Number(n || 0).toLocaleString('ja-JP') + '円'; }
+
+  /** 処理中：この画面のボタンを無効にする */
+  function setBusy(isBusy, button, text) {
+    D.busy = isBusy;
+    ['btnSaveDayDetail', 'btnSaveTransport', 'btnTrDeleteOk', 'btnTrCancelEdit'].forEach(function (id) {
+      var b = $(id);
+      if (!b) return;
+      b.disabled = isBusy;
+      if (isBusy && b === button) b.textContent = text || '処理中...';
+      if (!isBusy) b.textContent = b.getAttribute('data-label');
+    });
+    var actions = document.querySelectorAll('#trList button');
+    for (var i = 0; i < actions.length; i++) actions[i].disabled = isBusy || !(D.transport && D.transport.editable);
+  }
+
+  function run(button, fn, args, busyText) {
+    if (D.busy) return Promise.resolve(null);
+    setBusy(true, button, busyText);
+    return call(fn, args).then(function (res) {
+      setBusy(false);
+      App.showToast(res.success ? 'success' : 'error', res.message);
+      return res;
+    });
+  }
+
+  // ============================================================ 1日の詳細
+
+  function openDayDetail(date) {
+    $('ddDate').max = today();
+    $('ddDate').value = date || today();
+    App.openModal('dayDetailModal');
+    loadDayDetail();
+  }
+
+  function loadDayDetail() {
+    var date = $('ddDate').value;
+    var seq = ++D.seq;
+    var body = $('ddBody');
+    body.textContent = '';
+    body.appendChild(el('p', 'empty', '読み込み中...'));
+    call('getMyDayDetail', [date]).then(function (res) {
+      if (seq !== D.seq) return;
+      body.textContent = '';
+      if (!res.success) { body.appendChild(el('p', 'error-text', res.message)); return; }
+      D.detail = res.data;
+      renderDayDetail();
+    });
+  }
+
+  function checkbox(id, label, checked, disabled) {
+    var wrap = el('label', 'check-inline');
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = id;
+    input.checked = !!checked;
+    input.disabled = !!disabled;
+    wrap.appendChild(input);
+    wrap.appendChild(document.createTextNode(' ' + label));
+    return wrap;
+  }
+
+  function textInput(id, label, value, max, disabled, multiline) {
+    var row = el('div', 'form-row');
+    var lab = el('label', '', label);
+    lab.setAttribute('for', id);
+    row.appendChild(lab);
+    var input = document.createElement(multiline ? 'textarea' : 'input');
+    if (!multiline) input.type = 'text';
+    else input.rows = 2;
+    input.id = id;
+    input.maxLength = max;
+    input.value = value || '';
+    input.disabled = !!disabled;
+    row.appendChild(input);
+    return row;
+  }
+
+  function renderDayDetail() {
+    var d = D.detail;
+    var body = $('ddBody');
+    body.textContent = '';
+    var locked = !d.editable;
+    $('ddPeriod').textContent = '今の期間：' + d.periodText;
+    var notice = $('ddNotice');
+    notice.hidden = !locked;
+    notice.textContent = locked ? 'この日は今の締め期間ではない（または未来の日）ため、表示だけです。修正が必要なときは管理者に連絡してください。' : '';
+
+    // 区間ごと
+    body.appendChild(el('h3', 'hw-section-title', '勤務区間'));
+    if (!d.hasAttendance) {
+      body.appendChild(el('p', 'empty', 'この日は勤怠記録がありません（交通費・自家用車の距離は登録できます）。'));
+    } else if (!d.hasSegments) {
+      body.appendChild(el('p', 'empty', '以前の記録のため、区間ごとの入力はできません。日備考に書いてください。'));
+    } else {
+      d.segments.forEach(function (sg) {
+        var box = el('div', 'dd-segment');
+        box.setAttribute('data-number', String(sg.number));
+        box.appendChild(el('p', 'subhead', '区間' + sg.number + '　' + sg.style + '　' + sg.start + '〜' + (sg.end || '勤務中')));
+        var checks = el('div', 'dd-checks');
+        checks.appendChild(checkbox('ddDirect' + sg.number, '直行', sg.direct, locked));
+        checks.appendChild(checkbox('ddReturn' + sg.number, '直帰', sg.directReturn, locked));
+        box.appendChild(checks);
+        box.appendChild(textInput('ddSite' + sg.number, '現場名', sg.site, 200, locked));
+        box.appendChild(textInput('ddSegNote' + sg.number, '区間の備考', sg.note, 2000, locked));
+        body.appendChild(box);
+      });
+    }
+
+    // 日ごと
+    body.appendChild(el('h3', 'hw-section-title', 'この日の情報'));
+    if (d.hasAttendance) {
+      body.appendChild(checkbox('ddTrip', '出張', d.businessTrip, locked));
+      body.appendChild(textInput('ddNote', '日備考（直行直帰・現場対応・外出・特記事項など）', d.dayNote, 2000, locked, true));
+    } else {
+      body.appendChild(el('p', 'empty', '日備考・出張は、勤怠記録がある日だけ入力できます。'));
+    }
+
+    // 自家用車
+    body.appendChild(el('h3', 'hw-section-title', '自家用車（業務で走った距離）'));
+    var carMulti = d.car.count >= 2;
+    body.appendChild(checkbox('ddCarUse', '自家用車を業務で使用', d.car.use, locked || carMulti));
+    var kmRow = el('div', 'form-row');
+    var kmLabel = el('label', '', '業務走行距離（km）');
+    kmLabel.setAttribute('for', 'ddCarKm');
+    kmRow.appendChild(kmLabel);
+    var km = document.createElement('input');
+    km.type = 'number'; km.id = 'ddCarKm'; km.min = '0.1'; km.max = '1000'; km.step = '0.1'; km.inputMode = 'decimal';
+    km.placeholder = '例：32.5';
+    km.value = d.car.use ? String(d.car.km) : '';
+    km.disabled = locked || carMulti;
+    kmRow.appendChild(km);
+    body.appendChild(kmRow);
+    if (carMulti) body.appendChild(el('p', 'form-note', 'この日は自家用車の明細が ' + d.car.count + '件あります（合計 ' + d.car.kmText + '）。距離は「交通費」から1件ずつ直してください。'));
+    body.appendChild(el('p', 'form-help', '通勤（自宅⇔会社）の距離は入れません。入力した距離は交通費明細の「自家用車」の1行として保存されます（金額は空欄）。'));
+
+    // その日の交通費（表示だけ）
+    if (d.transports.length) {
+      body.appendChild(el('h3', 'hw-section-title', 'この日の交通費'));
+      var ul = el('ul', 'recent-list');
+      d.transports.forEach(function (t) { ul.appendChild(el('li', '', transportLine(t))); });
+      body.appendChild(ul);
+    }
+    $('btnSaveDayDetail').hidden = locked;
+  }
+
+  function onSaveDayDetail() {
+    var d = D.detail;
+    if (!d || !d.editable) return;
+    var input = { date: d.date };
+    if (d.hasAttendance) {
+      input.dayNote = $('ddNote').value;
+      input.businessTrip = $('ddTrip').checked;
+      if (d.hasSegments) {
+        input.segments = d.segments.map(function (sg) {
+          return {
+            number: sg.number,
+            direct: $('ddDirect' + sg.number).checked,
+            directReturn: $('ddReturn' + sg.number).checked,
+            site: $('ddSite' + sg.number).value,
+            note: $('ddSegNote' + sg.number).value,
+          };
+        });
+      }
+    }
+    if (d.car.count < 2) {
+      var use = $('ddCarUse').checked;
+      if (use && !$('ddCarKm').value) { App.showToast('warn', '業務走行距離（km）を入力してください'); return; }
+      input.car = { use: use, km: $('ddCarKm').value };
+    }
+    run($('btnSaveDayDetail'), 'saveMyDayDetail', [input], '保存中...').then(function (res) {
+      if (!res || !res.success) return;
+      D.detail = res.data;
+      renderDayDetail();
+      App.refresh(['today', 'month', 'transport']);
+    });
+  }
+
+  // ============================================================ 交通費
+
+  /** 交通費カード（getStaffDashboard の transport の結果） */
+  function applyTransport(res) {
+    if (!res || !res.success || !res.data) return;
+    D.transport = res.data;
+    var t = res.data.totals;
+    $('transportCardText').textContent = res.data.periodLabel + '：' + t.count + '件・交通費 ' + yen(t.amount) + '・業務走行距離 ' + t.kmText;
+    if (!$('transportModal').hidden) renderTransportList();
+  }
+
+  function openTransport() {
+    resetTransportForm();
+    App.openModal('transportModal');
+    loadTransport();
+  }
+
+  function loadTransport() {
+    $('trList').textContent = '';
+    $('trList').appendChild(el('li', 'empty', '読み込み中...'));
+    return call('getMyTransportExpenses', []).then(function (res) {
+      if (!res.success) {
+        $('trList').textContent = '';
+        $('trList').appendChild(el('li', 'error-text', res.message));
+        return;
+      }
+      applyTransport(res);
+      renderTransportList();
+    });
+  }
+
+  function transportLine(t) {
+    var parts = [App.formatDateShort(t.date), t.mode];
+    if (t.from || t.to) parts.push((t.from || '') + '→' + (t.to || ''));
+    parts.push(t.purpose);
+    if (t.mode === CAR) parts.push(t.km + 'km');
+    if (t.amount !== '') parts.push(yen(t.amount));
+    if (t.privateCar && t.mode !== CAR) parts.push('自家用車');
+    return parts.join('　');
+  }
+
+  function renderTransportList() {
+    var data = D.transport;
+    if (!data) return;
+    $('trPeriod').textContent = data.periodText + (data.editable ? '' : '（締めた後の期間のため、表示だけです）');
+    $('trTotals').textContent = '合計 ' + data.totals.count + '件　交通費 ' + yen(data.totals.amount) + '　業務走行距離 ' + data.totals.kmText;
+    $('trDate').min = data.from;
+    $('trDate').max = data.today < data.to ? data.today : data.to;
+    var list = $('trList');
+    list.textContent = '';
+    if (!data.items.length) { list.appendChild(el('li', 'empty', 'この期間の交通費はまだありません')); return; }
+    data.items.forEach(function (t) {
+      var li = document.createElement('li');
+      li.setAttribute('data-expense', t.expenseId);
+      li.appendChild(el('span', '', transportLine(t) + (t.note ? '（' + t.note + '）' : '')));
+      if (data.editable) {
+        var actions = el('span', 'tr-actions');
+        var edit = el('button', 'btn btn-ghost btn-sm', '修正');
+        edit.type = 'button';
+        edit.addEventListener('click', function () { startEdit(t); });
+        var del = el('button', 'btn btn-ghost btn-sm', '削除');
+        del.type = 'button';
+        del.addEventListener('click', function () { confirmDelete(t); });
+        actions.appendChild(edit);
+        actions.appendChild(del);
+        li.appendChild(actions);
+      }
+      list.appendChild(li);
+    });
+  }
+
+  function updateModeFields() {
+    var isCar = $('trMode').value === CAR;
+    $('trKmRow').hidden = !isCar;
+    $('trAmountReq').textContent = isCar ? '任意' : '必須';
+    $('trAmountReq').className = isCar ? 'optional' : 'req';
+    $('trCarRow').hidden = isCar; // 自家用車の行は自動で「自家用車使用」
+  }
+
+  function resetTransportForm() {
+    $('transportForm').reset();
+    D.editingId = '';
+    $('trDate').value = today();
+    $('trFormTitle').textContent = '交通費を追加する';
+    $('btnSaveTransport').setAttribute('data-label', '追加する');
+    $('btnSaveTransport').textContent = '追加する';
+    $('btnTrCancelEdit').hidden = true;
+    updateModeFields();
+  }
+
+  function startEdit(t) {
+    if (D.busy) return;
+    D.editingId = t.expenseId;
+    $('trDate').value = t.date;
+    $('trMode').value = t.mode;
+    $('trFrom').value = t.from;
+    $('trTo').value = t.to;
+    $('trPurpose').value = t.purpose;
+    $('trAmount').value = t.amount;
+    $('trKm').value = t.km;
+    $('trPrivateCar').checked = t.privateCar;
+    $('trNote').value = t.note;
+    $('trFormTitle').textContent = '交通費を修正する（' + App.formatDateShort(t.date) + '・' + t.mode + '）';
+    $('btnSaveTransport').setAttribute('data-label', '修正を保存する');
+    $('btnSaveTransport').textContent = '修正を保存する';
+    $('btnTrCancelEdit').hidden = false;
+    updateModeFields();
+    $('trPurpose').focus();
+  }
+
+  function onSaveTransport(event) {
+    event.preventDefault();
+    var isCar = $('trMode').value === CAR;
+    var input = {
+      date: $('trDate').value,
+      mode: $('trMode').value,
+      from: $('trFrom').value.trim(),
+      to: $('trTo').value.trim(),
+      purpose: $('trPurpose').value.trim(),
+      amount: $('trAmount').value.trim(),
+      km: isCar ? $('trKm').value.trim() : '',
+      privateCar: isCar || $('trPrivateCar').checked,
+      note: $('trNote').value,
+    };
+    // 入力漏れは送る前に知らせる（最終的な確認はサーバー側でも行う）
+    if (!input.date) return App.showToast('warn', '日付を入力してください');
+    if (!input.purpose) return App.showToast('warn', '目的・現場を入力してください');
+    if (!isCar && input.amount === '') return App.showToast('warn', '金額を入力してください');
+    if (isCar && !input.km) return App.showToast('warn', '業務走行距離（km）を入力してください');
+    var editing = D.editingId;
+    run($('btnSaveTransport'), editing ? 'updateTransportExpense' : 'addTransportExpense', editing ? [editing, input] : [input], '保存中...')
+      .then(function (res) {
+        if (!res || !res.success) return;
+        resetTransportForm();
+        loadTransport();
+      });
+  }
+
+  function confirmDelete(t) {
+    if (D.busy) return;
+    D.deleteId = t.expenseId;
+    $('trDeleteText').textContent = transportLine(t) + '　（削除した明細は一覧・合計に入りません）';
+    App.openModal('trDeleteModal');
+  }
+
+  function onDelete() {
+    if (!D.deleteId) return;
+    run($('btnTrDeleteOk'), 'deleteTransportExpense', [D.deleteId], '削除中...').then(function (res) {
+      App.closeModal('trDeleteModal');
+      D.deleteId = '';
+      if (res && res.success) {
+        if (D.editingId) resetTransportForm();
+        loadTransport();
+      }
+    });
+  }
+
+  // ============================================================ 起動
+
+  function bind() {
+    $('btnOpenDayDetail').addEventListener('click', function () { openDayDetail((App.getToday() && App.getToday().date) || today()); });
+    $('ddDate').addEventListener('change', function () { if ($('ddDate').value) loadDayDetail(); });
+    $('btnSaveDayDetail').addEventListener('click', onSaveDayDetail);
+    $('btnOpenTransport').addEventListener('click', openTransport);
+    $('trMode').addEventListener('change', updateModeFields);
+    $('transportForm').addEventListener('submit', onSaveTransport);
+    $('btnTrCancelEdit').addEventListener('click', resetTransportForm);
+    $('btnTrDeleteBack').addEventListener('click', function () { App.closeModal('trDeleteModal'); D.deleteId = ''; });
+    $('btnTrDeleteOk').addEventListener('click', onDelete);
+    var closers = document.querySelectorAll('[data-detail-close]');
+    for (var i = 0; i < closers.length; i++) {
+      closers[i].addEventListener('click', function (e) {
+        if (D.busy) return;
+        var modal = e.currentTarget.closest('.modal');
+        App.closeModal(modal.id);
+        if (modal.id === 'dayDetailModal') App.refresh(['today', 'transport']);
+      });
+    }
+  }
+
+  window.LeafDetail = { applyTransport: applyTransport, openDayDetail: openDayDetail, openTransport: openTransport };
+  bind();
+})();
+</script>
