@@ -67,12 +67,17 @@ function saveMyDayDetail(input) {
         const rows = getSegmentRowsOfAttendance_(String(record['勤怠ID']).trim());
         if (!rows.length) fail_(dateKey + ' は以前の記録のため、区間ごとの入力はできません。日備考に書いてください');
         let segChanged = false;
+        const daySegs = getDaySegments_(record, rows);
+        const firstNumber = daySegs[summarizeDaySegments_(daySegs).firstIndex].number;
         p.segments.forEach(function (sg) {
           const no = Number(sg && sg.number);
           const row = rows.filter(function (r) { return Number(r['区間番号']) === no; })[0];
           if (!row) fail_('区間' + (sg && sg.number) + ' はありません（' + dateKey + ' の区間は ' + rows.length + 'つです）');
+          // 直行は最初の区間だけ直せる。2つ目以降の区間の直行は変えない（以前の版のデータもそのまま残す）
+          const isFirst = Number(row['区間番号']) === firstNumber;
+          if (!isFirst && sg.direct === true && isBlank_(row['直行'])) fail_('直行は、その日の最初の区間（最初の出勤）だけに付けられます');
           const fields = {
-            '直行': sg.direct === true ? MARKS.YES : '',
+            '直行': isFirst ? (sg.direct === true ? MARKS.YES : '') : toPlainText_(row['直行']),
             '直帰': sg.directReturn === true ? MARKS.YES : '',
             '現場名': requireText_(sg.site, '現場名', { required: false, max: TEXT_LIMITS.SHORT }),
             '備考': requireText_(sg.note, '区間の備考', { required: false, max: TEXT_LIMITS.LONG }),
@@ -209,6 +214,7 @@ function buildDayDetailForEmployee_(employeeId, dateKey, record, now) {
     segments: segments.map(function (s) {
       return {
         number: s.number, style: s.style, place: workPlaceLabel_(s.style), legacy: punchWorkStyles_().indexOf(s.style) === -1,
+        first: !!summary && segments.indexOf(s) === summary.firstIndex, // 直行を付けられるのはこの区間だけ
         start: minutesToClock_(s.startMinutes), end: s.endMinutes === null ? '' : minutesToClock_(s.endMinutes),
         direct: !!s.direct, directReturn: !!s.directReturn, site: s.site || '', note: s.note || '', virtual: s.virtual,
       };

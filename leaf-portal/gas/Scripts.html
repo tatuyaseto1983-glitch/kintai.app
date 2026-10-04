@@ -360,9 +360,10 @@
     return state.workStyle;
   }
 
-  /** 出勤・再出勤と一緒に送る付帯情報（直行・現場名）。時刻には影響しない（現場は勤務場所ではない） */
+  /** その日の最初の出勤と一緒に送る付帯情報（直行・現場名）。再出勤では送らない（直行は最初の出勤だけ） */
   function punchOptions() {
     var o = {};
+    if (currentStatus() !== STATUS.NOT_STARTED) return o;
     var site = $('punchSite').value.trim();
     if (site) o.site = site;
     if ($('punchDirect').checked) o.direct = true;
@@ -545,8 +546,8 @@
     $('btnSwitchStyle').hidden = !working;
     $('btnSwitchStyle').disabled = !working || same;
     setLabel($('btnSwitchStyle'), '勤務場所を切替');
-    // 直行・現場名は出勤・再出勤のときだけ入れる（勤務中は［詳細・交通費］から）
-    $('punchExtras').hidden = !(notStarted || finished);
+    // 直行・現場名は、その日の最初の出勤のときだけ入れる（再出勤・再開・切替では選べない。現場名は［詳細・交通費］から直せる）
+    $('punchExtras').hidden = !notStarted;
 
     var hint = '';
     if (!ready) hint = '勤怠の状況を確認できないため、打刻できません。';

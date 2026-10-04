@@ -50,7 +50,7 @@ test('段階2の画面（直行・直帰・現場・1日の詳細・交通費・
       await idle(p);
       assert.match(await lastToast(p), /出勤しました（会社・09:30）/);
       assert.equal(await p.inputValue('#punchSite'), '', '出勤したら入力欄は空に戻る');
-      assert.match(await p.locator('#todayBody .timeline').innerText(), /09:30\s+会社で出勤・直行（堺市○○様邸）/);
+      assert.match(await p.locator('#todayBody .timeline').innerText(), /09:30\s+直行で出勤（堺市○○様邸）/);
       assert.equal(await p.locator('#punchExtras').isHidden(), true, '勤務中は直行・現場名の欄は出ない（詳細・交通費から直す）');
       const seg = gas.main.rows('勤務区間履歴')[0];
       assert.deepEqual([seg['勤務形態'], seg['直行'], seg['現場名']], ['出社', '○', '堺市○○様邸']);
@@ -68,6 +68,7 @@ test('段階2の画面（直行・直帰・現場・1日の詳細・交通費・
       assert.equal(await p.locator('#confirmDirectReturn').isChecked(), false);
       await p.click('#btnConfirmOk');
       await idle(p);
+      assert.equal(await p.locator('#punchExtras').isHidden(), true, '退勤後（再出勤）は直行・現場名を選べない（直行は最初の出勤だけ）');
       const body = await p.locator('#todayBody').innerText();
       assert.match(body, /日の属性\s+直行/);
       assert.match(body, /勤務場所\s+会社＋在宅/);
@@ -76,6 +77,7 @@ test('段階2の画面（直行・直帰・現場・1日の詳細・交通費・
     await t.test('1日の詳細：区間の現場名・直帰、日備考・出張、自家用車の距離を保存', async () => {
       await p.click('#btnOpenDayDetail');
       await p.waitForSelector('#ddSite1');
+      assert.equal(await p.locator('#ddDirect2').count(), 0, '直行のチェックは最初の区間だけ');
       assert.equal(await p.inputValue('#ddSite1'), '堺市○○様邸');
       assert.equal(await p.locator('#ddDirect1').isChecked(), true);
       await p.check('#ddReturn2');

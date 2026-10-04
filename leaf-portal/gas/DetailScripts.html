@@ -124,7 +124,9 @@
         box.setAttribute('data-number', String(sg.number));
         box.appendChild(el('p', 'subhead', '区間' + sg.number + '　' + (sg.place || sg.style) + '　' + sg.start + '〜' + (sg.end || '勤務中')));
         var checks = el('div', 'dd-checks');
-        checks.appendChild(checkbox('ddDirect' + sg.number, '直行', sg.direct, locked));
+        // 直行は、その日の最初の区間（最初の出勤）だけ。2つ目以降に直行がある以前のデータは表示だけ
+        if (sg.first) checks.appendChild(checkbox('ddDirect' + sg.number, '直行', sg.direct, locked));
+        else if (sg.direct) checks.appendChild(el('span', 'muted', '直行（以前のデータ）'));
         checks.appendChild(checkbox('ddReturn' + sg.number, '直帰', sg.directReturn, locked));
         box.appendChild(checks);
         box.appendChild(textInput('ddSite' + sg.number, '現場名', sg.site, 200, locked));
@@ -181,7 +183,7 @@
         input.segments = d.segments.map(function (sg) {
           return {
             number: sg.number,
-            direct: $('ddDirect' + sg.number).checked,
+            direct: sg.first ? $('ddDirect' + sg.number).checked : sg.direct,
             directReturn: $('ddReturn' + sg.number).checked,
             site: $('ddSite' + sg.number).value,
             note: $('ddSegNote' + sg.number).value,

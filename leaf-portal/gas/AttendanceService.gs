@@ -107,7 +107,6 @@ function getTodayStaffStatus() {
 
 function clockIn_(workStyle, options) {
   const style = requireChoice_(workStyle, punchWorkStyles_(), '勤務形態');
-  const extras = normalizeSegmentExtras_(options, { direct: true });
   const staff = getCurrentStaff_();
   requireActiveStaff_(staff);
   const settings = getSettings_();
@@ -115,6 +114,8 @@ function clockIn_(workStyle, options) {
   const now = getNowInfo_();
 
   const existing = findAttendance_(staff.employeeId, now.date);
+  // 直行はその日の最初の出勤のときだけ選べる（再出勤では選べない）
+  const extras = normalizeSegmentExtras_(options, { direct: !existing });
   if (existing) return reClockIn_(existing, style, now, extras);
 
   // 固定勤務だけ遅刻を判定する（フレックスは出勤時刻が自由なので判定しない）

@@ -67,7 +67,7 @@ test('勤務場所は会社（出社）・在宅の2択だけ。直行・直帰�
   assert.deepEqual(pick(att(gas, 'AT-20261007-E002'), ['直行', '直帰', '勤務形態']), ['○', '○', '出社']);
   assert.deepEqual(seg(gas, 'AT-20261007-E002'), ['出社|08:30-17:00|○|○|和泉市□□様邸|']);
   const tl = plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-07'), { showSeconds: false })).events.map((e) => e.time + ' ' + e.label);
-  assert.deepEqual(tl, ['08:30 会社で出勤・直行（和泉市□□様邸）', '17:00 退勤（直帰）']);
+  assert.deepEqual(tl, ['08:30 直行で出勤（和泉市□□様邸）', '17:00 退勤（直帰）']);
   // 現場名だけ（直行なし）は「現場：」を付ける
   run(gas, '2026-10-08', [['09:00', 'clockIn', '在宅', { site: '見積先' }], ['10:00', 'clockOut']]);
   assert.deepEqual(plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-08'), { showSeconds: false })).events.map((e) => e.label),
@@ -332,4 +332,68 @@ test('勤務場所の切替・再開・再出勤：同じ勤務場所なら区�
   assert.equal(att(gas, id)['勤務形態区分'], '出社＋在宅', '内部の値は出社のまま');
   assert.equal(ok(gas.g.getMyAttendance()).data.records[0].workPlace, '会社＋在宅', '画面用は会社＋在宅');
   assert.equal(att(gas, id)['現場外出時間'], '', '現場外出時間は新しい集計では使わない');
+});
+
+test('直行は、その日の最初の出勤のときだけ設定できる（再出勤・再開・勤務場所の切替では設定できず、後の区間へ引き継がない）', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  const id = 'AT-20261005-E002';
+  const directs = () => gas.main.rows('勤務区間履歴').filter((r) => r['勤怠ID'] === id).map((r) => r['区間番号'] + ':' + (r['直行'] || '-') + ':' + (r['現場名'] || ''));
+  const labels = () => plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-05'), { showSeconds: false })).events.map((e) => e.label);
+  // 最初の出勤では直行を設定できる（区間1に 直行 ○・現場名）
+  run(gas, '2026-10-05', [['09:00', 'clockIn', '出社', { direct: true, site: '堺市○○様邸' }]]);
+  assert.deepEqual(directs(), ['1:○:堺市○○様邸']);
+  assert.deepEqual(labels(), ['直行で出勤（堺市○○様邸）']);
+  // 勤務場所の切替では設定できない（送られてきたら止める・区間は作らない）
+  gas.setNow('2026-10-05 10:00');
+  assert.match(gas.g.switchWorkStyle('在宅', { direct: true }).message, /直行は、その日の最初の出勤のときだけ選べます/);
+  assert.equal(directs().length, 1);
+  run(gas, '2026-10-05', [['10:00', 'switchWorkStyle', '在宅']]);
+  // 再開では設定できない
+  run(gas, '2026-10-05', [['11:00', 'startBreak', '']]);
+  gas.setNow('2026-10-05 11:30');
+  assert.match(gas.g.resumeWork('出社', { direct: true }).message, /最初の出勤のときだけ/);
+  run(gas, '2026-10-05', [['11:30', 'resumeWork', '出社'], ['12:00', 'clockOut']]);
+  // 再出勤では設定できない
+  gas.setNow('2026-10-05 13:00');
+  assert.match(gas.g.clockIn('在宅', { direct: true, site: 'x' }).message, /最初の出勤のときだけ/);
+  assert.equal(gas.main.rows('勤怠記録').find((r) => r['勤怠ID'] === id)['状態'], '退勤済み', '止めたときは再出勤しない');
+  run(gas, '2026-10-05', [['13:00', 'clockIn', '在宅'], ['14:00', 'clockOut']]);
+  // 後続の区間へ直行を引き継がない。日次まとめの直行は最初の区間で判定
+  assert.deepEqual(directs(), ['1:○:堺市○○様邸', '2:-:', '3:-:', '4:-:']);
+  assert.equal(att(gas, id)['直行'], '○');
+  assert.deepEqual(labels(), ['直行で出勤（堺市○○様邸）', '勤務場所を在宅へ切替', '中断', '再開（会社）', '退勤', '在宅で再出勤', '退勤']);
+  // 現場名なしの直行は「直行で出勤」
+  run(gas, '2026-10-06', [['09:00', 'clockIn', '在宅', { direct: true }], ['10:00', 'clockOut']]);
+  assert.deepEqual(plain(gas.g.buildAttendanceTimeline_(gas.g.findAttendance_('E002', '2026-10-06'), { showSeconds: false })).events.map((e) => e.label), ['直行で出勤', '退勤']);
+  // 詳細の編集でも、直行は最初の区間だけ（2つ目以降に付けようとすると止める）
+  gas.setNow('2026-10-06 18:00');
+  assert.match(gas.g.saveMyDayDetail({ date: '2026-10-05', segments: [{ number: 2, direct: true }] }).message, /最初の区間（最初の出勤）だけ/);
+  ok(gas.g.saveMyDayDetail({ date: '2026-10-05', segments: [{ number: 1, direct: false, site: '堺市○○様邸' }] }));
+  assert.equal(att(gas, id)['直行'], '', '最初の区間の直行を外せば日次まとめも外れる');
+  const d = ok(gas.g.getMyDayDetail('2026-10-05')).data;
+  assert.deepEqual(d.segments.map((x) => x.first), [true, false, false, false]);
+});
+
+test('以前の版で再出勤の区間に直行が付いたデータは、書き換えずに読める（日次まとめは最初の区間で判定）', () => {
+  const gas = ready();
+  gas.loginAs(FIXED);
+  run(gas, '2026-10-05', [['09:00', 'clockIn', '出社'], ['12:00', 'clockOut'], ['13:00', 'clockIn', '在宅'], ['15:00', 'clockOut']]);
+  // 以前の版で付いた「再出勤の区間の直行」を直接入れる
+  const sheet = gas.main.getSheetByName('勤務区間履歴');
+  sheet.data[2][sheet.data[0].indexOf('直行')] = '○';
+  gas.g.clearTableCache_();
+  const before = JSON.stringify(sheet.data);
+  gas.loginAs(ADMIN);
+  gas.setNow('2026-10-06 09:00');
+  ok(gas.g.recalculateThisMonth());
+  assert.equal(att(gas, 'AT-20261005-E002')['直行'], '', '最初の区間が直行でなければ、日次まとめの直行は付かない');
+  assert.equal(JSON.stringify(sheet.data.map((r) => r.slice(0, 13))), JSON.stringify(JSON.parse(before).map((r) => r.slice(0, 13))), '勤務区間の直行は書き換えない');
+  const d = ok(gas.g.getAdminDayDetail('E002', '2026-10-05')).data;
+  assert.deepEqual(d.events.map((e) => e.label), ['会社で出勤', '退勤', '在宅で再出勤・直行', '退勤']);
+  assert.deepEqual(d.detail.segments.map((x) => x.direct), [false, true]);
+  // 本人が詳細を保存しても、2つ目の区間の直行（以前のデータ）は消えない
+  gas.loginAs(FIXED);
+  ok(gas.g.saveMyDayDetail({ date: '2026-10-05', segments: [{ number: 2, direct: true, site: '' }], dayNote: 'メモ' }));
+  assert.equal(gas.main.rows('勤務区間履歴')[1]['直行'], '○');
 });

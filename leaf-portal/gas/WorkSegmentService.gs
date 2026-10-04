@@ -40,11 +40,14 @@ function switchWorkStyle(workStyle, options) {
 
 /**
  * 打刻のときに一緒に受け取る勤務区間の付帯情報（直行・直帰・現場名）を、シートに入れる形にする。
- * 時刻には影響しない。allowed で受け付ける項目を決める（例：直行は出勤・再出勤のときだけ）。
+ * 時刻には影響しない。allowed で受け付ける項目を決める。
+ *   直行：その日の最初の出勤のときだけ（再出勤・再開・勤務場所の切替では選べない。送られてきたら止める）
+ *   直帰：退勤のときだけ
  */
 function normalizeSegmentExtras_(options, allowed) {
   const o = options && typeof options === 'object' ? options : {};
   const out = {};
+  if (o.direct === true && !(allowed && allowed.direct)) fail_('直行は、その日の最初の出勤のときだけ選べます');
   if (allowed && allowed.direct && o.direct === true) out['直行'] = MARKS.YES;
   if (allowed && allowed.directReturn && o.directReturn === true) out['直帰'] = MARKS.YES;
   if (!(allowed && allowed.directReturn)) {
@@ -542,10 +545,11 @@ function buildTimelineEvents_(segments, breaks) {
     const cur = segAbs[k];
     const base = k * 10000;
     // 直行・現場名は補足として付ける（現場は勤務形態ではなく付帯情報）。例：会社で出勤・直行（○○様邸）
+    // 直行はその日の最初の出勤だけ：「直行で出勤（○○様邸）」。2つ目以降の区間に直行があるのは以前の版のデータ（読めるように残す）
     const extra = (s.direct ? '・直行' : '') + (s.site ? '（' + (s.direct ? '' : '現場：') + s.site + '）' : '');
     const place = workPlaceLabel_(s.style);
     if (k === 0) {
-      add(cur.start, base, 'start', place + 'で出勤' + extra, s.style, s.startStamp);
+      add(cur.start, base, 'start', s.direct ? '直行で出勤' + (s.site ? '（' + s.site + '）' : '') : place + 'で出勤' + extra, s.style, s.startStamp);
     } else {
       const prev = segAbs[k - 1];
       const resumed = resumedBy[k];
