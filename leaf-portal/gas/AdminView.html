@@ -224,7 +224,7 @@
           <label for="admCheckFilter" class="section-sub">区分</label>
           <select id="admCheckFilter" class="select-sm">
             <option value="">すべて</option><option value="打刻">打刻</option><option value="残業">残業</option>
-            <option value="有給・申請">有給・申請</option><option value="日報">日報</option>
+            <option value="有給・申請">有給・申請</option><option value="日報">日報</option><option value="再計算">再計算</option>
           </select>
           <span class="card-note" id="admCheckCounts"></span>
         </div>
@@ -261,9 +261,34 @@
       <div class="tool-row">
         <button type="button" class="btn btn-outline" id="btnCsvDaily" data-admin-label="日別CSV（選択中の日）">日別CSV（選択中の日）</button>
         <button type="button" class="btn btn-outline" id="btnCsvMonthly" data-admin-label="月別CSV（選択中の月）">月別CSV（選択中の月）</button>
-        <button type="button" class="btn btn-dark" id="btnRecalc" data-admin-label="今月の勤怠を再計算">今月の勤怠を再計算</button>
+        <button type="button" class="btn btn-dark" id="btnRecalcOpen" data-admin-label="再計算のプレビュー">再計算のプレビュー</button>
       </div>
-      <p class="card-note">CSVは Excel で開いても文字化けしない形式（UTF-8・BOM付き）です。再計算は、スプレッドシートを直接直したときに、実働・社内超過・要確認などを計算し直します（出勤・退勤の時刻は変わりません）。</p>
+      <p class="card-note">CSVは Excel で開いても文字化けしない形式（UTF-8・BOM付き）です。再計算は、設定を変えたときやスプレッドシートを直接直したときに、実働・自動休憩・社内超過・要確認などを今の記録と設定で計算し直します。必ず先にプレビューで変わる内容を確認してから実行します（画面を開いただけでは過去の値は変わりません）。</p>
+
+      <div id="admRecalc" class="recalc-panel" hidden>
+        <h3 class="section-title">再計算のプレビュー</h3>
+        <div class="tool-row">
+          <label class="section-sub" for="admRecalcFrom">期間</label>
+          <input type="date" id="admRecalcFrom" class="select-sm">
+          <span>〜</span>
+          <input type="date" id="admRecalcTo" class="select-sm">
+          <label class="section-sub" for="admRecalcStaff">社員</label>
+          <select id="admRecalcStaff" class="select-sm"><option value="">全員</option></select>
+          <button type="button" class="btn btn-primary" id="btnRecalcPreview" data-admin-label="変わる内容を確認">変わる内容を確認</button>
+          <button type="button" class="btn btn-outline" id="btnRecalcClose">閉じる</button>
+        </div>
+        <p class="card-note" id="admRecalcSummary"></p>
+        <ul class="card-note" id="admRecalcNotes"></ul>
+        <div class="table-wrap" id="admRecalcTableWrap" hidden>
+          <table class="table admin-table">
+            <thead><tr><th class="left">社員名</th><th>日付</th><th>自動休憩<br>変更前 → 変更後</th><th>実働<br>変更前 → 変更後</th><th class="left">ほかに変わる項目</th><th class="left">変更理由</th></tr></thead>
+            <tbody id="admRecalcBody"></tbody>
+          </table>
+        </div>
+        <div class="tool-row">
+          <button type="button" class="btn btn-dark" id="btnRecalcApply" data-admin-label="この内容で再計算する" disabled>この内容で再計算する</button>
+        </div>
+      </div>
     </section>
   </div>
 </main>

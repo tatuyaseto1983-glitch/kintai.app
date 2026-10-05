@@ -50,6 +50,9 @@ function getSettings_() {
     // 日報の未提出判定の開始日（空欄・日付でない値なら ''＝判定しない）。判定は isReportDueDate_ に集めている
     reportMissingFrom: toDateKey_(values[SETTING_KEYS.REPORT_MISSING_FROM]),
     reportMissingFromInvalid: !isBlank_(values[SETTING_KEYS.REPORT_MISSING_FROM]) && !toDateKey_(values[SETTING_KEYS.REPORT_MISSING_FROM]),
+    // 「自動休憩_適用開始」を使い始める日（空欄＝すべての日。日付でない値は空欄と同じに扱い、Invalid で知らせる）。判定は autoBreakThresholdFor_
+    autoBreakThresholdFrom: toDateKey_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]),
+    autoBreakThresholdFromInvalid: !isBlank_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]) && !toDateKey_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]),
   };
   if (settings.overtimeUnitMinutes < 1) invalidSetting_(SETTING_KEYS.OVERTIME_UNIT, values, '00:01 以上');
   if (settings.fixedEndMinutes <= settings.fixedStartMinutes) {
@@ -86,6 +89,15 @@ function parseSettingClock_(values, key) {
 }
 
 /** 時間の長さ（01:00、138:00 など） */
+/**
+ * その勤務日に使う「自動休憩_適用開始」（分）。設定「自動休憩_適用開始_有効日」より前の日は 0（常に差し引く＝以前の初期値）。
+ * 有効日が空欄なら、すべての日に「自動休憩_適用開始」を使う。
+ */
+function autoBreakThresholdFor_(settings, dateKey) {
+  if (settings.autoBreakThresholdFrom && String(dateKey) < settings.autoBreakThresholdFrom) return 0;
+  return settings.autoBreakThresholdMinutes;
+}
+
 function parseSettingDuration_(values, key) {
   const minutes = toMinutes_(values[key]);
   if (minutes === null || minutes < 0) invalidSetting_(key, values, '例：01:00');

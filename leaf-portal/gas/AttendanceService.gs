@@ -410,7 +410,7 @@ function calculateAttendanceDetail_(record, ctx, opts) {
     standardEndMinutes: judge.endBase,
     excessBaseMinutes: rule.standardEndMinutes, // 社内超過は半休の日も標準退勤（18:30）より後
     autoBreakMinutes: settings.autoBreakMinutes,
-    autoBreakThresholdMinutes: settings.autoBreakThresholdMinutes,
+    autoBreakThresholdMinutes: autoBreakThresholdFor_(settings, toDateKey_(record['日付'])), // 「自動休憩_適用開始_有効日」より前の日は 00:00
     overtimeFreeLimitMinutes: settings.overtimeFreeLimitMinutes,
     overtimeUnitMinutes: settings.overtimeUnitMinutes,
   });

@@ -11,7 +11,9 @@
  *   getPendingRequests()       … 承認待ちの申請の一覧
  *   checkWeeklyRestDays(date)  … 週1日の完全休日の確認（全スタッフ）
  *   exportAttendanceCsv(month) … CSV 出力（文字列で返す）
- *   recalculateThisMonth()     … 今月の勤怠記録を再計算（シートを直接直した後などに）
+ *   recalculateThisMonth()     … 今月の勤怠記録を再計算（エディタから実行する場合だけ。画面からは使わない）
+ *   previewAttendanceRecalculation(p) … 再計算のプレビュー（変わる記録だけ。書き込みなし）
+ *   applyAttendanceRecalculation(p)   … プレビューで確認した記録だけを再計算
  *
  * 申請の承認・却下は OvertimeService.gs / CorrectionService.gs、日報の確認は DailyReportService.gs にあります。
  */
@@ -204,7 +206,9 @@ function exportAttendanceCsv(month) {
 }
 
 /**
- * 【管理者・エディタから実行可】今月の勤怠記録の計算列（実働時間・社内超過時間・要確認など）を計算し直す。
+ * 【管理者・エディタから実行】今月の勤怠記録の計算列（確認なしで全件を書き直す）。
+ * 管理者画面・スプレッドシートのメニューからは呼ばない（画面では previewAttendanceRecalculation → applyAttendanceRecalculation を使う）。
+ * 以下、もとの説明：今月の勤怠記録の計算列（実働時間・社内超過時間・要確認など）を計算し直す。
  * スプレッドシート上で出勤・退勤や中断履歴、残業申請のステータスを直接直したときに使います。
  * 打刻の時刻そのもの（出勤・退勤）は変更しません。
  */
@@ -269,4 +273,245 @@ function onlyAttendanceTargets_(records) {
 function csvEscape_(value) {
   const text = String(value === null || value === undefined ? '' : value);
   return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+// ============================================================ 再計算のプレビュー・再計算・未再計算の判定
+
+/**
+ * 再計算で比べる列（勤怠記録の計算列）：列名 → 画面の名前・値の種類。
+ * duration は時間の長さ（'' と 00:00 は同じとみなす）、clock は時刻、それ以外は文字。
+ */
+const RECALC_COLUMNS = {
+  '自動休憩': { label: '自動休憩', type: 'duration' },
+  '実働時間': { label: '実働', type: 'duration' },
+  '中断合計': { label: '中断', type: 'duration' },
+  '遅刻': { label: '遅刻', type: 'duration' },
+  '早退': { label: '早退', type: 'duration' },
+  '社内超過時間': { label: '社内超過', type: 'duration' },
+  '出社時間': { label: '会社時間', type: 'duration' },
+  '在宅時間': { label: '在宅時間', type: 'duration' },
+  '出勤': { label: '出勤', type: 'clock' },
+  '退勤': { label: '退勤', type: 'clock' },
+  '所定終了': { label: '所定終了', type: 'clock' },
+  '30分以上': { label: '30分以上の社内超過' },
+  '事前残業申請': { label: '事前残業申請' },
+  '要確認': { label: '要確認（残業）' },
+};
+/** プレビュー・期間の上限（日数） */
+const RECALC_MAX_DAYS = 93;
+
+/** 比べるための値（列の種類ごとにそろえる） */
+function normalizeRecalcValue_(column, value) {
+  const type = (RECALC_COLUMNS[column] || {}).type;
+  if (type === 'duration') {
+    const m = toMinutes_(value);
+    return m ? formatMinutes_(m) : '';
+  }
+  if (type === 'clock') {
+    const m = toMinutes_(value);
+    return m === null ? '' : minutesToClock_(m);
+  }
+  return toPlainText_(value).trim();
+}
+
+/** 画面に出す値（時間の長さの空欄は 00:00、文字の空欄は —） */
+function displayRecalcValue_(column, normalized) {
+  if (normalized) return normalized;
+  return (RECALC_COLUMNS[column] || {}).type === 'duration' ? '00:00' : '—';
+}
+
+/** 文字列の短い指紋（プレビューのあとで記録・設定が変わっていないかの確認用） */
+function recalcFingerprint_(text) {
+  let h1 = 5381;
+  let h2 = 52711;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = (h1 * 33) ^ c;
+    h2 = (h2 * 33) ^ c;
+    h1 |= 0;
+    h2 |= 0;
+  }
+  return (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16) + ':' + text.length;
+}
+
+/**
+ * 勤怠記録1件を今の記録・設定で計算した結果と、保存されている値の違い（書き込みはしない）。
+ * 戻り値：{ detail（calculateAttendanceDetail_ の結果）, changes: [{ column, label, before, after }], segmentChangeCount, fingerprint }
+ */
+function diffRecalculation_(record, calcCtx) {
+  const detail = calculateAttendanceDetail_(record, calcCtx);
+  const changes = [];
+  const parts = [];
+  Object.keys(detail.fields).forEach(function (column) {
+    const before = normalizeRecalcValue_(column, record[column]);
+    const after = normalizeRecalcValue_(column, detail.fields[column]);
+    parts.push(column + '=' + before + '>' + after);
+    if (before === after) return;
+    changes.push({ column: column, label: (RECALC_COLUMNS[column] || {}).label || column,
+      before: displayRecalcValue_(column, before), after: displayRecalcValue_(column, after) });
+  });
+  detail.segmentChanges.forEach(function (c) {
+    Object.keys(c.changes).forEach(function (k) { parts.push(toPlainText_(c.row['勤務区間ID']) + '.' + k + '=' + toPlainText_(c.row[k]) + '>' + toPlainText_(c.changes[k])); });
+  });
+  return {
+    detail: detail, changes: changes, segmentChangeCount: detail.segmentChanges.length,
+    fingerprint: recalcFingerprint_(String(record['勤怠ID']).trim() + '|' + parts.join('|')),
+  };
+}
+
+/** 変わる理由（列の組み合わせから。自動休憩は今の設定と、中断を除いた勤務時間を示す） */
+function recalcReasons_(record, diff, settings) {
+  const cols = diff.changes.map(function (c) { return c.column; });
+  const has = function (list) { return list.some(function (c) { return cols.indexOf(c) !== -1; }); };
+  const reasons = [];
+  if (has(['自動休憩'])) {
+    const date = toDateKey_(record['日付']);
+    const threshold = autoBreakThresholdFor_(settings, date);
+    const work = (toMinutes_(diff.detail.fields['実働時間']) || 0) + (toMinutes_(diff.detail.fields['自動休憩']) || 0);
+    const rule = settings.autoBreakThresholdFrom && date < settings.autoBreakThresholdFrom
+      ? '「自動休憩_適用開始_有効日」（' + settings.autoBreakThresholdFrom.replace(/-/g, '/') + '）より前の日なので適用開始 00:00'
+      : '自動休憩_適用開始 ' + formatMinutes_(threshold);
+    reasons.push('自動休憩の設定（' + rule + '）：中断を除いた勤務 ' + formatMinutes_(work) +
+      (work > threshold ? ' は超えるため自動休憩 ' + formatMinutes_(settings.autoBreakMinutes) : ' はそれ以下のため自動休憩なし'));
+  }
+  if (has(['実働時間']) && !has(['自動休憩'])) reasons.push('勤務区間・中断の記録から実働を計算し直し');
+  if (has(['中断合計'])) reasons.push('中断履歴の合計が保存値と違う');
+  if (has(['出勤', '退勤', '勤務形態', '勤務形態区分', '勤務区間数', '直行', '直帰', '出社時間', '在宅時間']) || diff.segmentChangeCount) {
+    reasons.push('勤務区間の記録と保存値が違う（シートの直接修正など）');
+  }
+  if (has(['遅刻', '早退', '社内超過時間', '所定終了'])) reasons.push('固定勤務の標準時刻と、有給・休日出勤の申請の今の状態で判定し直し');
+  if (has(['30分以上', '事前残業申請', '要確認'])) reasons.push('残業申請の今の状態で判定し直し');
+  if (has(['勤務区分'])) reasons.push('スタッフマスタの勤務区分に合わせる');
+  if (has(['状態'])) reasons.push('勤務の状態を記録に合わせる');
+  if (!reasons.length) reasons.push('今の記録と設定で計算し直した結果');
+  return reasons;
+}
+
+/**
+ * 保存されている値が、今の記録・設定で計算した結果と違うか（退勤済みの記録だけ判定する。書き込みはしない）。
+ * 画面の値は保存値のまま表示し、違うときだけ「設定変更後に未再計算」の印を付けるために使う。
+ * 戻り値：違いがなければ null、あれば { text: '自動休憩 01:00→00:00・実働 02:21→03:21', changes }
+ */
+function recalcStaleOf_(record, calcCtx) {
+  if (!record || !calcCtx || String(record['状態']).trim() !== ATTENDANCE_STATUS.FINISHED) return null;
+  const diff = diffRecalculation_(record, calcCtx);
+  if (!diff.changes.length && !diff.segmentChangeCount) return null;
+  const text = diff.changes.map(function (c) { return c.label + ' ' + c.before + '→' + c.after; }).join('・') || '勤務区間の記録';
+  return { text: text, changes: diff.changes };
+}
+
+/** 再計算の条件：{ from, to, employeeId? }（期間は RECALC_MAX_DAYS 日まで） */
+function parseRecalcQuery_(params) {
+  const p = params || {};
+  const from = requireDateKey_(p.from, '開始日');
+  const to = requireDateKey_(p.to, '終了日');
+  if (from > to) fail_('開始日は終了日より前の日にしてください');
+  if (listDates_(from, to).length > RECALC_MAX_DAYS) fail_('期間は ' + RECALC_MAX_DAYS + '日以内にしてください');
+  const employeeId = isBlank_(p.employeeId) ? '' : requireText_(p.employeeId, '社員ID', { max: TEXT_LIMITS.SHORT });
+  let staff = null;
+  if (employeeId) {
+    staff = findStaffById_(employeeId);
+    if (!staff) fail_('社員ID「' + employeeId + '」のスタッフが見つかりません');
+  }
+  return { from: from, to: to, employeeId: employeeId, staff: staff };
+}
+
+function recalcTargets_(q) {
+  return getAttendanceInRange_(q.from, q.to).filter(function (r) { return !q.employeeId || String(r['社員ID']).trim() === q.employeeId; });
+}
+
+/**
+ * 【管理者】再計算のプレビュー：期間（と社員）の勤怠記録を今の記録・設定で計算し、保存値から変わる記録だけを返す。
+ * シートには書き込まない。再計算は applyAttendanceRecalculation で、管理者がプレビューを確認してから実行する。
+ * @param {{from: string, to: string, employeeId?: string}} params
+ */
+function previewAttendanceRecalculation(params) {
+  return runApi_(function () {
+    requireAdmin();
+    const q = parseRecalcQuery_(params);
+    const calcCtx = buildCalcContext_();
+    const settings = calcCtx.settings;
+    const targets = recalcTargets_(q);
+    const rows = [];
+    targets.forEach(function (record) {
+      const diff = diffRecalculation_(record, calcCtx);
+      if (!diff.changes.length && !diff.segmentChangeCount) return;
+      const employeeId = String(record['社員ID']).trim();
+      const staff = calcCtx.staffById[employeeId];
+      const pick = function (column) {
+        const c = diff.changes.filter(function (x) { return x.column === column; })[0];
+        const v = displayRecalcValue_(column, normalizeRecalcValue_(column, record[column]));
+        return c ? { before: c.before, after: c.after, changed: true } : { before: v, after: v, changed: false };
+      };
+      rows.push({
+        attendanceId: String(record['勤怠ID']).trim(),
+        employeeId: employeeId,
+        name: staff ? staff.name : toPlainText_(record['氏名']),
+        date: toDateKey_(record['日付']),
+        weekday: WEEKDAY_LABELS[weekdayOf_(toDateKey_(record['日付']))],
+        autoBreak: pick('自動休憩'),
+        workTime: pick('実働時間'),
+        others: diff.changes.filter(function (c) { return c.column !== '自動休憩' && c.column !== '実働時間'; })
+          .map(function (c) { return { label: c.label, before: c.before, after: c.after }; })
+          .concat(diff.segmentChangeCount ? [{ label: '勤務区間の記録', before: '—', after: diff.segmentChangeCount + '区間を更新' }] : []),
+        reasons: recalcReasons_(record, diff, settings),
+        fingerprint: diff.fingerprint,
+      });
+    });
+    const notes = [
+      '自動休憩：休憩 ' + formatMinutes_(settings.autoBreakMinutes) + '、適用開始 ' + formatMinutes_(settings.autoBreakThresholdMinutes) +
+        (settings.autoBreakThresholdFrom ? '（' + settings.autoBreakThresholdFrom.replace(/-/g, '/') + ' 以降の勤務日。それより前の日は 00:00）' : '（すべての日）'),
+    ];
+    if (settings.autoBreakThresholdFromInvalid) notes.push('設定「' + SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM + '」が日付ではないため、空欄として扱っています');
+    return {
+      message: q.from + '〜' + q.to + (q.staff ? '（' + q.staff.name + '）' : '') + '：勤怠記録 ' + targets.length + '件のうち、再計算で変わる記録は ' + rows.length + '件です',
+      data: { from: q.from, to: q.to, employeeId: q.employeeId, employeeName: q.staff ? q.staff.name : '', targetCount: targets.length, changedCount: rows.length, rows: rows, notes: notes },
+    };
+  });
+}
+
+/**
+ * 【管理者】プレビューで確認した記録だけを再計算して書き込む。
+ * プレビューのあとで記録・設定が変わっていた（指紋が違う）ときは、何も書き込まずに止める（もう一度プレビューしてもらう）。
+ * @param {{from: string, to: string, employeeId?: string, items: Array<{attendanceId: string, fingerprint: string}>}} params
+ */
+function applyAttendanceRecalculation(params) {
+  return runApi_(function () {
+    return withLock_(function () {
+      requireAdmin();
+      const q = parseRecalcQuery_(params);
+      const items = (params && params.items) || [];
+      if (!Array.isArray(items) || !items.length) fail_('再計算する記録がありません（先にプレビューしてください）');
+      if (items.length > 5000) fail_('一度に再計算できるのは5000件までです');
+      const calcCtx = buildCalcContext_();
+      const byId = {};
+      recalcTargets_(q).forEach(function (r) { byId[String(r['勤怠ID']).trim()] = r; });
+      const planned = [];
+      const stale = [];
+      items.forEach(function (item) {
+        const id = String(item && item.attendanceId || '').trim();
+        const record = byId[id];
+        if (!record) { stale.push(id); return; }
+        const diff = diffRecalculation_(record, calcCtx);
+        if (diff.fingerprint !== String(item.fingerprint || '')) { stale.push(id); return; }
+        planned.push({ record: record, diff: diff });
+      });
+      if (stale.length) {
+        fail_('プレビューのあとで勤怠記録・設定が変わったため、再計算していません（' + stale.length + '件）。もう一度プレビューしてから実行してください');
+      }
+      const columns = [];
+      const segmentColumns = [];
+      planned.forEach(function (p) {
+        Object.keys(p.diff.detail.fields).forEach(function (k) { if (columns.indexOf(k) === -1) columns.push(k); });
+        updateRecordInMemory_(SHEET_NAMES.ATTENDANCE, p.record, p.diff.detail.fields);
+        p.diff.detail.segmentChanges.forEach(function (c) {
+          Object.keys(c.changes).forEach(function (k) { if (segmentColumns.indexOf(k) === -1) segmentColumns.push(k); });
+          updateRecordInMemory_(SHEET_NAMES.WORK_SEGMENTS, c.row, c.changes);
+        });
+      });
+      if (columns.length) writeColumnsInBulk_(SHEET_NAMES.ATTENDANCE, columns);
+      if (segmentColumns.length) writeColumnsInBulk_(SHEET_NAMES.WORK_SEGMENTS, segmentColumns);
+      return { message: '確認した勤怠記録 ' + planned.length + '件を再計算しました', data: { count: planned.length } };
+    });
+  });
 }

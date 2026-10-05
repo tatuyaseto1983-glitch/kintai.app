@@ -215,18 +215,40 @@ test('管理者画面をブラウザで操作する', { skip: !playwright && 'Pl
       await page.waitForFunction(() => /1 \/ 3人 確認済み/.test(document.getElementById('admReports').innerText));
     });
 
-    await t.test('今月の勤怠を再計算（確認あり）', async () => {
+    await t.test('再計算：シートを直接直すと「設定変更後に未再計算」→ プレビューで確認 → 確認画面のあと再計算', async () => {
       const sheet = gas.main.getSheetByName('勤怠記録');
       sheet.data[1][sheet.data[0].indexOf('退勤')] = '19:30'; // シートを直接直した想定
-      await page.click('#btnRecalc');
-      assert.match(await page.locator('#adminConfirmText').innerText(), /出勤・退勤の時刻は変わりません/);
+      await page.click('#btnAdminReload');
+      await idle(page);
+      const before = await page.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText();
+      assert.match(before, /設定変更後に未再計算/, '保存値と今の計算が違う記録に印');
+      assert.match(await page.locator('#summaryCards').innerText(), /設定変更後に未再計算\s*1件/);
+      assert.equal(calls.includes('applyAttendanceRecalculation'), false, '画面を開いただけでは再計算しない');
+      // プレビュー（書き込みなし）
+      await page.click('#btnRecalcOpen');
+      assert.equal(await page.locator('#btnRecalcApply').isDisabled(), true, 'プレビュー前は実行できない');
+      await page.click('#btnRecalcPreview');
+      await idle(page);
+      assert.match(await page.locator('#admRecalcSummary').innerText(), /再計算で変わる記録は 1件/);
+      const row = await page.locator('#admRecalcBody tr').first().innerText();
+      assert.match(row, /佐藤 花子[\s\S]*実働|佐藤 花子/);
+      assert.match(row, /→/);
+      assert.match(row, /勤務区間の記録と保存値が違う/);
+      assert.equal(calls.includes('applyAttendanceRecalculation'), false, 'プレビューだけでは書き込まない');
+      if (SHOT_DIR) await page.locator('#admRecalc').screenshot({ path: path.join(SHOT_DIR, 'admin-02-recalc-preview.png') });
+      // 確認画面でキャンセル → 実行しない
+      await page.click('#btnRecalcApply');
+      assert.match(await page.locator('#adminConfirmText').innerText(), /プレビューに出た 1件/);
       await page.click('#btnAdminConfirmCancel');
-      assert.equal(calls.includes('recalculateThisMonth'), false, 'キャンセルなら実行しない');
-      await page.click('#btnRecalc');
+      assert.equal(calls.includes('applyAttendanceRecalculation'), false, 'キャンセルなら実行しない');
+      await page.click('#btnRecalcApply');
       await page.click('#btnAdminConfirmOk');
       await idle(page);
-      assert.match(await page.locator('#toasts').innerText(), /件を再計算しました/);
-      assert.match(await page.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText(), /19:30[\s\S]*01:00/);
+      assert.match(await page.locator('#toasts').innerText(), /確認した勤怠記録 1件を再計算しました/);
+      await page.waitForFunction(() => /変わる記録は 0件/.test(document.getElementById('admRecalcSummary').textContent));
+      const after = await page.locator('#admTableBody tr', { hasText: '佐藤 花子' }).innerText();
+      assert.match(after, /19:30[\s\S]*01:00/);
+      assert.doesNotMatch(after, /設定変更後に未再計算/);
       await shot(page, 'admin-02-after');
     });
 

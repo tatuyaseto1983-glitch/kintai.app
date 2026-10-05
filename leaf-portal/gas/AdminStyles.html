@@ -52,6 +52,12 @@
 .admin-table tr.row-alert td.sticky-col { background: #FFF6F6; }
 .admin-table .cell-alert { color: var(--red); font-weight: 700; }
 .admin-table .cell-sub { display: block; font-size: 11px; font-weight: 600; color: var(--red); white-space: nowrap; }
+/* 再計算のプレビュー・設定変更後に未再計算の印 */
+.recalc-panel { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.recalc-panel .tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.recalc-panel input[type="date"] { width: auto; max-width: 11em; }
+.admin-table td.pre-line { white-space: pre-line; min-width: 180px; }
+.recalc-stale-text { display: block; font-size: 11px; color: var(--red); white-space: normal; min-width: 160px; }
 .admin-table .badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
 .admin-table .name-dept { display: block; font-size: 11px; color: var(--text-sub); font-weight: 400; }
 .badge-pending { background: var(--orange-light); color: var(--orange); }

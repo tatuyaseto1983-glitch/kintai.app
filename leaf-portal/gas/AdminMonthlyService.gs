@@ -20,7 +20,10 @@
 const SHAROUSHI_UNDECIDED_COLUMNS = ['法定時間外（未確定）', '深夜（未確定）', '法定休日（未確定）'];
 
 /** 要確認の理由の区分 */
-const CHECK_CATEGORIES = { PUNCH: '打刻', OVERTIME: '残業', REQUEST: '有給・申請', REPORT: '日報' };
+const CHECK_CATEGORIES = { PUNCH: '打刻', OVERTIME: '残業', REQUEST: '有給・申請', REPORT: '日報', RECALC: '再計算' };
+
+/** 理由「設定変更後に未再計算」の見出し（保存値と、今の設定で計算した結果が違う記録） */
+const RECALC_STALE_LABEL = '設定変更後に未再計算';
 
 // ============================================================ 画面・出力から呼ぶ関数（管理者だけ）
 
@@ -127,12 +130,14 @@ function exportSharoushiDetailCsv(month) {
     const lines = [headers.map(csvCell_).join(',')];
     const blanks = SHAROUSHI_UNDECIDED_COLUMNS.map(function () { return ''; });
     const staffList = visibleStaff_(env.ctx);
+    let staleDays = 0;
     staffList.forEach(function (s) {
       const m = buildEmployeeMonth_(env, s);
+      staleDays += countRecalcStaleDays_(m.days);
       m.days.forEach(function (d) {
         lines.push([s.employeeId, s.name, s.workType, d.date, d.weekday, d.clockIn, d.clockOut, segmentsText_(d.segments), d.officeTime, d.remoteTime,
           d.breakTotal, d.autoBreak, d.workTime, d.holidayWork ? '○' : '', d.holidayWork ? d.holidayWorkTime : '', d.leaveType, d.leaveTime,
-          d.businessTrip ? '○' : '', d.direct ? '○' : '', d.directReturn ? '○' : '', reasonsText_(d.reasons)].concat(blanks).map(csvCell_).join(','));
+          d.businessTrip ? '○' : '', d.direct ? '○' : '', d.directReturn ? '○' : '', reasonsText_(withoutRecalcReasons_(d.reasons))].concat(blanks).map(csvCell_).join(','));
       });
       const t = m.totals;
       lines.push([s.employeeId, s.name, s.workType, '合計', '', t.workDays + '日', '', '', t.officeTime, t.remoteTime, t.breakTotal, t.autoBreak, t.workTime,
@@ -140,7 +145,7 @@ function exportSharoushiDetailCsv(month) {
         '要確認 ' + t.checkDays + '日'].concat(blanks).map(csvCell_).join(','));
     });
     return {
-      message: env.range.periodText + ' の社労士確認用の詳細表を作成しました（' + staffList.length + '名）',
+      message: env.range.periodText + ' の社労士確認用の詳細表を作成しました（' + staffList.length + '名）' + recalcStaleWarning_(staleDays),
       data: {
         fileName: 'sharoushi_check_' + env.range.monthKey + '.csv', csv: '﻿' + lines.join('\r\n'),
         notes: [
@@ -173,12 +178,14 @@ function exportSharoushiTimecardXlsx(month) {
     const used = {};
     const sheets = [];
     const skipped = [];
+    let staleDays = 0;
     visibleStaff_(env.ctx).forEach(function (s) {
       if (s.workType !== WORK_TYPES.FIXED && s.workType !== WORK_TYPES.FLEX) {
         skipped.push({ employeeId: s.employeeId, name: s.name, workType: s.workType });
         return;
       }
       const m = buildEmployeeMonth_(env, s);
+      staleDays += countRecalcStaleDays_(m.days);
       const sheet = buildTimecardSheet_(env, m, s.workType === WORK_TYPES.FLEX ? flexByEmployee[s.employeeId] || null : undefined);
       sheet.name = xlsxSheetName_(s.name, s.employeeId, used);
       sheets.push(sheet);
@@ -188,7 +195,8 @@ function exportSharoushiTimecardXlsx(month) {
     const blob = buildXlsxBlob_(sheets, fileName);
     return {
       message: env.range.periodText + ' の社労士提出用Excelを作成しました（' + sheets.length + '名）' +
-        (skipped.length ? '。勤務区分が未設定などで出さなかった人：' + skipped.map(function (x) { return x.name; }).join('、') : ''),
+        (skipped.length ? '。勤務区分が未設定などで出さなかった人：' + skipped.map(function (x) { return x.name; }).join('、') : '') +
+        recalcStaleWarning_(staleDays),
       data: {
         fileName: fileName, mimeType: XLSX_MIME_TYPE, base64: Utilities.base64Encode(blob.getBytes()),
         sheetNames: sheets.map(function (x) { return x.name; }), skipped: skipped,
@@ -306,7 +314,7 @@ function buildTimecardDay_(d, isFlex) {
   }
   if (d.dayNote) notes.push('備考：' + d.dayNote);
   d.reasons.forEach(function (r) {
-    if (r.category === CHECK_CATEGORIES.REPORT) return;
+    if (r.category === CHECK_CATEGORIES.REPORT || r.category === CHECK_CATEGORIES.RECALC) return; // 社内用（日報・未再計算）は入れない
     // 残業の事前申請は社内ルールの確認事項。法定時間外の判定と混同しないよう、社労士提出用では言い方を変える
     notes.push(r.category === CHECK_CATEGORIES.OVERTIME ? TIMECARD_OVERTIME_NOTE : r.text);
   });
@@ -396,7 +404,7 @@ function buildTimecardSheet_(env, m, flex) {
     if (d.businessTrip) totals.businessTrip += 1;
     if (d.direct) totals.direct += 1;
     if (d.directReturn) totals.directReturn += 1;
-    if (d.reasons.some(function (r) { return r.category !== CHECK_CATEGORIES.REPORT; })) totals.checkDays += 1;
+    if (d.reasons.some(function (r) { return r.category !== CHECK_CATEGORIES.REPORT && r.category !== CHECK_CATEGORIES.RECALC; })) totals.checkDays += 1;
     rows.push(keys.map(function (k) {
       const kind = TIMECARD_COLUMNS[k].kind;
       if (kind === 'undecided') return cell('', 'undecided');
@@ -581,6 +589,7 @@ function collectDayReasons_(view, st, report) {
   const reasons = [];
   if (view) {
     (view.issues || []).forEach(function (t) { reasons.push({ category: CHECK_CATEGORIES.PUNCH, text: t }); });
+    if (view.recalcStale) reasons.push({ category: CHECK_CATEGORIES.RECALC, text: RECALC_STALE_LABEL + '（' + view.recalcStale.text + '）' });
     if (view.needsCheck === MARKS.NEEDS_CHECK) reasons.push({ category: CHECK_CATEGORIES.OVERTIME, text: '残業：30分以上で承認済みの事前申請なし' });
   }
   (st.checks || []).forEach(function (t) { reasons.push({ category: CHECK_CATEGORIES.REQUEST, text: t }); });
@@ -626,6 +635,20 @@ function segmentsText_(segments) {
     const extra = [s.direct ? '直行' : '', s.directReturn ? '直帰' : '', s.site ? '現場：' + s.site : ''].filter(function (x) { return x; });
     return s.place + ' ' + s.start + '〜' + (s.end || '（勤務中）') + (extra.length ? '（' + extra.join('・') + '）' : '');
   }).join('／');
+}
+
+/** 社労士向けの出力には「設定変更後に未再計算」（社内の作業）の理由を入れない */
+function withoutRecalcReasons_(reasons) {
+  return (reasons || []).filter(function (r) { return r.category !== CHECK_CATEGORIES.RECALC; });
+}
+
+function countRecalcStaleDays_(days) {
+  return days.filter(function (d) { return d.reasons.some(function (r) { return r.category === CHECK_CATEGORIES.RECALC; }); }).length;
+}
+
+/** 社労士向けの出力の完了メッセージに付ける注意（未再計算の記録があるときだけ） */
+function recalcStaleWarning_(count) {
+  return count ? '。注意：' + RECALC_STALE_LABEL + 'の記録が ' + count + '件あります（保存値のまま出力しました。［再計算のプレビュー］で確認・再計算してから出し直してください）' : '';
 }
 
 function reasonsText_(reasons) {

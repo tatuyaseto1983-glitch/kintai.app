@@ -19,7 +19,7 @@
   // 'getAdminEmployeeMonth' 以降は段階5（社内詳細月次・集計・出力。読み取りだけ）
   var ADMIN_FUNCTIONS = [
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
-    'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
+    'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'previewAttendanceRecalculation', 'applyAttendanceRecalculation',
     'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
     'getAttendanceDetail', 'getAdminDayDetail',
     'approvePaidLeaveRequest', 'rejectPaidLeaveRequest', 'approvePaidLeaveCancellation', 'rejectPaidLeaveCancellation',
@@ -121,6 +121,7 @@
       // この2つは「今日」ではなく今月（月初〜今日）の集計
       ['今月の打刻漏れ', s.missingPunchStaff, '名', s.missingPunchStaff ? 'red' : 'gray', s.missingPunchRecords + '件の記録'],
       ['今月の残業要確認', s.overtimeNeedsCheck, '件', s.overtimeNeedsCheck ? 'red' : 'gray', App.formatDateShort(s.monthFrom) + '〜今日'],
+      ['設定変更後に未再計算', s.recalcStaleRecords || 0, '件', s.recalcStaleRecords ? 'red' : 'gray', '［再計算のプレビュー］で確認'],
       ['修正申請待ち', s.pendingCorrections, '件', s.pendingCorrections ? 'orange' : 'gray', ''],
       ['残業申請待ち', s.pendingOvertime, '件', s.pendingOvertime ? 'orange' : 'gray', ''],
       ['休日出勤申請待ち', s.pendingHolidayWork || 0, '件', s.pendingHolidayWork ? 'orange' : 'gray', '取消申請を含む'],
@@ -190,7 +191,7 @@
       var rows = daily ? daily.rows : [];
       total = rows.length;
       rows.forEach(function (r) {
-        var alert = r.needsCheck === '要確認' || (r.issues && r.issues.length) || (r.day && r.day.checks.length);
+        var alert = r.needsCheck === '要確認' || (r.issues && r.issues.length) || (r.day && r.day.checks.length) || r.recalcStale;
         if (!matchesCommon(r, f)) return;
         if (f.workStyle && r.workStyle !== f.workStyle && (r.workStyleCategory || '').split('＋').indexOf(f.workStyle) === -1) return;
         if (f.status && r.status !== f.status) return;
@@ -235,6 +236,13 @@
           var b = el('span', 'badge badge-ng', '打刻漏れ：' + issue);
           badges.appendChild(b);
         });
+        if (r.recalcStale) {
+          // 表示している値は保存値のまま。今の設定で計算すると変わる（再計算のプレビューで確認してから再計算する）
+          var stale = el('span', 'badge badge-ng recalc-stale', '設定変更後に未再計算');
+          stale.title = r.recalcStale.text;
+          badges.appendChild(stale);
+          badges.appendChild(el('span', 'recalc-stale-text', r.recalcStale.text));
+        }
         st.appendChild(badges);
         tr.appendChild(st);
         body.appendChild(tr);
@@ -1183,13 +1191,97 @@
     }
   }
 
-  function onRecalc() {
-    var button = $('btnRecalc');
+  // ============================================================ 再計算（必ずプレビューしてから）
+
+  /** 再計算のプレビューを開く（期間は今の20日締め期間、社員は全員から選べる） */
+  function openRecalc() {
+    var panel = $('admRecalc');
+    panel.hidden = false;
+    var s = S.data && S.data.summary;
+    if (!$('admRecalcFrom').value && s) $('admRecalcFrom').value = s.monthFrom;
+    if (!$('admRecalcTo').value && s) $('admRecalcTo').value = s.monthTo;
+    var select = $('admRecalcStaff');
+    var current = select.value;
+    var seen = {};
+    while (select.options.length > 1) select.remove(1);
+    [].concat((S.data && S.data.monthly && S.data.monthly.rows) || [], (S.data && S.data.daily && S.data.daily.rows) || []).forEach(function (r) {
+      if (!r.employeeId || seen[r.employeeId]) return;
+      seen[r.employeeId] = true;
+      var o = document.createElement('option');
+      o.value = r.employeeId;
+      o.textContent = r.name;
+      select.appendChild(o);
+    });
+    select.value = current;
+    resetRecalcPreview('期間と社員を選んで［変わる内容を確認］を押してください。');
+    panel.scrollIntoView({ block: 'start' });
+  }
+
+  function resetRecalcPreview(message) {
+    S.recalcPreview = null;
+    $('admRecalcSummary').textContent = message || '';
+    $('admRecalcNotes').textContent = '';
+    $('admRecalcBody').textContent = '';
+    $('admRecalcTableWrap').hidden = true;
+    $('btnRecalcApply').disabled = true;
+  }
+
+  function recalcQuery() {
+    return { from: $('admRecalcFrom').value, to: $('admRecalcTo').value, employeeId: $('admRecalcStaff').value };
+  }
+
+  function beforeAfter(v) {
+    var cell = el('td', v.changed ? 'cell-alert' : '', v.changed ? v.before + ' → ' + v.after : v.before);
+    return cell;
+  }
+
+  function onRecalcPreview() {
+    if (S.busy) return;
+    var button = $('btnRecalcPreview');
+    setBusy(true, button);
+    call('previewAttendanceRecalculation', [recalcQuery()]).then(function (res) {
+      setBusy(false);
+      if (!res.success) { resetRecalcPreview(''); App.showToast('error', /管理者/.test(res.message) ? '管理者権限がありません' : res.message); return; }
+      var d = res.data;
+      S.recalcPreview = d;
+      $('admRecalcSummary').textContent = res.message;
+      var notes = $('admRecalcNotes');
+      notes.textContent = '';
+      (d.notes || []).forEach(function (n) { notes.appendChild(el('li', '', n)); });
+      var body = $('admRecalcBody');
+      body.textContent = '';
+      d.rows.forEach(function (r) {
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-attendance-id', r.attendanceId);
+        tr.appendChild(td(r.name, 'left'));
+        tr.appendChild(td(App.formatDateShort(r.date))); // 「6/1（月）」（曜日つき）
+        tr.appendChild(beforeAfter(r.autoBreak));
+        tr.appendChild(beforeAfter(r.workTime));
+        tr.appendChild(td(r.others.map(function (o) { return o.label + '：' + o.before + ' → ' + o.after; }).join('\n') || '—', 'left pre-line'));
+        tr.appendChild(td(r.reasons.join('\n'), 'left pre-line'));
+        body.appendChild(tr);
+      });
+      $('admRecalcTableWrap').hidden = !d.rows.length;
+      $('btnRecalcApply').disabled = !d.rows.length;
+      $('btnRecalcApply').textContent = d.rows.length ? 'この内容で再計算する（' + d.rows.length + '件）' : 'この内容で再計算する';
+    });
+  }
+
+  function onRecalcApply() {
+    var d = S.recalcPreview;
+    if (!d || !d.rows.length || S.busy) return;
+    var button = $('btnRecalcApply');
     confirmAction({
-      title: '今月の勤怠を再計算しますか？',
-      text: '今月の勤怠記録の、実働・自動休憩・遅刻・早退・社内超過・要確認などを、今の記録と設定から計算し直します。\n出勤・退勤の時刻は変わりません。',
+      title: 'プレビューの ' + d.rows.length + '件を再計算しますか？',
+      text: d.from + '〜' + d.to + (d.employeeName ? '（' + d.employeeName + '）' : '（全員）') + ' のうち、プレビューに出た ' + d.rows.length + '件の勤怠記録を、表示どおりの値に書き換えます。\nプレビューのあとで記録や設定が変わっていた場合は、何も書き換えずに止まります。',
       okLabel: '再計算する', okClass: 'btn-dark', button: button,
-      run: function (btn) { return adminAction(button, 'recalculateThisMonth', []); },
+      run: function () {
+        var items = d.rows.map(function (r) { return { attendanceId: r.attendanceId, fingerprint: r.fingerprint }; });
+        return adminAction(button, 'applyAttendanceRecalculation', [{ from: d.from, to: d.to, employeeId: d.employeeId, items: items }]).then(function (res) {
+          if (res && res.success) onRecalcPreview(); // 書き換えたあとの状態（変わる記録 0件）を見せる
+          else resetRecalcPreview(res ? res.message : '');
+        });
+      },
     });
   }
 
@@ -1233,7 +1325,13 @@
     $('btnEmpMonthCsv').addEventListener('click', function () {
       if (S.empMonth) exportNamedCsv('exportAdminEmployeeMonthCsv', [S.empMonth.employee.employeeId, S.empMonth.month], $('btnEmpMonthCsv'));
     });
-    $('btnRecalc').addEventListener('click', onRecalc);
+    $('btnRecalcOpen').addEventListener('click', openRecalc);
+    $('btnRecalcPreview').addEventListener('click', onRecalcPreview);
+    $('btnRecalcApply').addEventListener('click', onRecalcApply);
+    $('btnRecalcClose').addEventListener('click', function () { $('admRecalc').hidden = true; resetRecalcPreview(''); });
+    ['admRecalcFrom', 'admRecalcTo', 'admRecalcStaff'].forEach(function (id) {
+      $(id).addEventListener('change', function () { resetRecalcPreview('条件を変えました。［変わる内容を確認］を押してください。'); });
+    });
     $('btnAdminConfirmOk').addEventListener('click', onConfirmOk);
     $('btnAdminConfirmCancel').addEventListener('click', function () { S.confirmAction = null; App.closeModal('adminConfirmModal'); });
   }

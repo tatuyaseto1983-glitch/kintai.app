@@ -245,6 +245,8 @@ function toAdminAttendanceRow_(record, ctx) {
   const staff = ctx.staffById[view.employeeId] || null;
   view.department = staff ? staff.department : '';
   view.issues = detectPunchIssues_(record, ctx);
+  // 保存値が今の記録・設定で計算した結果と違う（設定変更後に未再計算）。表示する値は保存値のまま
+  view.recalcStale = recalcStaleOf_(record, ctx.calc);
   if (ctx.day) view.day = buildDayStatus_(view.employeeId, view.date, record, ctx.day);
   return view;
 }
@@ -257,7 +259,7 @@ function buildAdminSummary_(ctx) {
   const summary = {
     date: ctx.today, monthFrom: range.from, monthTo: range.to,
     present: 0, remote: 0, working: 0, onBreak: 0, finished: 0, notStarted: 0,
-    missingPunchStaff: 0, missingPunchRecords: 0, overtimeNeedsCheck: 0,
+    missingPunchStaff: 0, missingPunchRecords: 0, overtimeNeedsCheck: 0, recalcStaleRecords: 0,
     pendingCorrections: 0, pendingOvertime: 0, pendingHolidayWork: 0, pendingPaidLeave: 0,
   };
   ctx.staffList.filter(isAttendanceTarget_).forEach(function (s) {
@@ -280,6 +282,7 @@ function buildAdminSummary_(ctx) {
       if (date < range.from || date > ctx.today) return;
       if (detectPunchIssues_(r, ctx).length) { summary.missingPunchRecords += 1; staffWithIssues[id] = true; }
       if (r['要確認'] === MARKS.NEEDS_CHECK) summary.overtimeNeedsCheck += 1;
+      if (recalcStaleOf_(r, ctx.calc)) summary.recalcStaleRecords += 1;
     });
   });
   summary.missingPunchStaff = Object.keys(staffWithIssues).length;

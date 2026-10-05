@@ -155,7 +155,7 @@ test('要確認一覧：理由付き（打刻漏れ・残業申請なし・1日�
   ]);
   assert.ok(!c.items.some((x) => x.date > '2026-10-15'));
   assert.ok(!c.items.some((x) => x.employeeId === 'E001' || x.employeeId === 'E002'), '勤怠集計対象外（役員）は出さない');
-  assert.deepEqual(c.byCategory, { 打刻: 1, 残業: 1, '有給・申請': 2, 日報: 2 });
+  assert.deepEqual(c.byCategory, { 打刻: 1, 残業: 1, '有給・申請': 2, 日報: 2, 再計算: 0 }, '設定を変えていないので「設定変更後に未再計算」は0件');
   assert.ok(c.byReason.some((x) => x.reason === '退勤なし' && x.count === 1));
 });
 

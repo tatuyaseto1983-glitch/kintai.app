@@ -217,7 +217,7 @@ function onOpen() {
       .addItem('初期セットアップ（setupSystem）', 'setupSystem')
       .addItem('テスト用スタッフを追加', 'addSampleStaff')
       .addSeparator()
-      .addItem('今月の勤怠を再計算（管理者）', 'recalculateThisMonth')
+      // 再計算はメニューからは実行しない（管理者画面の［再計算のプレビュー］で変わる内容を確認してから実行する）
       .addItem('自動テストを実行（テスト用ファイルで実行）', 'runAllScenarioTests')
       .addToUi();
   } catch (e) {
