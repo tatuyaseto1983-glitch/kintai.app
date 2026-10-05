@@ -16,7 +16,7 @@
   var el = App.el;
 
   /** 管理者画面から呼んでよいサーバーの関数 */
-  // 末尾の5つは段階5（社内詳細月次・集計・出力。読み取りだけ）
+  // 'getAdminEmployeeMonth' 以降は段階5（社内詳細月次・集計・出力。読み取りだけ）
   var ADMIN_FUNCTIONS = [
     'getAdminDashboard', 'approveCorrectionRequest', 'rejectCorrectionRequest', 'approveOvertimeRequest',
     'rejectOvertimeRequest', 'exportAdminAttendanceCsv', 'recalculateThisMonth',
@@ -24,6 +24,7 @@
     'getAttendanceDetail', 'getAdminDayDetail',
     'approvePaidLeaveRequest', 'rejectPaidLeaveRequest', 'approvePaidLeaveCancellation', 'rejectPaidLeaveCancellation',
     'getAdminEmployeeMonth', 'exportAdminEmployeeMonthCsv', 'getAdminMonthlyAnalysis', 'exportAdminMonthlySummaryCsv', 'exportSharoushiDetailCsv',
+    'exportSharoushiTimecardXlsx',
   ];
   var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports'];
 
@@ -1054,6 +1055,18 @@
     });
   }
 
+  /** 社労士提出用Excel（社員別シート）を作ってダウンロードする（サーバーから base64 で受け取り、.xlsx として保存） */
+  function exportXlsx(button) {
+    if (S.busy) return;
+    setBusy(true, button);
+    call('exportSharoushiTimecardXlsx', [S.month]).then(function (res) {
+      setBusy(false);
+      if (!res.success) { App.showToast('error', /管理者/.test(res.message) ? '管理者権限がありません' : res.message); return; }
+      if (downloadBase64(res.data.fileName, res.data.base64, res.data.mimeType)) App.showToast('success', res.message + '（' + res.data.fileName + '）');
+      else App.showToast('error', 'Excelのダウンロードに失敗しました。ブラウザの設定を確認してください');
+    });
+  }
+
   // ============================================================ 操作（承認・却下・CSV・再計算）
 
   /** 操作の共通処理：ボタン無効化 →「処理中...」→ 通知 → 一覧を取り直す → ボタンを戻す */
@@ -1150,6 +1163,26 @@
     }
   }
 
+  /** base64 のデータをそのままのバイト列でファイルとして保存する（.xlsx など） */
+  function downloadBase64(fileName, base64, mimeType) {
+    try {
+      var binary = atob(base64);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      var url = URL.createObjectURL(new Blob([bytes], { type: mimeType || 'application/octet-stream' }));
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.target = '_self';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 2000);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function onRecalc() {
     var button = $('btnRecalc');
     confirmAction({
@@ -1195,6 +1228,7 @@
     $('admCheckFilter').addEventListener('change', renderAnalysis);
     $('btnCsvSummary').addEventListener('click', function () { exportNamedCsv('exportAdminMonthlySummaryCsv', [S.month], $('btnCsvSummary')); });
     $('btnCsvSharoushi').addEventListener('click', function () { exportNamedCsv('exportSharoushiDetailCsv', [S.month], $('btnCsvSharoushi')); });
+    $('btnXlsxSharoushi').addEventListener('click', function () { exportXlsx($('btnXlsxSharoushi')); });
     $('btnEmpMonthClose').addEventListener('click', function () { $('admEmpMonth').hidden = true; });
     $('btnEmpMonthCsv').addEventListener('click', function () {
       if (S.empMonth) exportNamedCsv('exportAdminEmployeeMonthCsv', [S.empMonth.employee.employeeId, S.empMonth.month], $('btnEmpMonthCsv'));

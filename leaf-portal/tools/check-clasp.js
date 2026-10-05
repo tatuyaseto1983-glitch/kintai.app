@@ -38,7 +38,7 @@ const REQUIRED_FILES = [
   // 段階2：交通費明細・1日の付帯情報
   'TransportService.gs', 'DayDetailService.gs', 'DetailView.html', 'DetailScripts.html',
   // 段階3：シフト・有給休暇申請
-  'ShiftService.gs', 'PaidLeaveService.gs', 'AdminMonthlyService.gs',
+  'ShiftService.gs', 'PaidLeaveService.gs', 'AdminMonthlyService.gs', 'XlsxWriter.gs',
 ];
 
 const PROD_CONFIG = '.clasp.json';

@@ -7,6 +7,7 @@
  *   月次の集計（接客・日報確認・理由付き要確認一覧）    … getAdminMonthlyAnalysis
  *   月次サマリーCSV（社員ごとの合計）                  … exportAdminMonthlySummaryCsv
  *   社労士確認用の詳細表（CSV）                        … exportSharoushiDetailCsv
+ *   社労士提出用Excel（社員別シート・.xlsx）           … exportSharoushiTimecardXlsx（XlsxWriter.gs で作る）
  *
  * 【期間】勤怠・社労士用は20日締め（getPayrollPeriodByMonthKey_）。接客・日報は暦月（getReportMonthPeriod_）。
  * 【実働】勤務区間履歴・中断履歴から計算した値（勤怠記録の実働時間は同じ計算で書かれている）を使う。
@@ -151,6 +152,209 @@ function exportSharoushiDetailCsv(month) {
       },
     };
   });
+}
+
+/**
+ * 【管理者】社労士提出用Excel（社員別シート）。勤怠集計対象の社員を1人1シート（20日締め1か月・全日を1日1行・合計行）。
+ * 固定勤務は A形式、フレックスは B形式（フレックスの月集計つき）。勤務区分がどちらでもない人は出さない。
+ * 値だけを入れる（数式なし）。法定時間外・深夜・法定休日は「未確定」の列として空欄。給与の項目は出さない。
+ * ドライブに一時ファイルは作らず、元のシートにも書き込まない（.xlsx をその場で作って base64 で返す）。
+ * @param {string} [month] '2026-10'
+ * @return data: { fileName, mimeType, base64, sheetNames, skipped: [{ employeeId, name, workType }] }
+ */
+function exportSharoushiTimecardXlsx(month) {
+  return runApi_(function () {
+    requireAdmin();
+    const env = buildMonthlyEnv_(month);
+    const flexByEmployee = {};
+    buildAdminMonthly_(env.ctx, env.range.monthKey).rows.forEach(function (r) { if (r.flex) flexByEmployee[r.employeeId] = r.flex; });
+    const used = {};
+    const sheets = [];
+    const skipped = [];
+    visibleStaff_(env.ctx).forEach(function (s) {
+      if (s.workType !== WORK_TYPES.FIXED && s.workType !== WORK_TYPES.FLEX) {
+        skipped.push({ employeeId: s.employeeId, name: s.name, workType: s.workType });
+        return;
+      }
+      const m = buildEmployeeMonth_(env, s);
+      const sheet = buildTimecardSheet_(env, m, s.workType === WORK_TYPES.FLEX ? flexByEmployee[s.employeeId] || null : undefined);
+      sheet.name = xlsxSheetName_(s.name, s.employeeId, used);
+      sheets.push(sheet);
+    });
+    if (!sheets.length) fail_('出力する社員がいません（勤怠集計対象で、勤務区分が固定勤務・フレックスの社員）');
+    const fileName = '社労士提出用タイムカード_' + env.range.monthKey + '.xlsx';
+    const blob = buildXlsxBlob_(sheets, fileName);
+    return {
+      message: env.range.periodText + ' の社労士提出用Excelを作成しました（' + sheets.length + '名）' +
+        (skipped.length ? '。勤務区分が未設定などで出さなかった人：' + skipped.map(function (x) { return x.name; }).join('、') : ''),
+      data: {
+        fileName: fileName, mimeType: XLSX_MIME_TYPE, base64: Utilities.base64Encode(blob.getBytes()),
+        sheetNames: sheets.map(function (x) { return x.name; }), skipped: skipped,
+      },
+    };
+  });
+}
+
+/** 社労士提出用Excelの日別の行数（20日締めの期間は最大31日。足りない行は空欄の枠） */
+const TIMECARD_DAY_ROWS = 31;
+
+/** 列：見出し・幅・日別の値・合計行の値（どのシートでも同じ列は同じ幅） */
+const TIMECARD_COLUMNS = {
+  date: { header: '日付', width: 7 },
+  weekday: { header: '曜日', width: 5 },
+  clockIn: { header: '出勤時刻', width: 7.5 },
+  clockOut: { header: '退勤時刻', width: 7.5 },
+  breakTotal: { header: '中断', width: 7 },
+  autoBreak: { header: '自動休憩', width: 7 },
+  workTime: { header: '実働', width: 7.5 },
+  officeTime: { header: '会社時間', width: 7.5 },
+  remoteTime: { header: '在宅時間', width: 7.5 },
+  late: { header: '遅刻', width: 6.5 },
+  earlyLeave: { header: '早退', width: 6.5 },
+  internalExcess: { header: '社内超過', width: 7 },
+  holidayWork: { header: '休日出勤', width: 6.5 },
+  holidayWorkTime: { header: '休日出勤時間', width: 7.5 },
+  leaveType: { header: '有給種別', width: 8 },
+  leaveTime: { header: '有給時間', width: 7 },
+  businessTrip: { header: '出張', width: 5.5 },
+  direct: { header: '直行', width: 5.5 },
+  directReturn: { header: '直帰', width: 5.5 },
+  segments: { header: '勤務区間', width: 34 },
+  reasons: { header: '備考・要確認の理由', width: 30 },
+  legalOvertime: { header: SHAROUSHI_UNDECIDED_COLUMNS[0], width: 9, undecided: true },
+  lateNight: { header: SHAROUSHI_UNDECIDED_COLUMNS[1], width: 9, undecided: true },
+  legalHoliday: { header: SHAROUSHI_UNDECIDED_COLUMNS[2], width: 9, undecided: true },
+};
+
+/** A形式（固定勤務）と B形式（フレックス）の列の並び */
+const TIMECARD_LAYOUTS = {
+  A: ['date', 'weekday', 'clockIn', 'clockOut', 'breakTotal', 'autoBreak', 'workTime', 'officeTime', 'remoteTime', 'late', 'earlyLeave',
+    'internalExcess', 'holidayWork', 'holidayWorkTime', 'leaveType', 'leaveTime', 'businessTrip', 'direct', 'directReturn', 'segments', 'reasons',
+    'legalOvertime', 'lateNight', 'legalHoliday'],
+  B: ['date', 'weekday', 'clockIn', 'clockOut', 'breakTotal', 'autoBreak', 'officeTime', 'remoteTime', 'workTime', 'holidayWork', 'holidayWorkTime',
+    'leaveType', 'leaveTime', 'businessTrip', 'direct', 'directReturn', 'segments', 'reasons', 'legalOvertime', 'lateNight', 'legalHoliday'],
+};
+
+/** 時刻・時間の列（Excel の時間の数値で入れる） */
+const TIMECARD_TIME_KEYS = ['clockIn', 'clockOut', 'breakTotal', 'autoBreak', 'workTime', 'officeTime', 'remoteTime', 'late', 'earlyLeave',
+  'internalExcess', 'holidayWorkTime', 'leaveTime'];
+
+/**
+ * 社員1名のシート（buildXlsxBlob_ に渡す形。name は呼び出し側で付ける）。
+ * @param {Object} m buildEmployeeMonth_ の結果
+ * @param {Object|null|undefined} flex B形式のときのフレックスの月集計（buildAdminMonthly_ の rows[].flex）。A形式は undefined
+ */
+function buildTimecardSheet_(env, m, flex) {
+  const isFlex = flex !== undefined;
+  const keys = TIMECARD_LAYOUTS[isFlex ? 'B' : 'A'];
+  const n = keys.length;
+  const last = xlsxColumnName_(n);
+  const rows = [];
+  const merges = [];
+  const heights = [];
+  const cell = function (v, s) { return { v: v, s: s }; };
+  const isTime = function (key) { return TIMECARD_TIME_KEYS.indexOf(key) !== -1; };
+  const timeCell = function (text, timeStyle, textStyle) {
+    const t = xlsxTimeValue_(text);
+    return t === null ? cell(text || '', textStyle) : cell(t, timeStyle);
+  };
+  const mark = function (b) { return b ? '○' : ''; };
+  // 上の欄（ラベル＋値。値は結合したセル）
+  const box = function (row, items) {
+    const line = [];
+    items.forEach(function (it) {
+      line[it.col - 1] = cell(it.label, 'label');
+      for (let c = it.col + 1; c <= it.col + it.span; c++) line[c - 1] = cell(c === it.col + 1 ? it.value : '', 'value');
+      merges.push(xlsxColumnName_(it.col + 1) + row + ':' + xlsxColumnName_(it.col + it.span) + row);
+    });
+    return line;
+  };
+  const closing = env.range.closingDay ? env.range.closingDay + '日締め' : '末日締め';
+  rows.push([cell('社労士提出用タイムカード（' + (isFlex ? 'B形式・フレックス' : 'A形式・固定勤務') + '）', 'title')]);
+  heights[0] = 22;
+  rows.push(box(2, [
+    { col: 1, span: 2, label: '社員ID', value: m.employee.employeeId },
+    { col: 4, span: 3, label: '氏名', value: m.employee.name },
+    { col: 8, span: 4, label: '勤務区分', value: m.employee.workType + '（' + (isFlex ? 'B形式' : 'A形式') + '）' },
+  ]));
+  rows.push(box(3, [
+    { col: 1, span: 2, label: '対象月', value: env.range.label },
+    { col: 4, span: 3, label: '対象期間', value: m.from.replace(/-/g, '/') + '～' + m.to.replace(/-/g, '/') },
+    { col: 8, span: 4, label: '締め日', value: closing },
+  ]));
+  rows.push([cell('法定時間外・深夜・法定休日は社労士の確認待ちのため空欄（未確定）です。社内超過は会社の標準退勤からの超過で、法定時間外ではありません。' +
+    '実働 ＝ 勤務区間 − 中断（私用の中抜け） − 自動休憩（昼休み）。休日出勤は承認済みの休日出勤申請がある日です。', 'note')]);
+  merges.push('A4:' + last + '4');
+  heights[3] = 30;
+  // 見出し
+  rows.push(keys.map(function (k) { return cell(TIMECARD_COLUMNS[k].header, TIMECARD_COLUMNS[k].undecided ? 'undecidedHeader' : 'header'); }));
+  heights[4] = 30;
+  // 日別（期間の全日。勤務のない日も1行。31行の枠）
+  for (let i = 0; i < TIMECARD_DAY_ROWS; i++) {
+    const d = m.days[i];
+    if (!d) {
+      rows.push(keys.map(function (k) { return cell('', TIMECARD_COLUMNS[k].undecided ? 'undecided' : 'text'); }));
+      continue;
+    }
+    const leave = !!d.leaveType;
+    const ts = leave ? 'timeLeave' : 'time';
+    const xs = leave ? 'textLeave' : 'text';
+    const values = {
+      date: Number(d.date.slice(5, 7)) + '/' + Number(d.date.slice(8, 10)),
+      weekday: d.weekday,
+      holidayWork: mark(d.holidayWork),
+      holidayWorkTime: d.holidayWork ? d.holidayWorkTime : '',
+      leaveType: d.leaveType,
+      businessTrip: mark(d.businessTrip),
+      direct: mark(d.direct),
+      directReturn: mark(d.directReturn),
+      segments: segmentsText_(d.segments),
+      reasons: [d.dayNote ? '備考：' + d.dayNote : ''].concat(d.reasons.map(function (r) { return r.text; })).filter(function (x) { return x; }).join('・'),
+    };
+    rows.push(keys.map(function (k) {
+      if (TIMECARD_COLUMNS[k].undecided) return cell('', 'undecided');
+      if (isTime(k)) return timeCell(k in values ? values[k] : d[k], ts, xs);
+      return cell(values[k] === undefined ? '' : values[k], xs);
+    }));
+  }
+  // 合計行（日数は「◯日」。当てはまらない列は空欄）
+  const t = m.totals;
+  const days = function (x) { return x + '日'; };
+  const totals = {
+    date: '合計', clockIn: '出勤' + days(t.workDays), breakTotal: t.breakTotal, autoBreak: t.autoBreak, workTime: t.workTime,
+    officeTime: t.officeTime, remoteTime: t.remoteTime, holidayWork: days(t.holidayWorkDays), holidayWorkTime: t.holidayWorkTime,
+    leaveType: days(t.leaveDays), leaveTime: t.leaveTime, businessTrip: days(t.businessTripDays), direct: days(t.directDays),
+    directReturn: days(t.directReturnDays), reasons: '要確認 ' + days(t.checkDays),
+  };
+  if (!isFlex) { totals.late = t.late; totals.earlyLeave = t.earlyLeave; totals.internalExcess = t.internalExcess; }
+  rows.push(keys.map(function (k) {
+    if (TIMECARD_COLUMNS[k].undecided) return cell('', 'undecided');
+    const v = totals[k] === undefined ? '' : totals[k];
+    if (isTime(k) && k !== 'clockIn') return timeCell(v, 'totalTime', 'totalText');
+    return cell(v, 'totalText');
+  }));
+  rows.push([cell('合計行：出勤時刻の列＝出勤日数、休日出勤・有給種別・出張・直行・直帰の列＝日数。給与の計算はこの表に含めていません。', 'note')]);
+  merges.push('A' + rows.length + ':' + last + rows.length);
+  // B形式：フレックスの月集計（有給の算入が未確定の間は「未確定」）
+  if (isFlex) {
+    const f = flex || {};
+    const mode = f.paidLeaveMode || FLEX_PAID_LEAVE_MODES.UNDECIDED;
+    rows.push([]);
+    rows.push([cell('フレックスの月集計（' + env.range.label + '）', 'label')]);
+    const labels = ['月所定', '実働', '有給', '残り', '超過', '有給算入状態'];
+    const values = [f.scheduled, f.worked, f.paidLeave, f.remaining, f.excess, mode];
+    const r = rows.length + 1;
+    rows.push(labels.map(function (label) { return cell(label, 'header'); }));
+    rows.push(values.map(function (v, i) { return i === 5 ? cell(v, 'value') : timeCell(v, 'valueTime', 'value'); }));
+    rows.push([cell(mode === FLEX_PAID_LEAVE_MODES.UNDECIDED
+      ? '有給の算入は未確定です（残り・超過には有給を入れていません）。フレックスの法定時間外も未確定です。'
+      : '有給の算入：' + mode + '。フレックスの法定時間外は未確定です。', 'note')]);
+    merges.push('A' + (r + 2) + ':' + last + (r + 2));
+  }
+  return {
+    widths: keys.map(function (k) { return TIMECARD_COLUMNS[k].width; }),
+    rows: rows, merges: merges, rowHeights: heights, landscape: true,
+  };
 }
 
 // ============================================================ 準備

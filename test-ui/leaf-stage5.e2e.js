@@ -1,5 +1,5 @@
 'use strict';
-// 段階5の管理者画面（社内詳細月次・区間の展開・社員別CSV・月次の集計・出力）と、スタッフ画面の中断の説明をブラウザ（Chromium）で操作するテスト。
+// 段階5の管理者画面（社内詳細月次・区間の展開・社員別CSV・月次の集計・出力（CSV・社労士提出用Excel））と、スタッフ画面の中断の説明をブラウザ（Chromium）で操作するテスト。
 //   npm run test:ui
 const test = require('node:test');
 const assert = require('node:assert');
@@ -22,7 +22,10 @@ test('段階5の画面（社内詳細月次・集計・出力）', { skip: !play
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
   const post = (p, body) => fetch(base + p, { method: 'POST', body: JSON.stringify(body) });
-  const browser = await playwright.chromium.launch({ headless: true });
+  // 日本語のファイル名（社労士提出用タイムカード_….xlsx）で保存させるため、ブラウザは UTF-8 のロケールで起動する
+  // （ロケールが UTF-8 でない Linux では、Chromium が日本語のファイル名を「download」に置き換えるため）
+  const utf8 = /UTF-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || '');
+  const browser = await playwright.chromium.launch({ headless: true, env: utf8 ? process.env : { ...process.env, LC_ALL: 'C.UTF-8' } });
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'ja-JP', acceptDownloads: true });
   context.setDefaultTimeout(10000);
   const errors = [];
@@ -111,9 +114,22 @@ test('段階5の画面（社内詳細月次・集計・出力）', { skip: !play
       assert.match(await toast(admin), /社労士確認用の詳細表を作成しました/);
     });
 
+    await t.test('出力：社労士提出用Excel（社員別シート）は本物の .xlsx（ZIP）として保存される', async () => {
+      const dl = admin.waitForEvent('download');
+      await admin.click('#btnXlsxSharoushi');
+      const file = await dl;
+      assert.equal(file.suggestedFilename(), '社労士提出用タイムカード_2026-10.xlsx');
+      const buf = require('node:fs').readFileSync(await file.path());
+      assert.equal(buf.slice(0, 2).toString('latin1'), 'PK', 'ZIP の先頭');
+      assert.ok(buf.includes(Buffer.from('xl/workbook.xml')), 'ブックの部品がある');
+      await idle(admin);
+      assert.match(await toast(admin), /社労士提出用Excelを作成しました（\d+名）（社労士提出用タイムカード_2026-10\.xlsx）/);
+      await shot(admin, 's5-03-xlsx');
+    });
+
     await t.test('JavaScript のエラーなし。段階5の関数は管理者画面からだけ呼ぶ', async () => {
       assert.deepEqual(errors, []);
-      for (const fn of ['getAdminEmployeeMonth', 'exportAdminEmployeeMonthCsv', 'getAdminMonthlyAnalysis', 'exportAdminMonthlySummaryCsv', 'exportSharoushiDetailCsv']) {
+      for (const fn of ['getAdminEmployeeMonth', 'exportAdminEmployeeMonthCsv', 'getAdminMonthlyAnalysis', 'exportAdminMonthlySummaryCsv', 'exportSharoushiDetailCsv', 'exportSharoushiTimecardXlsx']) {
         assert.ok(calls.includes(fn), fn);
       }
       await admin.close();
