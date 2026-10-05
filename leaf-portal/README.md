@@ -734,9 +734,9 @@ npm run test:ui        # スタッフ画面・管理者画面をブラウザで�
 
 | 表示する場所 | 内容 | 設定している場所 |
 |---|---|---|
-| ヘッダー左（スタッフ画面・管理者画面で共通） | 会社ロゴ ＋「Leaf Co.,Ltd」＋「勤怠管理」（管理者画面は「勤怠管理｜管理者画面」） | ロゴ：`assets/logo.png`／会社名：`WebApp.gs` の `APP_BRAND_NAME` |
-| ブラウザのタブのタイトル | Leaf Co.,Ltd｜勤怠管理 | `WebApp.gs` の `WEB_APP_TITLE` |
-| 画面の一番下 | Leaf Co.,Ltd | `APP_BRAND_NAME` |
+| ヘッダー左（スタッフ画面・管理者画面で共通） | 会社ロゴ ＋「Leaf Co.,Ltd.」＋「勤怠管理」（管理者画面は「勤怠管理｜管理者画面」） | ロゴ：`assets/logo.png`／会社名：`WebApp.gs` の `APP_BRAND_NAME` |
+| ブラウザのタブのタイトル | Leaf Co.,Ltd.｜勤怠管理 | `WebApp.gs` の `WEB_APP_TITLE`（`APP_BRAND_NAME` ＋「｜勤怠管理」） |
+| 画面の一番下 | Leaf Co.,Ltd. | `APP_BRAND_NAME` |
 | ブラウザのタブのアイコン（favicon） | 今は Google の標準アイコン（下を参照） | `WebApp.gs` の `APP_FAVICON_URL` |
 
 ### ロゴを差し替えるとき
@@ -781,7 +781,7 @@ favicon を変えられるのは `setFaviconUrl()` だけで、**インターネ
 | `--brand-accent` | `#EDF1EC` | 選択中の背景（出社・在宅） |
 | `--brand-dark` | `#3A3834` | 退勤・再計算のボタン |
 | `--brand-font-body` | Hiragino Sans ほか（端末の標準フォント） | 本文 |
-| `--brand-font-display` | Georgia ほか（セリフ体） | 「Leaf Co.,Ltd」・フッター |
+| `--brand-font-display` | Georgia ほか（セリフ体） | 「Leaf Co.,Ltd.」・フッター |
 | `--brand-radius` / `--brand-radius-control` | 10px / 6px | カード / ボタン・入力欄 |
 | `--brand-shadow` | ごく弱い影 | カード |
 | `--brand-space-card` / `--brand-space-gap` | 28px / 28px（スマホ 20px / 16px） | カードの内側の余白 / カードの間隔 |

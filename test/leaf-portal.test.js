@@ -484,17 +484,37 @@ test('画面の一番下に「版」が出る（npm run check の表示と同じ
   assert.match(gas.g.doGet().getContent(), new RegExp('<span class="app-build" id="appBuild">版 ' + build.replace(/\./g, '\\.') + '</span>'));
 });
 
+test('会社名：正式表記「Leaf Co.,Ltd.」は WebApp.gs の APP_BRAND_NAME 1か所だけに書き、画面のロゴ横・フッター・タイトル・ロゴの代替文字はそこから出す', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const gas = createLeafGas();
+  assert.equal(gas.eval('APP_BRAND_NAME'), 'Leaf Co.,Ltd.');
+  assert.equal(gas.eval('WEB_APP_TITLE'), 'Leaf Co.,Ltd.｜勤怠管理');
+  const html = gas.g.doGet().getContent();
+  assert.ok(html.includes('alt="Leaf Co.,Ltd. ロゴ"'));
+  assert.ok(!/Co\.,\s*Ltd(?!\.)/.test(html), '末尾のピリオドがない表記は画面に出ない');
+  // コード（.gs・.html）に社名を直接書いているのは APP_BRAND_NAME の定義だけ
+  const dir = path.join(__dirname, '..', 'leaf-portal', 'gas');
+  const hits = [];
+  for (const f of fs.readdirSync(dir).filter((x) => /\.(gs|html)$/.test(x))) {
+    fs.readFileSync(path.join(dir, f), 'utf8').split('\n').forEach((line, i) => {
+      if (/Co\.\s*,\s*Ltd/i.test(line)) hits.push(f + ':' + (i + 1) + ' ' + line.trim());
+    });
+  }
+  assert.deepEqual(hits, ["WebApp.gs:21 const APP_BRAND_NAME = 'Leaf Co.,Ltd.';"]);
+});
+
 test('スタッフ画面：doGet() が画面を返し、Styles・Scripts が読み込まれる', () => {
   const gas = createLeafGas();
   const out = gas.g.doGet();
   const html = out.getContent();
-  assert.equal(out.getTitle(), 'Leaf Co.,Ltd｜勤怠管理');
-  // ヘッダー：会社ロゴ（Logo.html の data URI）と「Leaf Co.,Ltd」「勤怠管理」
+  assert.equal(out.getTitle(), 'Leaf Co.,Ltd.｜勤怠管理');
+  // ヘッダー：会社ロゴ（Logo.html の data URI）と「Leaf Co.,Ltd.」「勤怠管理」
   const logo = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'leaf-portal', 'gas', 'Logo.html'), 'utf8').trim();
   assert.ok(html.includes('<img class="brand-logo" src="' + logo + '"'), 'ロゴは Logo.html の内容をそのまま使う');
-  assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd<\/span>/);
+  assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd\.<\/span>/);
   assert.match(html, /<span class="brand-sub" id="brandSub">勤怠管理<\/span>/);
-  assert.match(html, /<footer class="site-footer">Leaf Co\.,Ltd<span class="app-build" id="appBuild">版 [^<]+<\/span><\/footer>/);
+  assert.match(html, /<footer class="site-footer">Leaf Co\.,Ltd\.<span class="app-build" id="appBuild">版 [^<]+<\/span><\/footer>/);
   assert.doesNotMatch(html, /リーフ 社内ポータル|brand-mark/, '古い表記・葉っぱアイコンは残っていない');
   assert.equal(out.faviconUrl, undefined, 'favicon のURLが未設定なら設定しない');
   assert.equal(out.metaTags.viewport, 'width=device-width, initial-scale=1');
@@ -981,7 +1001,7 @@ test('ロゴ：Logo.html の中身が画像の形でなければ、ロゴなし�
   gas.g.HtmlService.createHtmlOutputFromFile = (name) => (name === 'Logo' ? { getContent: () => '"><script>alert(1)</script>' } : real(name));
   const html = gas.g.doGet().getContent();
   assert.doesNotMatch(html, /<img class="brand-logo"|alert\(1\)/);
-  assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd<\/span>/);
+  assert.match(html, /<span class="brand-name">Leaf Co\.,Ltd\.<\/span>/);
 });
 
 test('HTML：コメントや説明文の中にテンプレートの記号（<? <?= <?!=）がない', () => {
