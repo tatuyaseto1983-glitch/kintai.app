@@ -23,7 +23,7 @@ const APP_BRAND_NAME = 'Leaf Co.,Ltd.';
  * 画面の一番下に出る「版」。どのコードが動いているか（push とデプロイ更新が済んでいるか）を画面で確かめるためのもの。
  * コードを変えて反映するときは、この値も変えてください（npm run check の表示と見比べます）。
  */
-const APP_BUILD = '2026.10.05-2';
+const APP_BUILD = '2026.10.05-3';
 
 /** 画面のタイトル（ブラウザのタブに表示） */
 const WEB_APP_TITLE = APP_BRAND_NAME + '｜勤怠管理';

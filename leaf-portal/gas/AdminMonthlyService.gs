@@ -239,6 +239,9 @@ const TIMECARD_LAYOUTS = {
     'holiday', 'businessTrip', 'direct', 'directReturn', 'segments', 'reasons'],
 };
 
+/** 社労士提出用の備考：残業の事前申請の要確認（社内ルール。法定時間外の判定ではない） */
+const TIMECARD_OVERTIME_NOTE = '社内確認：30分以上の社内超過に対する承認済み事前申請なし';
+
 /** 'YYYY-MM-DD' → Excel の日付の数値（1900年方式） */
 function xlsxDateValue_(dateKey) {
   const p = String(dateKey).split('-').map(Number);
@@ -251,7 +254,8 @@ function xlsxDateValue_(dateKey) {
  *   B形式：出勤・退勤＝会社等（会社・旧現場・旧外出）の区間の最初の開始・最後の終了、在宅開始・終了＝在宅の区間の最初・最後、
  *          労働1＝会社等の区間の長さの合計、労働2＝在宅の区間の長さの合計、休憩＝労働1＋労働2−労働時間（中断・自動休憩）
  *   労働時間＝システムの実働（勤務区間 − 中断 − 自動休憩）。休日＝承認済みの休日出勤の日の実働
- *   備考・要確認の理由：有給・休日出勤・出張（A形式）・休憩の内訳・日備考・打刻漏れなどの要確認（日報の未提出は社内用なので入れない）
+ *   備考・要確認の理由：有給・休日出勤・出張（A形式）・休憩の内訳・日備考・打刻漏れなどの要確認（日報の未提出は社内用なので入れない）。
+ *     残業の事前申請なしは「社内確認：…」と書き、社内ルールの確認事項であることを示す（TIMECARD_OVERTIME_NOTE）
  */
 function buildTimecardDay_(d, isFlex) {
   const toMin = function (t) { const v = toMinutes_(t); return v === null ? null : v; };
@@ -301,7 +305,11 @@ function buildTimecardDay_(d, isFlex) {
       gap ? '退勤〜再出勤の間 ' + formatMinutes_(gap) : ''].filter(function (x) { return x; }).join('＋'));
   }
   if (d.dayNote) notes.push('備考：' + d.dayNote);
-  d.reasons.forEach(function (r) { if (r.category !== CHECK_CATEGORIES.REPORT) notes.push(r.text); });
+  d.reasons.forEach(function (r) {
+    if (r.category === CHECK_CATEGORIES.REPORT) return;
+    // 残業の事前申請は社内ルールの確認事項。法定時間外の判定と混同しないよう、社労士提出用では言い方を変える
+    notes.push(r.category === CHECK_CATEGORIES.OVERTIME ? TIMECARD_OVERTIME_NOTE : r.text);
+  });
   v.notes = notes;
   return v;
 }
