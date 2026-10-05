@@ -405,6 +405,48 @@ test('日報_未提出判定開始日：日付の判定は共通関数（isRepor
   assert.match(monthly, /function reportStatusOfDay_[\s\S]*?return judgeReportDay_\(/);
 });
 
+test('日報の対象範囲：提出対象＝日報提出対象×出勤実績あり×開始日以降。確認対象＝在籍の日報確認対象者（本人除く・出勤の有無は問わない）', () => {
+  const gas = office(); // 日報_未提出判定開始日 2026-01-01
+  const staffCol = (id, col, value) => {
+    const sh = gas.main.getSheetByName('スタッフマスタ');
+    sh.data.find((r) => r[0] === id)[sh.data[0].indexOf(col)] = value;
+    gas.g.clearTableCache_();
+  };
+  work(gas, NAKATSUI, '2026-10-06', '09:30', '18:30');                         // 出勤あり・日報なし → 未提出
+  gas.loginAs(NAKATSUI); gas.setNow('2026-10-08 19:00');
+  const offDay = gas.g.submitReport({ workContent: '休みの日に提出' }).data.reportId; // 出勤なしの日に提出
+  // 久保さん：1日有給（出勤なし）→ 未提出に数えない
+  gas.loginAs(KUBO); gas.setNow('2026-10-05 09:00');
+  const pl = gas.g.submitPaidLeaveRequest({ date: '2026-10-07', leaveType: '1日有給', reason: '私用' }).data.requestId;
+  gas.loginAs(MITSUYAMA); gas.g.approvePaidLeaveRequest(pl);
+  // 大森さん：出勤ありでも「日報提出対象＝対象外」なら未提出に数えない
+  staffCol('E003', '日報提出対象', '対象外');
+  work(gas, OMORI, '2026-10-06', '09:00', '18:00');
+  asAdmin(gas);
+  let r = gas.g.getAdminMonthlyAnalysis('2026-10').data.reports;
+  const n = r.authors.find((x) => x.name === '中津井祐貴');
+  assert.deepEqual([n.workDays, n.submitted, n.missing, n.submitRate], [1, 1, 1, 0],
+    '提出率の分母は出勤実績のある日だけ（10/6）。出勤のない 10/8 の提出は分母・分子に入れない（提出数には数える）');
+  assert.ok(!r.authors.some((x) => x.name === '大森紗智子'), '日報提出対象外は提出側に出さない');
+  assert.equal(r.authors.find((x) => x.name === '久保亜弓').missing, 0, '1日有給（出勤なし）は未提出にならない');
+  assert.equal(month(gas, 'E006').days.find((d) => d.date === '2026-10-07').reportStatus, '');
+  assert.equal(month(gas, 'E003').days.find((d) => d.date === '2026-10-06').reportStatus, '', '提出対象外：出勤ありでも判定しない');
+  // 確認対象：出勤のない日の日報でも確認対象は在籍の日報確認対象者全員（本人除く）。確認する人の出勤の有無も問わない
+  let rep = r.reports.find((x) => x.reportId === offDay);
+  assert.deepEqual([rep.targetCount, rep.pendingNames.join('、')], [5, '光山大樹、猪倉厚、大森紗智子、村田清子、久保亜弓'],
+    '提出者が出勤していない日でも、確認の分母は変わらない（その日休みの久保さん・役員も確認対象）');
+  staffCol('E002', '日報確認対象', '対象外');
+  staffCol('E004', '在籍状況', '休職');
+  r = gas.g.getAdminMonthlyAnalysis('2026-10').data.reports;
+  rep = r.reports.find((x) => x.reportId === offDay);
+  assert.deepEqual([rep.targetCount, rep.pendingNames.join('、')], [3, '光山大樹、大森紗智子、久保亜弓'], '日報確認対象＝対象外・休職は除く');
+  gas.loginAs(KUBO); gas.g.confirmReport(offDay);
+  asAdmin(gas);
+  r = gas.g.getAdminMonthlyAnalysis('2026-10').data.reports;
+  assert.deepEqual([r.totals.confirmations, r.totals.confirmationTargets, r.totals.confirmRate], [1, 3, 33.3], '確認率＝確認数÷（提出済み日報×確認対象者）');
+  assert.deepEqual(r.readers.map((x) => x.name + ':' + x.confirmed + '/' + x.required), ['光山大樹:0/1', '大森紗智子:0/1', '中津井祐貴:0/0', '久保亜弓:1/1']);
+});
+
 test.todo('法定時間外（日8時間超）：社労士回答 Q-1 の後に実装');
 test.todo('法定時間外（週40時間超・週の起算日）：社労士回答 Q-1 の後に実装');
 test.todo('深夜時間（時間帯・早朝側・重複の表示）：社労士回答 Q-5 の後に実装');

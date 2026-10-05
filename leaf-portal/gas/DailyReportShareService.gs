@@ -193,11 +193,12 @@ function isReportDueDate_(dateKey, settings) {
  *   today     … 今日（まだ書ける。draft で下書きの有無）
  *   draft     … 未提出（下書きあり）
  *   missing   … 未提出
- *   due       … 提出率の分母に入る日か（判定する日で、今日より前。提出済みの日も、判定する日なら入る）
+ *   due       … 提出率の分母に入る日か（日報提出対象 × 出勤実績あり × 開始日以降 × 今日より前。提出済みの日も条件を満たせば入る）
  */
 function judgeReportDay_(p) {
   const due = isReportDueDate_(p.date, p.settings);
-  const inRate = due && p.date < p.today && !!p.submitTarget && (!!p.worked || !!p.submitted);
+  // 提出率の分母：日報提出対象 × 出勤実績あり × 開始日以降（今日はまだ書けるので前日まで）。出勤のない日に提出した日報は分母・分子に入れない
+  const inRate = due && p.date < p.today && !!p.submitTarget && !!p.worked;
   if (p.submitted) return { state: 'submitted', label: REPORT_STATUS.SUBMITTED, due: inRate };
   if (!p.worked || !p.submitTarget) return { state: 'none', label: p.draft ? '下書き' : '', due: false };
   if (!due) return { state: 'not-due', label: p.draft ? '下書き' : '', due: false };
