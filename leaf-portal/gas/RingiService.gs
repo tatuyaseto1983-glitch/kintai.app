@@ -140,7 +140,7 @@ function submitRingiRequest_(input) {
   });
   appendRingiHistory_(record, RINGI_ACTIONS.SUBMIT, staff, { statusBefore: '', statusAfter: RINGI_STATUS.PENDING, note: '申請金額 ' + yen_(plan.amount) + '（' + plan.certainty + '）' });
   // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
-  notifyRequestSubmitted_('稟議申請', staff, toPlainText_(record['稟議ID']), plan.itemName + '・' + yen_(plan.amount), ringiMailDetails_(record));
+  notifyRequestSubmitted_('稟議申請', staff, toPlainText_(record['稟議ID']), plan.itemName + '・' + yen_(plan.amount), ringiMailDetails_(record), record);
   return { message: '稟議を申請しました（' + toPlainText_(record['稟議ID']) + '）。管理者の承認をお待ちください', data: decorateRingiView_(toRingiView_(record), record, staff) };
 }
 

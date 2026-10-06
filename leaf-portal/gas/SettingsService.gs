@@ -53,6 +53,7 @@ function getSettings_() {
     // 「自動休憩_適用開始」を使い始める日（空欄＝すべての日。日付でない値は空欄と同じに扱い、Invalid で知らせる）。判定は autoBreakThresholdFor_
     autoBreakThresholdFrom: toDateKey_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]),
     // メール通知（「送信しない」以外は送る）と、テスト用の送信先の上書き（形式が違うときは送らない＝実際の社員に誤って届かないように）
+    notifyMethod: String(values[SETTING_KEYS.NOTIFY_METHOD] === undefined ? NOTIFY_METHODS.CHAT : values[SETTING_KEYS.NOTIFY_METHOD]).trim(),
     mailNotify: String(values[SETTING_KEYS.MAIL_NOTIFY] === undefined ? MAIL_NOTIFY.ON : values[SETTING_KEYS.MAIL_NOTIFY]).trim(),
     mailNotifyOverrideTo: parseMailOverride_(values[SETTING_KEYS.MAIL_NOTIFY_OVERRIDE]),
     autoBreakThresholdFromInvalid: !isBlank_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]) && !toDateKey_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]),

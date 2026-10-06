@@ -24,6 +24,9 @@ function office() {
     { ...base, '社員ID': 'E007', '氏名': '休職管理', 'メールアドレス': LEAVE, '権限': 'admin', '在籍状況': '休職' },
   ]);
   gas.g.clearTableCache_();
+  // このファイルはメール通知のテスト（初期値は Google Chat なので、メールにする）
+  gas.main.getSheetByName('設定').data.find((r) => r[0] === '通知方法')[1] = 'メール';
+  gas.g.clearTableCache_();
   gas.setNow(NOW);
   gas.clearMails();
   // console.error を記録する（送信エラーのログを確かめる）

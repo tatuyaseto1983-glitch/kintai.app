@@ -179,7 +179,7 @@ function createLeafGas(opts = {}) {
   const main = newBook('本番');
   const props = {};
   // mails：MailApp.sendEmail で送ったメール（テストで中身を確かめる）。mailFails：true にすると送信がエラーになる
-  const state = { email: opts.email || 'owner@example.com', mails: [], mailFails: false };
+  const state = { email: opts.email || 'owner@example.com', mails: [], mailFails: false, fetches: [], fetchMode: 'ok' };
 
   const validationBuilder = () => {
     const b = { requireValueInList() { return b; }, setAllowInvalid() { return b; }, build() { return {}; } };
@@ -212,6 +212,15 @@ function createLeafGas(opts = {}) {
       sendEmail: (message) => {
         if (state.mailFails) throw new Error('Service invoked too many times for one day: email.');
         state.mails.push({ to: message.to, subject: message.subject, body: message.body, name: message.name });
+      },
+    },
+    // UrlFetchApp：Google Chat の Webhook など。fetches に記録。fetchMode：'ok'／'http500'（エラーの応答）／'throw'（通信エラー）
+    UrlFetchApp: {
+      fetch: (url, params) => {
+        state.fetches.push({ url, method: params && params.method, contentType: params && params.contentType, payload: params && params.payload });
+        if (state.fetchMode === 'throw') throw new Error('Address unavailable: ' + url);
+        const code = state.fetchMode === 'http500' ? 500 : 200;
+        return { getResponseCode: () => code, getContentText: () => (code === 200 ? '{}' : '{"error":{"code":500,"message":"Internal error"}}') };
       },
     },
     ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/a/macros/example.com/s/TEST/exec' }) },
@@ -287,6 +296,12 @@ function createLeafGas(opts = {}) {
     get mails() { return state.mails; },
     clearMails() { state.mails = []; },
     failMails(on) { state.mailFails = !!on; },
+    /** UrlFetchApp.fetch の呼び出しの一覧（Google Chat の Webhook など）。fetchMode('http500' | 'throw' | 'ok') で失敗させる */
+    get fetches() { return state.fetches; },
+    clearFetches() { state.fetches = []; },
+    fetchMode(mode) { state.fetchMode = mode || 'ok'; },
+    /** スクリプトプロパティ（PropertiesService.getScriptProperties()）に値を入れる */
+    setScriptProperty(key, value) { props[key] = String(value); },
     /** 「今」の時刻を変える（'2026-06-01 09:30'。null で本当の時刻に戻す） */
     setNow(text) {
       vm.runInContext(text ? `APP_RUNTIME.now = Utilities.parseDate(${JSON.stringify(text)}, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')` : 'APP_RUNTIME.now = null', context);

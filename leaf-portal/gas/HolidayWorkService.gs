@@ -192,7 +192,7 @@ function submitHolidayWorkRequest_(input) {
   updateRecord_(SHEET_NAMES.HOLIDAY_WORK, record, onlyExistingColumns_(SHEET_NAMES.HOLIDAY_WORK, extra));
   // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
   notifyRequestSubmitted_('休日出勤申請', staff, toPlainText_(record['申請ID']),
-    shortDateLabel_(plan.workDate) + ' ' + minutesToClock_(plan.start) + '〜' + minutesToClock_(plan.end), holidayWorkMailDetails_(record));
+    shortDateLabel_(plan.workDate) + ' ' + minutesToClock_(plan.start) + '〜' + minutesToClock_(plan.end), holidayWorkMailDetails_(record), record);
   if (!useShift) return { message: '休日出勤を申請しました（' + plan.workDate + '）。管理者の承認をお待ちください', data: toHolidayWorkView_(record) };
   const shiftNote = isHolidayShift_(shiftType) ? '' : '\n※ ' + plan.workDate + ' は' + shiftType + 'のため、シフトが休日・法定休日に決まるまで承認されません';
   return { message: '休日出勤を申請しました（' + plan.workDate + '・' + shiftType + '）。管理者の承認をお待ちください' + shiftNote, data: toHolidayWorkView_(record) };
