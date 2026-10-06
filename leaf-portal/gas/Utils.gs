@@ -41,13 +41,21 @@ function fail_(message) {
 function runApi_(action) {
   try {
     clearTableCache_(); // 毎回、最新のシート内容から処理を始める
+    clearNotificationQueue_();
     const result = action() || {};
+    // 各種申請のメール通知：保存（withLock_ の書き込み確定・ロック解除）が終わった後に送る。失敗しても結果は変えない（NotificationService.gs）
+    try {
+      flushNotifications_();
+    } catch (mailError) {
+      console.error('メール通知の処理でエラーが発生しました（申請・承認の保存は完了しています）：' + (mailError && mailError.stack ? mailError.stack : mailError));
+    }
     return {
       success: true,
       message: result.message || '完了しました',
       data: result.data === undefined ? null : result.data,
     };
   } catch (e) {
+    clearNotificationQueue_(); // 処理が成功しなかったときは、予約した通知を送らない
     if (e instanceof AppError) {
       return { success: false, message: e.message, data: null };
     }

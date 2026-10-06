@@ -52,6 +52,9 @@ function getSettings_() {
     reportMissingFromInvalid: !isBlank_(values[SETTING_KEYS.REPORT_MISSING_FROM]) && !toDateKey_(values[SETTING_KEYS.REPORT_MISSING_FROM]),
     // 「自動休憩_適用開始」を使い始める日（空欄＝すべての日。日付でない値は空欄と同じに扱い、Invalid で知らせる）。判定は autoBreakThresholdFor_
     autoBreakThresholdFrom: toDateKey_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]),
+    // メール通知（「送信しない」以外は送る）と、テスト用の送信先の上書き（形式が違うときは送らない＝実際の社員に誤って届かないように）
+    mailNotify: String(values[SETTING_KEYS.MAIL_NOTIFY] === undefined ? MAIL_NOTIFY.ON : values[SETTING_KEYS.MAIL_NOTIFY]).trim(),
+    mailNotifyOverrideTo: parseMailOverride_(values[SETTING_KEYS.MAIL_NOTIFY_OVERRIDE]),
     autoBreakThresholdFromInvalid: !isBlank_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]) && !toDateKey_(values[SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM]),
   };
   if (settings.overtimeUnitMinutes < 1) invalidSetting_(SETTING_KEYS.OVERTIME_UNIT, values, '00:01 以上');
@@ -96,6 +99,15 @@ function parseSettingClock_(values, key) {
 function autoBreakThresholdFor_(settings, dateKey) {
   if (settings.autoBreakThresholdFrom && String(dateKey) < settings.autoBreakThresholdFrom) return 0;
   return settings.autoBreakThresholdMinutes;
+}
+
+/** 「メール通知_送信先の上書き」：空欄＝''。形式が違う値はエラー（通知は送らずにログへ） */
+function parseMailOverride_(value) {
+  const text = isBlank_(value) ? '' : String(value).trim().toLowerCase();
+  if (text && !/^[^@\s]+@[^@\s]+$/.test(text)) {
+    return { invalid: text };
+  }
+  return text;
 }
 
 function parseSettingDuration_(values, key) {

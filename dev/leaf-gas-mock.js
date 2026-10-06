@@ -178,7 +178,8 @@ function createLeafGas(opts = {}) {
   };
   const main = newBook('本番');
   const props = {};
-  const state = { email: opts.email || 'owner@example.com' };
+  // mails：MailApp.sendEmail で送ったメール（テストで中身を確かめる）。mailFails：true にすると送信がエラーになる
+  const state = { email: opts.email || 'owner@example.com', mails: [], mailFails: false };
 
   const validationBuilder = () => {
     const b = { requireValueInList() { return b; }, setAllowInvalid() { return b; }, build() { return {}; } };
@@ -207,6 +208,13 @@ function createLeafGas(opts = {}) {
       }),
     },
     LockService: { getScriptLock: () => ({ tryLock: () => true, waitLock() {}, releaseLock() {} }) },
+    MailApp: {
+      sendEmail: (message) => {
+        if (state.mailFails) throw new Error('Service invoked too many times for one day: email.');
+        state.mails.push({ to: message.to, subject: message.subject, body: message.body, name: message.name });
+      },
+    },
+    ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/a/macros/example.com/s/TEST/exec' }) },
     Utilities: {
       formatDate, parseDate, getUuid: () => crypto.randomUUID(),
       newBlob: (data, contentType, name) => new MockBlob(data, contentType, name),
@@ -275,6 +283,10 @@ function createLeafGas(opts = {}) {
     books,
     /** ログイン中のアカウントを変える */
     loginAs(email) { state.email = email; },
+    /** 送ったメール（MailApp.sendEmail）の一覧。clearMails() で空にする。failMails(true) で送信をエラーにする */
+    get mails() { return state.mails; },
+    clearMails() { state.mails = []; },
+    failMails(on) { state.mailFails = !!on; },
     /** 「今」の時刻を変える（'2026-06-01 09:30'。null で本当の時刻に戻す） */
     setNow(text) {
       vm.runInContext(text ? `APP_RUNTIME.now = Utilities.parseDate(${JSON.stringify(text)}, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm')` : 'APP_RUNTIME.now = null', context);

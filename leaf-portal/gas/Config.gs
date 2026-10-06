@@ -231,10 +231,16 @@ const SETTING_KEYS = {
   FLEX_PAID_LEAVE: 'フレックス_有給算入',
   REPORT_MISSING_FROM: '日報_未提出判定開始日',
   AUTO_BREAK_THRESHOLD_FROM: '自動休憩_適用開始_有効日',
+  // 各種申請のメール通知（NotificationService.gs）
+  MAIL_NOTIFY: 'メール通知',
+  MAIL_NOTIFY_OVERRIDE: 'メール通知_送信先の上書き',
 };
 
 /** フレックスの有給の扱い（138時間などの所定への算入）。社労士の確認が済むまで「未確定」 */
 const FLEX_PAID_LEAVE_MODES = { UNDECIDED: '未確定', EXCLUDE: '算入しない', INCLUDE: '算入する' };
+
+/** 設定「メール通知」 */
+const MAIL_NOTIFY = { ON: '送信する', OFF: '送信しない' };
 
 /**
  * 「設定」シートへ最初に登録する値。
@@ -259,6 +265,8 @@ const DEFAULT_SETTINGS = [
   { key: SETTING_KEYS.PM_HALF_END, value: '13:30', note: '午後半休の日の勤務終了の基準（固定勤務・通常勤務日だけ。これより早い終了を早退として記録します）' },
   { key: SETTING_KEYS.REPORT_MISSING_FROM, value: '', note: 'この日付（例：2026-10-21）以降の勤務日だけ、日報の「未提出」「下書きのみ」を判定します。空欄の間は判定しません（日報の運用開始日を入れてください）。勤務記録の表示は変わりません' },
   { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD_FROM, value: '', note: 'この日付（例：2026-09-21）以降の勤務日に「自動休憩_適用開始」を使います。それより前の日は 00:00（常に差し引く＝以前の初期値）で計算します。空欄＝すべての日に「自動休憩_適用開始」を使います。変えたあとは管理者画面の［再計算のプレビュー］で確認してから再計算してください' },
+  { key: SETTING_KEYS.MAIL_NOTIFY, value: MAIL_NOTIFY.ON, note: '各種申請（残業・有給休暇・休日出勤・稟議）の申請・承認・却下などをメールで知らせるか：送信する／送信しない。管理者（在籍・権限＝admin）と申請者本人に届きます' },
+  { key: SETTING_KEYS.MAIL_NOTIFY_OVERRIDE, value: '', note: 'メールアドレスを入れると、すべての通知メールをそのアドレスだけに送ります（テスト環境で実際の社員に届かないようにするため）。空欄＝通常どおり。本番では空欄にしてください' },
   { key: SETTING_KEYS.FLEX_PAID_LEAVE, value: '未確定', note: 'フレックスの有給を月の所定（138時間など）に算入するか：未確定／算入しない／算入する。社労士に確認してから変えてください（未確定の間は実働と有給を別々に表示し、所定には足しません）' },
   { key: SETTING_KEYS.AUTO_BREAK_THRESHOLD, value: '00:00', note: '中断を除いた勤務時間（退勤−出勤−中断合計）がこの時間を超えた日だけ自動休憩を差し引きます。00:00＝常に差し引く／06:00＝6時間以下の日は引かない' },
 ];

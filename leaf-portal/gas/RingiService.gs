@@ -139,6 +139,8 @@ function submitRingiRequest_(input) {
     '最終更新日時': now.timestamp,
   });
   appendRingiHistory_(record, RINGI_ACTIONS.SUBMIT, staff, { statusBefore: '', statusAfter: RINGI_STATUS.PENDING, note: '申請金額 ' + yen_(plan.amount) + '（' + plan.certainty + '）' });
+  // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
+  notifyRequestSubmitted_('稟議申請', staff, toPlainText_(record['稟議ID']), plan.itemName + '・' + yen_(plan.amount), ringiMailDetails_(record));
   return { message: '稟議を申請しました（' + toPlainText_(record['稟議ID']) + '）。管理者の承認をお待ちください', data: decorateRingiView_(toRingiView_(record), record, staff) };
 }
 
@@ -219,6 +221,10 @@ function decideRingi_(ringiId, action, reason) {
   changes['最終更新日時'] = now;
   updateRecord_(SHEET_NAMES.RINGI, record, onlyExistingColumns_(SHEET_NAMES.RINGI, changes));
   appendRingiHistory_(record, history.action, admin, { statusBefore: status, statusAfter: changes['申請状態'], note: history.note });
+  // 申請者本人へ結果をメールで通知（予約。却下・再承認却下は却下理由を入れる）
+  const result = { approve: '承認', reject: '却下', reapprove: '再承認', rejectReapproval: '再承認却下' }[action];
+  notifyRequestDecided_('稟議申請', result, { employeeId: String(record['社員ID']).trim(), name: toPlainText_(record['申請者名']), email: toPlainText_(record['申請者メール']) },
+    admin, toPlainText_(record['稟議ID']), toPlainText_(record['購入品名']) + '・' + yen_(record['申請金額']), ringiMailDetails_(record), changes['却下理由'] || '');
   return { message: message + '（' + toPlainText_(record['稟議ID']) + '）', data: decorateRingiView_(toRingiView_(record), record, admin) };
 }
 
@@ -257,6 +263,8 @@ function enterRingiFinalAmount_(ringiId, amountInput, noteInput) {
     statusBefore: status, statusAfter: newStatus, amountBefore: before, amountAfter: amount,
     note: ['差額 ' + signedYen_(diff), needsReapproval ? '申請金額を超えたため再承認待ち' : '申請金額以下のため承認済', note].filter(function (x) { return x; }).join('・'),
   });
+  // 申請金額を超えて「再承認待ち」になったとき（承認済から変わったときだけ）は、管理者と申請者本人へメールで通知（予約）
+  if (needsReapproval && status !== RINGI_STATUS.REAPPROVAL_PENDING) notifyRingiReapprovalNeeded_(record, staff, ringiMailDetails_(record));
   const verb = before === null ? '入力' : '訂正';
   return {
     message: '確定金額を' + verb + 'しました（' + yen_(amount) + '・差額 ' + signedYen_(diff) + '）。' +
@@ -425,6 +433,15 @@ function buildAdminRingi_() {
     .slice(0, ADMIN_RECENT_REQUEST_LIMIT);
   return { setupRequired: false, pending: pending, reapproval: reapproval, processed: processed,
     pendingCount: pending.length, reapprovalCount: reapproval.length };
+}
+
+/** メール通知に書く稟議の内容（確定金額があれば差額も） */
+function ringiMailDetails_(r) {
+  const rows = [['購入品名', toPlainText_(r['購入品名'])], ['購入数量', toPlainText_(r['購入数量'])], ['経費種別', toPlainText_(r['経費種別'])],
+    ['支出理由・目的', toPlainText_(r['支出理由・目的'])], ['金額の確度', toPlainText_(r['金額の確度'])], ['申請金額（税込）', yen_(r['申請金額'])],
+    ['支出予定日', toDateKey_(r['支出予定日'])], ['見積書・資料', toPlainText_(r['添付資料URL'])]];
+  if (!isBlank_(r['確定金額'])) rows.push(['確定金額（税込）', yen_(r['確定金額']) + '（差額 ' + signedYen_(r['概算との差額']) + '）']);
+  return rows;
 }
 
 /** 1234567 → '1,234,567円' */
