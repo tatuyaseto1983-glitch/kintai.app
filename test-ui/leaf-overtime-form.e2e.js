@@ -13,6 +13,14 @@ function loadPlaywright() {
 }
 const playwright = loadPlaywright();
 const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
+// ホームの「各種申請」から申請メニューを開く（残業・有給・休日出勤・稟議のカードはこの画面にある）
+const toRequests = async (p) => {
+  if (await p.locator('#requestView').isHidden()) {
+    await p.click('#btnOpenRequests');
+    await p.waitForSelector('#requestView:not([hidden])');
+  }
+};
+
 
 test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas, calls } = createServer();
@@ -43,15 +51,19 @@ test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Pl
     let page = await open('sato@example.com');
 
     await t.test('固定勤務には残業申請カードが出る・フレックスには出ない', async () => {
+      await toRequests(page);
       assert.equal(await page.locator('#overtimeCard').isVisible(), true);
+      await toRequests(page);
       assert.match(await page.locator('#overtimeCard').innerText(), /30分以上の残業を予定している場合は、事前に申請してください。/);
       const flex = await open('suzuki@example.com');
+      await toRequests(flex);
       assert.equal(await flex.locator('#overtimeCard').isHidden(), true);
       await flex.close();
       await post('/__test/login', { email: 'sato@example.com' });
     });
 
     await t.test('予定残業時間の自動計算と、申請できない場合の表示', async () => {
+      await toRequests(page);
       await page.click('#btnOpenOvertime');
       assert.equal(await page.inputValue('#otDate'), '2026-06-01');
       assert.equal(await page.getAttribute('#otDate', 'min'), '2026-06-01');
@@ -94,6 +106,7 @@ test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Pl
     });
 
     await t.test('同じ日にもう一度申請するとエラー（保存しない）', async () => {
+      await toRequests(page);
       await page.click('#btnOpenOvertime');
       await page.fill('#otEnd', '20:00');
       await page.fill('#otReason', '二重');
@@ -127,6 +140,7 @@ test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Pl
       assert.match(today, /社内超過時間\s+00:42/);
       assert.doesNotMatch(today, /要確認/);
       assert.equal(gas.main.rows('勤怠記録')[0]['要確認'], '');
+      await toRequests(page);
       await page.click('#btnOpenOvertime');
       assert.match(await page.locator('#overtimeList').innerText(), /実績（社内超過）：0:42/);
       await page.click('#overtimeModal [data-close]');
@@ -140,6 +154,7 @@ test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Pl
       await page.reload();
       await page.waitForSelector('#app:not([hidden])');
       assert.equal(await page.locator('#overtimeMiniList li').first().locator('.badge').getAttribute('class'), 'badge badge-ng');
+      await toRequests(page);
       await page.click('#btnOpenOvertime');
       assert.match(await page.locator('#overtimeList').innerText(), /却下[\s\S]*却下理由：翌日の対応で問題ありません/);
       await shot(page, 'ot-02-modal');
@@ -154,6 +169,7 @@ test('スタッフ画面の残業申請フォーム', { skip: !playwright && 'Pl
       await page.reload();
       await page.waitForSelector('#app:not([hidden])');
       assert.equal(await page.locator('#otCardText').innerText(), '45分以上の残業を予定している場合は、事前に申請してください。');
+      await toRequests(page);
       await page.click('#btnOpenOvertime');
       assert.match(await page.locator('#otFormLead').innerText(), /残業が45分以上になる予定の日は/);
       await page.fill('#otDate', '2026-06-03');

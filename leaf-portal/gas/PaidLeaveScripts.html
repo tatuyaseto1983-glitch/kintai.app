@@ -42,13 +42,21 @@
       if (!res.success || !res.data || !res.data.eligible) {
         P.data = res.success ? res.data : null;
         $('paidLeaveCard').hidden = true; // 対象外・準備中はカードを出さない
+        markChecked(res.message);
         return res;
       }
       P.data = res.data;
       $('paidLeaveCard').hidden = false;
+      markChecked('');
       render();
       return res;
     });
+  }
+
+  /** 読み込みが終わった印と、使えないときの理由（各種申請の画面が「使えない理由」のカードに出す） */
+  function markChecked(reason) {
+    $('paidLeaveCard').setAttribute('data-reason', reason || '');
+    $('paidLeaveCard').setAttribute('data-checked', '1');
   }
 
   function statusBadge(status) {

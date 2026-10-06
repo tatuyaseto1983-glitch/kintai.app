@@ -160,44 +160,13 @@
             <button type="button" class="btn btn-outline" id="btnOpenCorrection">申請する</button>
           </div>
 
-          <!-- 固定勤務の人だけに表示（フレックスは残業申請の対象外） -->
-          <div class="card link-card" id="overtimeCard" hidden>
-            <h2 class="card-title">残業申請</h2>
-            <p id="otCardText">事前申請が必要な残業を予定している場合は、事前に申請してください。</p>
-            <ul class="mini-list" id="overtimeMiniList"></ul>
-            <button type="button" class="btn btn-outline" id="btnOpenOvertime">申請する</button>
-          </div>
-
-          <!-- 休日出勤申請の対象の人だけに表示（対象かどうかはサーバーが判定。申請もサーバー側で確認） -->
-          <div class="card link-card" id="holidayWorkCard" hidden>
-            <h2 class="card-title">休日出勤申請</h2>
-            <p>休日に出勤する予定がある場合は、事前に申請してください。</p>
-            <ul class="mini-list" id="holidayWorkMiniList"></ul>
+          <!-- 各種申請：残業・有給休暇・休日出勤・稟議の入口（申請メニュー画面を開く）。各申請の画面・処理はそれぞれのまま -->
+          <div class="card link-card" id="requestsCard">
+            <h2 class="card-title">各種申請</h2>
+            <p>残業申請・有給休暇申請・休日出勤申請・稟議申請はこちらから。</p>
+            <p class="requests-summary" id="requestsSummary" aria-live="polite"></p>
             <div class="link-card-actions">
-              <button type="button" class="btn btn-outline" id="btnOpenHolidayWork">休日出勤を申請する</button>
-              <button type="button" class="btn btn-ghost" id="btnOpenHolidayWorkHistory">申請状況を見る</button>
-            </div>
-          </div>
-
-          <!-- 有給休暇申請の対象の人だけに表示（対象かどうかはサーバーが判定。申請もサーバー側で確認） -->
-          <div class="card link-card" id="paidLeaveCard" hidden>
-            <h2 class="card-title">有給休暇申請</h2>
-            <p>1日有給・午前半休・午後半休を申請できます。原則として事前に申請してください。</p>
-            <ul class="mini-list" id="paidLeaveMiniList"></ul>
-            <div class="link-card-actions">
-              <button type="button" class="btn btn-outline" id="btnOpenPaidLeave">有給を申請する</button>
-              <button type="button" class="btn btn-ghost" id="btnOpenPaidLeaveHistory">申請状況を見る</button>
-            </div>
-          </div>
-
-          <!-- 稟議申請：在籍中のスタッフ全員（申請できるかはサーバーが判定。承認・却下は管理者画面から） -->
-          <div class="card link-card" id="ringiCard" hidden>
-            <h2 class="card-title">稟議申請</h2>
-            <p>備品の購入や支出の前に申請してください。概算で承認された申請は、金額が決まったら確定金額を入力します。</p>
-            <ul class="mini-list" id="ringiMiniList"></ul>
-            <div class="link-card-actions">
-              <button type="button" class="btn btn-outline" id="btnOpenRingi">稟議申請</button>
-              <button type="button" class="btn btn-ghost" id="btnOpenRingiHistory">申請状況を見る</button>
+              <button type="button" class="btn btn-outline" id="btnOpenRequests">各種申請を開く</button>
             </div>
           </div>
 
@@ -237,6 +206,87 @@
             <ul class="staff-list" id="staffList"><li class="empty">読み込み中...</li></ul>
           </div>
         </section>
+      </div>
+    </main>
+
+    <!-- ================= 各種申請（申請メニュー）：ホームの「各種申請」から開く ================= -->
+    <!-- 残業・有給休暇・休日出勤・稟議のカードはここに置く（中身・ID・処理は今までと同じ。対象かどうかもサーバーが判定） -->
+    <main class="container" id="requestView" hidden>
+      <section class="card request-menu-head">
+        <div class="card-head">
+          <h2 class="card-title">各種申請</h2>
+          <button type="button" class="btn btn-outline btn-sm" id="btnRequestsHome">ホームへ戻る</button>
+        </div>
+        <p class="card-note">申請の種類を選んでください。承認・却下は管理者が行います。</p>
+      </section>
+      <section class="request-menu">
+          <!-- 固定勤務の人だけに表示（フレックスは残業申請の対象外） -->
+          <div class="card link-card" id="overtimeCard" hidden>
+            <h2 class="card-title">残業申請</h2>
+            <p id="otCardText">事前申請が必要な残業を予定している場合は、事前に申請してください。</p>
+            <ul class="mini-list" id="overtimeMiniList"></ul>
+            <button type="button" class="btn btn-outline" id="btnOpenOvertime">申請する</button>
+          </div>
+
+          <!-- 残業申請を使えないときの表示（対象外・準備中・読み込みエラー。理由は各申請の読み込み結果） -->
+          <div class="card link-card request-unavailable" id="overtimeCardOff" data-for="overtimeCard" hidden>
+            <h2 class="card-title">残業申請</h2>
+            <p class="request-unavailable-text">残業申請は固定勤務の人だけが対象です（フレックス勤務は対象外）。</p>
+          </div>
+
+          <!-- 有給休暇申請の対象の人だけに表示（対象かどうかはサーバーが判定。申請もサーバー側で確認） -->
+          <div class="card link-card" id="paidLeaveCard" hidden>
+            <h2 class="card-title">有給休暇申請</h2>
+            <p>1日有給・午前半休・午後半休を申請できます。原則として事前に申請してください。</p>
+            <ul class="mini-list" id="paidLeaveMiniList"></ul>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenPaidLeave">有給を申請する</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenPaidLeaveHistory">申請状況を見る</button>
+            </div>
+          </div>
+
+          <!-- 有給休暇申請を使えないときの表示（対象外・準備中・読み込みエラー。理由は各申請の読み込み結果） -->
+          <div class="card link-card request-unavailable" id="paidLeaveCardOff" data-for="paidLeaveCard" hidden>
+            <h2 class="card-title">有給休暇申請</h2>
+            <p class="request-unavailable-text">有給休暇申請の対象外です。必要な場合は管理者に相談してください。</p>
+          </div>
+
+          <!-- 休日出勤申請の対象の人だけに表示（対象かどうかはサーバーが判定。申請もサーバー側で確認） -->
+          <div class="card link-card" id="holidayWorkCard" hidden>
+            <h2 class="card-title">休日出勤申請</h2>
+            <p>休日に出勤する予定がある場合は、事前に申請してください。</p>
+            <ul class="mini-list" id="holidayWorkMiniList"></ul>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenHolidayWork">休日出勤を申請する</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenHolidayWorkHistory">申請状況を見る</button>
+            </div>
+          </div>
+
+          <!-- 休日出勤申請を使えないときの表示（対象外・準備中・読み込みエラー。理由は各申請の読み込み結果） -->
+          <div class="card link-card request-unavailable" id="holidayWorkCardOff" data-for="holidayWorkCard" hidden>
+            <h2 class="card-title">休日出勤申請</h2>
+            <p class="request-unavailable-text">休日出勤申請の対象外です。必要な場合は管理者に相談してください。</p>
+          </div>
+
+          <!-- 稟議申請：在籍中のスタッフ全員（申請できるかはサーバーが判定。承認・却下は管理者画面から） -->
+          <div class="card link-card" id="ringiCard" hidden>
+            <h2 class="card-title">稟議申請</h2>
+            <p>備品の購入や支出の前に申請してください。概算で承認された申請は、金額が決まったら確定金額を入力します。</p>
+            <ul class="mini-list" id="ringiMiniList"></ul>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenRingi">稟議申請</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenRingiHistory">申請状況を見る</button>
+            </div>
+          </div>
+
+          <!-- 稟議申請を使えないときの表示（対象外・準備中・読み込みエラー。理由は各申請の読み込み結果） -->
+          <div class="card link-card request-unavailable" id="ringiCardOff" data-for="ringiCard" hidden>
+            <h2 class="card-title">稟議申請</h2>
+            <p class="request-unavailable-text">稟議申請を使えません。管理者に確認してください。</p>
+          </div>
+      </section>
+      <div class="form-actions request-menu-foot">
+        <button type="button" class="btn btn-ghost" id="btnRequestsHomeBottom">ホームへ戻る</button>
       </div>
     </main>
 

@@ -14,6 +14,14 @@ function loadPlaywright() {
 }
 const playwright = loadPlaywright();
 const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
+// ホームの「各種申請」から申請メニューを開く（残業・有給・休日出勤・稟議のカードはこの画面にある）
+const toRequests = async (p) => {
+  if (await p.locator('#requestView').isHidden()) {
+    await p.click('#btnOpenRequests');
+    await p.waitForSelector('#requestView:not([hidden])');
+  }
+};
+
 
 test('段階3の画面（有給休暇申請・管理者の承認・有給のバッジ）', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas, calls } = createServer();
@@ -52,6 +60,7 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
     await t.test('対象外・空欄の人には有給のカードを出さない。シフトのカードは誰にも出さない', async () => {
       const tanaka = await open('tanaka@example.com');
       await idle(tanaka);
+      await toRequests(tanaka);
       assert.equal(await tanaka.locator('#paidLeaveCard').isHidden(), true);
       assert.equal(await tanaka.locator('#shiftCard').isHidden(), true);
       await tanaka.close();
@@ -59,12 +68,15 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
 
     await t.test('シフト管理を使わない：シフトのカード・シフトの表示は出さない', async () => {
       sato = await open('sato@example.com');
+      await toRequests(sato);
       await sato.waitForSelector('#paidLeaveCard:not([hidden])');
       assert.equal(await sato.locator('#shiftCard').isHidden(), true);
     });
 
     await t.test('有給の申請：シフトがなくても申請できる。1日有給・午前半休（事後申請）→ カードに承認待ち → 取り下げ', async () => {
+      await toRequests(sato);
       assert.deepEqual(await sato.locator('#paidLeaveCard button').allInnerTexts(), ['有給を申請する', '申請状況を見る']);
+      await toRequests(sato);
       await sato.click('#btnOpenPaidLeave');
       await sato.waitForSelector('#plFormModal:not([hidden])');
       assert.equal(await sato.inputValue('#plApplicant'), '佐藤 花子（E002）');
@@ -79,6 +91,7 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
       await sato.waitForSelector('#plFormModal', { state: 'hidden' });
       assert.match(await lastToast(sato), /有給を申請しました（2026-10-07・1日有給）/);
       // 事後申請（今の期間の過去日）
+      await toRequests(sato);
       await sato.click('#btnOpenPaidLeave');
       await sato.fill('#plDate', '2026-10-01');
       await sato.dispatchEvent('#plDate', 'change');
@@ -88,6 +101,7 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
       await sato.click('#btnSubmitPaidLeave');
       await sato.waitForSelector('#plFormModal', { state: 'hidden' });
       await sato.waitForFunction(() => /10\/7[\s\S]*承認待ち/.test(document.getElementById('paidLeaveMiniList').innerText));
+      await toRequests(sato);
       await sato.click('#btnOpenPaidLeaveHistory');
       await sato.waitForSelector('#paidLeaveModal:not([hidden])');
       const c = card(sato, 'plActiveList', '10/1');
@@ -141,7 +155,9 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
     await t.test('承認済みは［取消申請］（取消理由は必須）→ 取消申請中', async () => {
       await post('/__test/login', { email: 'sato@example.com' });
       await sato.reload();
+      await toRequests(sato);
       await sato.waitForSelector('#paidLeaveCard:not([hidden])');
+      await toRequests(sato);
       await sato.click('#btnOpenPaidLeaveHistory');
       const c = card(sato, 'plActiveList', '10/7');
       await c.waitFor();
@@ -158,7 +174,9 @@ test('段階3の画面（有給休暇申請・管理者の承認・有給のバ�
 
     await t.test('他の人の画面には佐藤さんの有給が出ない。管理者用の関数を呼んでいない。JavaScript のエラーなし', async () => {
       const s = await open('suzuki@example.com');
+      await toRequests(s);
       await s.waitForSelector('#paidLeaveCard:not([hidden])');
+      await toRequests(s);
       await s.click('#btnOpenPaidLeaveHistory');
       await s.waitForFunction(() => /承認待ち・承認済みの申請はありません/.test(document.getElementById('plActiveList').innerText));
       assert.doesNotMatch(await s.locator('#paidLeaveModal').innerText(), /予定が変わった|通院/);

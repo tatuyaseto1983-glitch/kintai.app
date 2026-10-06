@@ -51,14 +51,22 @@
         // 未登録・対象外・準備中（setupSystem 前）はカードを出さない
         R.data = res.success ? res.data : null;
         $('ringiCard').hidden = true;
+        markChecked(res.message);
         return res;
       }
       R.data = res.data;
       $('ringiCard').hidden = false;
+      markChecked('');
       fillExpenseTypes();
       render();
       return res;
     });
+  }
+
+  /** 読み込みが終わった印と、使えないときの理由（各種申請の画面が「使えない理由」のカードに出す） */
+  function markChecked(reason) {
+    $('ringiCard').setAttribute('data-reason', reason || '');
+    $('ringiCard').setAttribute('data-checked', '1');
   }
 
   function fillExpenseTypes() {

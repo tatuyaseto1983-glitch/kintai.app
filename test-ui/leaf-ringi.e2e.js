@@ -13,6 +13,14 @@ function loadPlaywright() {
 }
 const playwright = loadPlaywright();
 const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
+// ホームの「各種申請」から申請メニューを開く（残業・有給・休日出勤・稟議のカードはこの画面にある）
+const toRequests = async (p) => {
+  if (await p.locator('#requestView').isHidden()) {
+    await p.click('#btnOpenRequests');
+    await p.waitForSelector('#requestView:not([hidden])');
+  }
+};
+
 
 test('稟議申請の画面', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas, calls } = createServer();
@@ -41,7 +49,9 @@ test('稟議申請の画面', { skip: !playwright && 'Playwright がないため
     let sato;
     await t.test('スタッフ：［稟議申請］→ 申請者・申請日・メールは自動表示（入力させない）→ 入力チェック → 申請', async () => {
       sato = await open('sato@example.com');
+      await toRequests(sato);
       await sato.waitForSelector('#ringiCard:not([hidden])');
+      await toRequests(sato);
       await sato.click('#btnOpenRingi');
       await sato.waitForSelector('#ringiFormModal:not([hidden])');
       assert.equal(await sato.inputValue('#ringiApplicant'), '佐藤 花子（E002）');
@@ -72,6 +82,7 @@ test('稟議申請の画面', { skip: !playwright && 'Playwright がないため
     });
 
     await t.test('スタッフ：申請状況の一覧（稟議ID・申請日・申請者名・購入品名・申請金額・確度・申請状態）と詳細。承認ボタンはない', async () => {
+      await toRequests(sato);
       await sato.click('#btnOpenRingiHistory');
       const card = await sato.locator('#ringiList .ringi-card').first().innerText();
       assert.match(card, /ショールーム用チェア[\s\S]*申請中[\s\S]*RG-20261006100000-E002[\s\S]*10\/6[\s\S]*佐藤 花子[\s\S]*120,000円（概算）/);
@@ -102,7 +113,9 @@ test('稟議申請の画面', { skip: !playwright && 'Playwright がないため
     await t.test('スタッフ：概算の確定金額を入力（申請金額以下 → 承認済）→ 訂正で超過（→ 再承認待ち）', async () => {
       await post('/__test/login', { email: 'sato@example.com' }); // テスト用サーバーのログインは1つなので、開き直す前に切り替える
       await sato.reload();
+      await toRequests(sato);
       await sato.waitForSelector('#ringiCard:not([hidden])');
+      await toRequests(sato);
       await sato.click('#btnOpenRingiHistory');
       await sato.locator('#ringiList .js-ringi-detail', { hasText: '確定金額を入力' }).click();
       await sato.waitForSelector('#ringiFinalSection:not([hidden])');
@@ -141,7 +154,9 @@ test('稟議申請の画面', { skip: !playwright && 'Playwright がないため
       assert.equal(ringiRow()['申請状態'], '再承認済');
       await post('/__test/login', { email: 'sato@example.com' }); // テスト用サーバーのログインは1つなので、開き直す前に切り替える
       await sato.reload();
+      await toRequests(sato);
       await sato.waitForSelector('#ringiCard:not([hidden])');
+      await toRequests(sato);
       await sato.click('#btnOpenRingiHistory');
       await sato.locator('#ringiList .js-ringi-detail').first().click();
       await sato.waitForSelector('#ringiDetailModal:not([hidden])');

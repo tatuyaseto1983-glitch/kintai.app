@@ -983,11 +983,13 @@
    */
   function showView(view) {
     if (state.busy) return;
-    state.view = view === 'admin' || view === 'reports' ? view : 'staff';
+    state.view = view === 'admin' || view === 'reports' || view === 'requests' ? view : 'staff';
     $('staffView').hidden = state.view !== 'staff';
+    $('requestView').hidden = state.view !== 'requests';
     $('adminView').hidden = state.view !== 'admin';
     $('reportView').hidden = state.view !== 'reports';
-    $('brandSub').textContent = state.view === 'admin' ? '勤怠管理｜管理者画面' : state.view === 'reports' ? '勤怠管理｜日報' : '勤怠管理';
+    $('brandSub').textContent = state.view === 'admin' ? '勤怠管理｜管理者画面' : state.view === 'reports' ? '勤怠管理｜日報'
+      : state.view === 'requests' ? '勤怠管理｜各種申請' : '勤怠管理';
     renderViewSwitch();
     try {
       if (window.google && google.script && google.script.history) {
@@ -998,12 +1000,62 @@
     if (state.view === 'admin' && window.LeafAdmin) window.LeafAdmin.open();
     // 日報画面は、開く内容（一覧・詳細・入力）を LeafReports が決めてから showView('reports') を呼ぶ
     if (state.view === 'staff' && state.user) refresh(['today', 'month', 'staffStatus', 'flex']); // 管理者が承認した結果なども反映
+    if (state.view === 'requests') reloadRequests(); // 管理者が承認・却下した結果を反映（各申請の読み込みは今までと同じ関数）
   }
 
   /** 管理者画面ボタンは admin の人だけに表示する（表示は目安。権限の確認は必ずサーバーで行う） */
   function renderOvertimeCard() {
     // 残業申請は固定勤務の人だけ（フレックスは対象外。サーバー側でも申請を受け付けない）
     $('overtimeCard').hidden = !(state.user && state.user.workType === '固定勤務');
+    if (state.user) $('overtimeCard').setAttribute('data-checked', '1'); // 各種申請の画面で「使えない理由」を出してよい
+  }
+
+  // ============================================================ 各種申請（申請メニュー）
+
+  /**
+   * 各種申請の4枚（残業・有給休暇・休日出勤・稟議）。カードを出すかどうかは今までどおり各申請の読み込みが決める。
+   * 読み込みが終わってもカードが隠れたまま（対象外・準備中・エラー）のときは、代わりに「使えない理由」のカードを出す
+   * （何も出ないと、なぜ申請できないのか分からないため）。理由はカードの data-reason（各申請の読み込み結果のメッセージ）。
+   */
+  var REQUEST_CARDS = ['overtimeCard', 'paidLeaveCard', 'holidayWorkCard', 'ringiCard'];
+  var REQUEST_MINI_LISTS = ['overtimeMiniList', 'paidLeaveMiniList', 'holidayWorkMiniList', 'ringiMiniList'];
+
+  function syncRequestCards() {
+    REQUEST_CARDS.forEach(function (id) {
+      var card = $(id);
+      var off = $(id + 'Off');
+      var checked = card.getAttribute('data-checked') === '1';
+      off.hidden = !(checked && card.hidden);
+      var reason = card.getAttribute('data-reason');
+      if (reason) off.querySelector('.request-unavailable-text').textContent = reason;
+    });
+    renderRequestsSummary();
+  }
+
+  /** ホームの「各種申請」カード：処理待ち（承認待ち・申請中・再承認待ちなど）の自分の申請の件数 */
+  function renderRequestsSummary() {
+    var waiting = 0;
+    REQUEST_MINI_LISTS.forEach(function (id) {
+      var card = $(id).closest('.card');
+      if (card && !card.hidden) waiting += $(id).querySelectorAll('.badge-warn').length;
+    });
+    $('requestsSummary').textContent = waiting ? '処理待ちの申請 ' + waiting + '件' : '';
+  }
+
+  function watchRequestCards() {
+    if (!window.MutationObserver) return;
+    var observer = new MutationObserver(syncRequestCards);
+    REQUEST_CARDS.forEach(function (id) { observer.observe($(id), { attributes: true, attributeFilter: ['hidden', 'data-checked', 'data-reason'] }); });
+    REQUEST_MINI_LISTS.forEach(function (id) { observer.observe($(id), { childList: true, subtree: true }); });
+  }
+
+  /** 各種申請を開いたときに、各申請の状況を取り直す（読み込みの関数は各申請のもの） */
+  function reloadRequests() {
+    if (state.user) refresh(['overtime']);
+    ['LeafPaidLeave', 'LeafHolidayWork', 'LeafRingi'].forEach(function (name) {
+      if (window[name] && window[name].reload) window[name].reload();
+    });
+    syncRequestCards();
   }
 
   function renderViewSwitch() {
@@ -1054,6 +1106,10 @@
     });
     $('btnRetryLogin').addEventListener('click', function () { refresh(); });
     $('btnToAdmin').addEventListener('click', function () { showView('admin'); });
+    $('btnOpenRequests').addEventListener('click', function () { showView('requests'); });
+    $('btnRequestsHome').addEventListener('click', function () { showView('staff'); });
+    $('btnRequestsHomeBottom').addEventListener('click', function () { showView('staff'); });
+    watchRequestCards();
     $('btnToStaff').addEventListener('click', function () { showView('staff'); });
     var goStaff = document.querySelectorAll('[data-go-staff]');
     for (var k = 0; k < goStaff.length; k++) goStaff[k].addEventListener('click', function () { showView('staff'); });
@@ -1103,6 +1159,7 @@
       // URL に ?view=admin が付いていたら管理者画面から開く（管理者でなければサーバーが拒否する）
       var initial = document.body.getAttribute('data-initial-view');
       if (initial === 'admin' && state.user) showView('admin');
+      if (initial === 'requests' && state.user) showView('requests'); // 各種申請の画面で再読み込みしたとき
       if (initial === 'reports' && state.user && window.LeafReports) window.LeafReports.openList();
     }, function (error) {
       $('loadingScreen').hidden = true;

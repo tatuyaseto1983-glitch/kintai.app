@@ -361,6 +361,15 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--brand-focus
 .hw-range { font-size: 20px; font-weight: 600; color: var(--brand-heading); font-variant-numeric: tabular-nums; padding-top: 6px; }
 .hw-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .hw-section { padding: 16px 0; border-top: 1px solid var(--line); }
+/* 各種申請（申請メニュー）：残業・有給休暇・休日出勤・稟議のカード。ホームのカードと同じデザイン */
+.request-menu-head { margin-bottom: 16px; }
+.request-menu { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; align-items: stretch; }
+.request-menu .link-card { margin: 0; }
+.request-unavailable { background: var(--brand-bg); border-style: dashed; }
+.request-unavailable .request-unavailable-text { color: var(--text-sub); font-size: 13px; }
+.request-menu-foot { margin-top: 16px; }
+.requests-summary { font-size: 13px; font-weight: 600; color: var(--brand-heading); min-height: 0; }
+.requests-summary:empty { display: none; }
 /* 稟議申請 */
 .choice-row { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .choice-row .control-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; }

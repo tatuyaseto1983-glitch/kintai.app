@@ -13,6 +13,14 @@ function loadPlaywright() {
 }
 const playwright = loadPlaywright();
 const SHOT_DIR = process.env.SCREENSHOT_DIR || '';
+// ホームの「各種申請」から申請メニューを開く（残業・有給・休日出勤・稟議のカードはこの画面にある）
+const toRequests = async (p) => {
+  if (await p.locator('#requestView').isHidden()) {
+    await p.click('#btnOpenRequests');
+    await p.waitForSelector('#requestView:not([hidden])');
+  }
+};
+
 
 test('休日出勤申請の画面（新規申請・申請中／承認済み・過去の申請・取り下げ／取消申請を分ける）', { skip: !playwright && 'Playwright がないため省略' }, async (t) => {
   const { server, gas } = createServer();
@@ -50,6 +58,7 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
         const p = await open(email);
         await p.waitForTimeout(400);
         await idle(p);
+        await toRequests(p);
         assert.equal(await p.locator('#holidayWorkCard').isHidden(), true, email);
         await p.close();
       }
@@ -58,14 +67,18 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
     let sato;
     const hubCard = (p, area, text) => p.locator('#' + area + ' .hw-card', { hasText: text });
     const openHub = async (p) => {
+      await toRequests(p);
       await p.click('#btnOpenHolidayWorkHistory');
       await p.waitForSelector('#holidayWorkModal:not([hidden])');
     };
 
     await t.test('新規申請フォーム：カードの［休日出勤を申請する］から開く。取消の項目は出さない。申請者は表示のみ・予定時間帯／予定拘束時間・振替休日予定日の条件', async () => {
       sato = await open('sato@example.com');
+      await toRequests(sato);
       await sato.waitForSelector('#holidayWorkCard:not([hidden])');
+      await toRequests(sato);
       assert.deepEqual(await sato.locator('#holidayWorkCard button').allInnerTexts(), ['休日出勤を申請する', '申請状況を見る']);
+      await toRequests(sato);
       await sato.click('#btnOpenHolidayWork');
       await sato.waitForSelector('#hwFormModal:not([hidden])');
       assert.equal(await sato.innerText('#hwFormTitle'), '休日出勤を申請する');
@@ -181,6 +194,7 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
     await t.test('［取消申請］（承認済み）：専用の取消画面（休日出勤日・予定時間帯・元の理由・取消理由は必須）→ 取消申請中 → 管理者が承認 → 過去の申請', async () => {
       await post('/__test/login', { email: 'sato@example.com' });
       await sato.reload();
+      await toRequests(sato);
       await sato.waitForSelector('#holidayWorkCard:not([hidden])');
       await openHub(sato);
       const card = hubCard(sato, 'hwActiveList', '10/10');
@@ -216,6 +230,7 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
 
       await post('/__test/login', { email: 'sato@example.com' });
       await sato.reload();
+      await toRequests(sato);
       await sato.waitForSelector('#holidayWorkCard:not([hidden])');
       await openHub(sato);
       await sato.waitForFunction(() => /10\/10[\s\S]*取消済み/.test(document.getElementById('hwPastList').innerText));
@@ -228,7 +243,9 @@ test('休日出勤申請の画面（新規申請・申請中／承認済み・�
       await post('/__test/login', { email: 'suzuki@example.com' });
       const p = await phone.newPage();
       await p.goto(base + '/');
+      await toRequests(p);
       await p.waitForSelector('#holidayWorkCard:not([hidden])');
+      await toRequests(p);
       await p.click('#btnOpenHolidayWorkHistory');
       assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, '申請状況');
       await p.click('#btnHwNew');
