@@ -1,5 +1,6 @@
 'use strict';
-// Google Chat 通知（第1段階：管理者用スペースへの Incoming Webhook）と、設定「通知方法」の切り替えのテスト。
+// 管理者への Google Chat 通知（管理者用スペースへの Incoming Webhook）のテスト。新規申請・稟議の再承認待ちだけ。
+// 通知ルール（新規申請・再承認待ち→管理者へ Chat、結果→本人へメール）の全体もここで確かめる。
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -39,9 +40,9 @@ const overtime = { targetDate: '2026-10-07', plannedStart: '18:30', plannedEnd: 
 const holiday = { workDate: '2026-10-11', plannedStart: '09:00', plannedEnd: '17:00', reason: '立ち会い', content: '配筋検査', compDayType: '未定', compDayDate: '', note: '', site: '' };
 const ringi = { itemName: 'ダイニングチェア', quantity: '2', expenseType: '備品購入', purpose: '展示替え', certainty: '概算', amount: '100000', plannedDate: '2026-10-20', attachmentUrl: '' };
 
-test('初期値は「通知方法＝Google Chat」：新規申請で管理者用スペースへ1件（申請種別・申請者・申請日時・内容・状態）。メールは送らない', () => {
+test('新規申請で管理者用スペースへ1件（申請種別・申請者・申請日時・内容・状態）。メールは送らない', () => {
   const gas = office();
-  assert.equal(gas.main.getSheetByName('設定').data.find((r) => r[0] === '通知方法')[1], 'Google Chat');
+  assert.equal(gas.main.getSheetByName('設定').data.find((r) => r[0] === 'Google Chat通知')[1], '送信する');
   const id = ok(as(gas, STAFF).submitOvertimeRequest(overtime)).data.requestId;
   assert.equal(gas.fetches.length, 1);
   const f = gas.fetches[0];
@@ -53,7 +54,7 @@ test('初期値は「通知方法＝Google Chat」：新規申請で管理者用
     '申請種別：残業申請', '申請者：中津井祐貴（E005）', '申請日時：2026-10-06 10:00:00', '内容：10/7 18:30〜20:00', '状態：承認待ち',
     '申請ID：' + id, '対象日：2026-10-07', '予定：18:30〜20:00（予定残業 01:30）', '申請理由：現場対応',
     '管理者画面で承認・却下してください', '<https://script.google.com/a/macros/example.com/s/TEST/exec?view=admin|管理者画面を開く>'].join('\n'));
-  assert.equal(gas.mails.length, 0, 'Google Chat のときはメールを送らない（本人への通知は第2段階）');
+  assert.equal(gas.mails.length, 0, '申請時はメールを送らない');
 });
 
 test('4種類とも新規申請で Chat に通知（状態：承認待ち／稟議は申請中）。承認・却下では Chat に送らない（管理者向けだけ）', () => {
@@ -133,35 +134,52 @@ test('申請がエラーになったときは Chat に送らない', () => {
   assert.equal(gas.fetches.length, 0);
 });
 
-test('通知方法の切り替え：メール（Chatなし）／両方（Chat＋メール）／通知なし（何も送らない）／正しくない値（送らずにログ）', () => {
+test('通知ルールの全体：新規申請・再承認待ち→管理者へ Chat、承認・却下・再承認・再承認却下→本人へメール（それ以外は送らない）', () => {
   const gas = office();
-  setSetting(gas, '通知方法', 'メール');
-  ok(as(gas, STAFF).submitOvertimeRequest(overtime));
-  assert.deepEqual([gas.fetches.length, gas.mails.map((m) => m.to).sort()], [0, [BOSS, MANAGER, STAFF].sort()]);
-  gas.clearMails();
-  setSetting(gas, '通知方法', '両方');
-  const id = ok(as(gas, STAFF).submitRingiRequest(ringi)).data.ringiId;
-  assert.deepEqual([gas.fetches.length, gas.mails.length], [1, 3]);
-  ok(as(gas, MANAGER).approveRingiRequest(id));
-  assert.deepEqual([gas.fetches.length, gas.mails.length], [1, 4], '承認の結果は本人へのメールだけ');
-  gas.clearMails(); gas.clearFetches();
-  setSetting(gas, '通知方法', '通知なし');
-  ok(as(gas, STAFF).submitHolidayWorkRequest(holiday));
-  assert.deepEqual([gas.fetches.length, gas.mails.length], [0, 0]);
-  setSetting(gas, '通知方法', 'Slack');
-  ok(as(gas, STAFF).submitPaidLeaveRequest({ date: '2026-10-09', leaveType: '1日有給', reason: '私用' }));
-  assert.deepEqual([gas.fetches.length, gas.mails.length], [0, 0]);
-  assert.ok(errors(gas).some((l) => /設定「通知方法」は「メール」「Google Chat」「両方」「通知なし」のどれか/.test(l)));
-  // 「両方」でも「メール通知＝送信しない」ならメールは止まる（Chat は送る）
-  setSetting(gas, '通知方法', '両方');
+  const log = [];
+  const step = (label, fn) => { gas.clearFetches(); gas.clearMails(); fn(); log.push([label, gas.fetches.length, gas.mails.map((m) => m.to).join(',')]); };
+  let ot; let pl; let hw; let rg; let rg2;
+  step('残業 申請', () => { ot = ok(as(gas, STAFF).submitOvertimeRequest(overtime)).data.requestId; });
+  step('有給 申請', () => { pl = ok(as(gas, STAFF).submitPaidLeaveRequest({ date: '2026-10-08', leaveType: '1日有給', reason: '私用' })).data.requestId; });
+  step('休日出勤 申請', () => { hw = ok(as(gas, STAFF).submitHolidayWorkRequest(holiday)).data.requestId; });
+  step('稟議 申請', () => { rg = ok(as(gas, STAFF).submitRingiRequest(ringi)).data.ringiId; });
+  step('残業 承認', () => ok(as(gas, MANAGER).approveOvertimeRequest(ot)));
+  step('有給 却下', () => ok(as(gas, MANAGER).rejectPaidLeaveRequest(pl, '繁忙期')));
+  step('休日出勤 承認', () => ok(as(gas, MANAGER).approveHolidayWorkRequest(hw)));
+  step('稟議 承認', () => ok(as(gas, MANAGER).approveRingiRequest(rg)));
+  step('稟議 確定金額（以下）', () => ok(as(gas, STAFF).enterRingiFinalAmount(rg, '90000')));
+  step('稟議 再承認待ち', () => ok(as(gas, STAFF).enterRingiFinalAmount(rg, '120000')));
+  step('稟議 再承認', () => ok(as(gas, MANAGER).reapproveRingiRequest(rg)));
+  step('稟議2 申請', () => { rg2 = ok(as(gas, STAFF).submitRingiRequest(ringi)).data.ringiId; });
+  step('稟議2 承認', () => ok(as(gas, MANAGER).approveRingiRequest(rg2)));
+  step('稟議2 再承認待ち', () => ok(as(gas, STAFF).enterRingiFinalAmount(rg2, '100001')));
+  step('稟議2 再承認却下', () => ok(as(gas, MANAGER).rejectRingiReapproval(rg2, '予算外')));
+  assert.deepEqual(log, [
+    ['残業 申請', 1, ''], ['有給 申請', 1, ''], ['休日出勤 申請', 1, ''], ['稟議 申請', 1, ''],
+    ['残業 承認', 0, STAFF], ['有給 却下', 0, STAFF], ['休日出勤 承認', 0, STAFF], ['稟議 承認', 0, STAFF],
+    ['稟議 確定金額（以下）', 0, ''], ['稟議 再承認待ち', 1, ''], ['稟議 再承認', 0, STAFF],
+    ['稟議2 申請', 1, ''], ['稟議2 承認', 0, STAFF], ['稟議2 再承認待ち', 1, ''], ['稟議2 再承認却下', 0, STAFF],
+  ]);
+});
+
+test('設定のスイッチ：「Google Chat通知＝送信しない」なら Chat を止める（結果メールは送る）。「メール通知＝送信しない」なら結果メールだけ止める', () => {
+  const gas = office();
+  setSetting(gas, 'Google Chat通知', '送信しない');
+  const id = ok(as(gas, STAFF).submitOvertimeRequest(overtime)).data.requestId;
+  assert.equal(gas.fetches.length, 0);
+  ok(as(gas, MANAGER).approveOvertimeRequest(id));
+  assert.deepEqual(gas.mails.map((m) => m.to), [STAFF]);
+  setSetting(gas, 'Google Chat通知', '送信する');
   setSetting(gas, 'メール通知', '送信しない');
-  ok(as(gas, STAFF).submitOvertimeRequest({ ...overtime, targetDate: '2026-10-09' }));
+  gas.clearMails();
+  const id2 = ok(as(gas, STAFF).submitOvertimeRequest({ ...overtime, targetDate: '2026-10-09' })).data.requestId;
+  ok(as(gas, MANAGER).rejectOvertimeRequest(id2, '不要'));
   assert.deepEqual([gas.fetches.length, gas.mails.length], [1, 0]);
 });
 
-test('sendTestChatNotification（エディタから実行）：管理者だけ。通知方法に関係なく管理者用スペースへ1件', () => {
+test('sendTestChatNotification（エディタから実行）：管理者だけ。「Google Chat通知」の設定に関係なく管理者用スペースへ1件', () => {
   const gas = office();
-  setSetting(gas, '通知方法', '通知なし');
+  setSetting(gas, 'Google Chat通知', '送信しない');
   const r = ok(as(gas, MANAGER).sendTestChatNotification());
   assert.match(r.message, /管理者用スペースにテストメッセージを送りました/);
   assert.equal(gas.fetches.length, 1);
@@ -169,7 +187,8 @@ test('sendTestChatNotification（エディタから実行）：管理者だけ�
   gas.clearFetches();
   const ng = as(gas, STAFF).sendTestChatNotification();
   assert.deepEqual([ng.success, /管理者権限がありません/.test(ng.message), gas.fetches.length], [false, true, 0]);
-  // メールのテストも通知方法に関係なく送る
+  // メールのテストも設定に関係なく送る
+  setSetting(gas, 'メール通知', '送信しない');
   ok(as(gas, MANAGER).sendTestNotification());
   assert.deepEqual(gas.mails.map((m) => m.to), [MANAGER]);
 });

@@ -139,7 +139,7 @@ function submitRingiRequest_(input) {
     '最終更新日時': now.timestamp,
   });
   appendRingiHistory_(record, RINGI_ACTIONS.SUBMIT, staff, { statusBefore: '', statusAfter: RINGI_STATUS.PENDING, note: '申請金額 ' + yen_(plan.amount) + '（' + plan.certainty + '）' });
-  // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
+  // 保存の後で管理者への Google Chat 通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
   notifyRequestSubmitted_('稟議申請', staff, toPlainText_(record['稟議ID']), plan.itemName + '・' + yen_(plan.amount), ringiMailDetails_(record), record);
   return { message: '稟議を申請しました（' + toPlainText_(record['稟議ID']) + '）。管理者の承認をお待ちください', data: decorateRingiView_(toRingiView_(record), record, staff) };
 }
@@ -263,8 +263,8 @@ function enterRingiFinalAmount_(ringiId, amountInput, noteInput) {
     statusBefore: status, statusAfter: newStatus, amountBefore: before, amountAfter: amount,
     note: ['差額 ' + signedYen_(diff), needsReapproval ? '申請金額を超えたため再承認待ち' : '申請金額以下のため承認済', note].filter(function (x) { return x; }).join('・'),
   });
-  // 申請金額を超えて「再承認待ち」になったとき（承認済から変わったときだけ）は、管理者と申請者本人へメールで通知（予約）
-  if (needsReapproval && status !== RINGI_STATUS.REAPPROVAL_PENDING) notifyRingiReapprovalNeeded_(record, staff, ringiMailDetails_(record));
+  // 申請金額を超えて「再承認待ち」になったとき（承認済から変わったときだけ）は、管理者へ Google Chat で通知（予約）
+  if (needsReapproval && status !== RINGI_STATUS.REAPPROVAL_PENDING) notifyRingiReapprovalNeeded_(record, staff);
   const verb = before === null ? '入力' : '訂正';
   return {
     message: '確定金額を' + verb + 'しました（' + yen_(amount) + '・差額 ' + signedYen_(diff) + '）。' +
@@ -435,7 +435,7 @@ function buildAdminRingi_() {
     pendingCount: pending.length, reapprovalCount: reapproval.length };
 }
 
-/** メール通知に書く稟議の内容（確定金額があれば差額も） */
+/** 通知に書く稟議の内容（確定金額があれば差額も） */
 function ringiMailDetails_(r) {
   const rows = [['購入品名', toPlainText_(r['購入品名'])], ['購入数量', toPlainText_(r['購入数量'])], ['経費種別', toPlainText_(r['経費種別'])],
     ['支出理由・目的', toPlainText_(r['支出理由・目的'])], ['金額の確度', toPlainText_(r['金額の確度'])], ['申請金額（税込）', yen_(r['申請金額'])],

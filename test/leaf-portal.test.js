@@ -27,7 +27,7 @@ test('setupSystem：7シートを作り、2回目以降は何も壊さない', (
   const names = gas.main.getSheets().map((s) => s.getName());
   for (const n of ['スタッフマスタ', '勤怠記録', '中断履歴', '打刻修正申請', '残業申請', '日報', '設定']) assert.ok(names.includes(n), n);
   assert.ok(names.includes('シート1'), '最初からあるシートも削除しない');
-  assert.equal(gas.main.rows('設定').length, 23, '段階3の5項目と段階5の日報_未提出判定開始日、自動休憩_適用開始_有効日、通知方法・メール通知の3項目を含む');
+  assert.equal(gas.main.rows('設定').length, 23, '段階3の5項目と段階5の日報_未提出判定開始日、自動休憩_適用開始_有効日、Google Chat通知・メール通知の3項目を含む');
   assert.equal(gas.main.getSpreadsheetTimeZone(), 'Asia/Tokyo');
 
   // 利用者が設定値を変更し、データも入れた後にもう一度実行

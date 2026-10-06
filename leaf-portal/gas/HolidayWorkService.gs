@@ -190,7 +190,7 @@ function submitHolidayWorkRequest_(input) {
   const extra = { '現場': plan.site };
   if (useShift) extra['申請時シフト区分'] = shiftType;
   updateRecord_(SHEET_NAMES.HOLIDAY_WORK, record, onlyExistingColumns_(SHEET_NAMES.HOLIDAY_WORK, extra));
-  // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
+  // 保存の後で管理者への Google Chat 通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
   notifyRequestSubmitted_('休日出勤申請', staff, toPlainText_(record['申請ID']),
     shortDateLabel_(plan.workDate) + ' ' + minutesToClock_(plan.start) + '〜' + minutesToClock_(plan.end), holidayWorkMailDetails_(record), record);
   if (!useShift) return { message: '休日出勤を申請しました（' + plan.workDate + '）。管理者の承認をお待ちください', data: toHolidayWorkView_(record) };
@@ -285,7 +285,7 @@ function decideHolidayWork_(requestId, action, reason) {
   return { message: message, data: toHolidayWorkView_(record) };
 }
 
-/** メール通知に書く休日出勤申請の内容 */
+/** 通知に書く休日出勤申請の内容 */
 function holidayWorkMailDetails_(r) {
   const comp = toPlainText_(r['振替休日区分']) + (toDateKey_(r['振替休日予定日']) ? '（' + toDateKey_(r['振替休日予定日']) + '）' : '');
   return [['休日出勤日', toDateKey_(r['休日出勤日'])], ['予定', toPlainText_(r['開始予定時刻']) + '〜' + toPlainText_(r['終了予定時刻'])],

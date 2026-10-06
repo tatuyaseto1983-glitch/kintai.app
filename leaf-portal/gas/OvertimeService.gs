@@ -82,7 +82,7 @@ function submitOvertimeRequest_(request) {
     'ステータス': REQUEST_STATUS.PENDING,
   });
   refreshAttendanceAfterOvertimeChange_(staff.employeeId, targetDate);
-  // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
+  // 保存の後で管理者への Google Chat 通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
   notifyRequestSubmitted_('残業申請', staff, toPlainText_(record['申請ID']), shortDateLabel_(targetDate) + ' ' + minutesToClock_(start) + '〜' + minutesToClock_(end),
     overtimeMailDetails_(record), record);
   return { message: '残業申請を提出しました（' + targetDate + '）。管理者の承認をお待ちください', data: toOvertimeView_(record) };
@@ -147,7 +147,7 @@ function decideOvertimeRequest_(requestId, newStatus, reason) {
   return { message: '残業申請を「' + newStatus + '」にしました', data: toOvertimeView_(request) };
 }
 
-/** メール通知に書く残業申請の内容 */
+/** 通知に書く残業申請の内容 */
 function overtimeMailDetails_(r) {
   return [['対象日', toDateKey_(r['対象日'])], ['予定', toPlainText_(r['予定開始']) + '〜' + toPlainText_(r['予定終了']) + '（予定残業 ' + toPlainText_(r['予定残業時間']) + '）'],
     ['申請理由', toPlainText_(r['申請理由'])]];

@@ -159,7 +159,7 @@ function submitPaidLeaveRequest_(input) {
     'ステータス': HOLIDAY_WORK_STATUS.PENDING,
     '更新日時': now.timestamp,
   });
-  // 保存の後でメール通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
+  // 保存の後で管理者への Google Chat 通知を予約（送るのは runApi_ の最後。失敗しても申請は取り消さない）
   notifyRequestSubmitted_('有給休暇申請', staff, toPlainText_(record['申請ID']), shortDateLabel_(date) + ' ' + leaveType, paidLeaveMailDetails_(record), record);
   let message = '有給を申請しました（' + date + '・' + leaveType + (late ? '・事後申請' : '') + '）。管理者の承認をお待ちください';
   if (useShift && shiftType !== SHIFT_TYPES.NORMAL) message += '\n※ ' + date + ' は' + shiftType + 'のため、シフトが通常勤務に決まるまで承認されません';
@@ -226,7 +226,7 @@ function decidePaidLeave_(requestId, action, reason) {
   return { message: message + '（' + date + '・' + toPlainText_(record['有給種別']) + '）', data: toPaidLeaveView_(record) };
 }
 
-/** メール通知に書く有給申請の内容 */
+/** 通知に書く有給申請の内容 */
 function paidLeaveMailDetails_(r) {
   return [['対象日', toDateKey_(r['対象日'])], ['有給種別', toPlainText_(r['有給種別'])], ['理由', toPlainText_(r['理由'])],
     ['備考', toPlainText_(r['備考'])], ['事後申請', r['事後申請'] ? 'あり' : '']].filter(function (row) { return row[0] !== '事後申請' || row[1]; });
