@@ -190,6 +190,17 @@
             </div>
           </div>
 
+          <!-- 稟議申請：在籍中のスタッフ全員（申請できるかはサーバーが判定。承認・却下は管理者画面から） -->
+          <div class="card link-card" id="ringiCard" hidden>
+            <h2 class="card-title">稟議申請</h2>
+            <p>備品の購入や支出の前に申請してください。概算で承認された申請は、金額が決まったら確定金額を入力します。</p>
+            <ul class="mini-list" id="ringiMiniList"></ul>
+            <div class="link-card-actions">
+              <button type="button" class="btn btn-outline" id="btnOpenRingi">稟議申請</button>
+              <button type="button" class="btn btn-ghost" id="btnOpenRingiHistory">申請状況を見る</button>
+            </div>
+          </div>
+
           <!-- 自分のシフト（管理者が登録した通常勤務・休日・法定休日）。シフト管理を使うときだけ表示（今は使っていない） -->
           <div class="card link-card" id="shiftCard" hidden>
             <h2 class="card-title">シフト</h2>
@@ -301,6 +312,7 @@
   <!-- ================= 休日出勤申請のフォーム（HolidayWorkView.html） ================= -->
   <?!= includeHtml_('HolidayWorkView') ?>
   <?!= includeHtml_('PaidLeaveView') ?>
+  <?!= includeHtml_('RingiView') ?>
 
   <!-- ================= 1日の詳細・交通費（DetailView.html） ================= -->
   <?!= includeHtml_('DetailView') ?>
@@ -367,6 +379,7 @@
   <?!= includeHtml_('ReportScripts') ?>
   <?!= includeHtml_('HolidayWorkScripts') ?>
   <?!= includeHtml_('PaidLeaveScripts') ?>
+  <?!= includeHtml_('RingiScripts') ?>
   <?!= includeHtml_('DetailScripts') ?>
 </body>
 </html>

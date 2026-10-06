@@ -66,7 +66,8 @@ test('setupSystem：スタッフマスタに日報提出対象（勤怠集計対
   gas.g.setupSystem();
   // 段階3までの形に戻す（新しい列がない状態）
   const cut = (name, cols) => { const s = gas.main.getSheetByName(name); s.data = s.data.map((r) => r.slice(0, s.data[0].length - cols)); };
-  cut('スタッフマスタ', 2); cut('日報', 1); cut('日報_接客', 4); cut('日報_コメント', 5);
+  // スタッフマスタは 日報提出対象・日報確認対象・自己承認可（稟議）の3列
+  cut('スタッフマスタ', 3); cut('日報', 1); cut('日報_接客', 4); cut('日報_コメント', 5);
   const staff = gas.main.getSheetByName('スタッフマスタ');
   const h = staff.data[0];
   const row = (id, target, status) => h.map((c) => ({ '社員ID': id, '氏名': id, 'メールアドレス': id + '@x.jp', '権限': 'staff', '在籍状況': status || '在籍', '勤怠集計対象': target }[c] || ''));
@@ -77,7 +78,7 @@ test('setupSystem：スタッフマスタに日報提出対象（勤怠集計対
   cu.data.push(cu.data[0].map((c) => ({ '接客ID': 'CU-1', '日報ID': 'DR-1', '社員ID': 'E003', '顧客名': '旧データ様', '来場のきっかけ': 'Web検索' }[c] || '')));
   gas.g.clearTableCache_();
   const log = gas.g.setupSystem();
-  assert.match(log, /スタッフマスタ：足りない列を右端に追加しました（日報提出対象、日報確認対象）。日報提出対象の初期値を入れました（対象 2名・対象外 2名/);
+  assert.match(log, /スタッフマスタ：足りない列を右端に追加しました（日報提出対象、日報確認対象、自己承認可）。日報提出対象の初期値を入れました（対象 2名・対象外 2名/);
   assert.match(log, /日報確認対象の初期値を入れました（全員 対象/);
   assert.match(log, /日報_接客：足りない列を右端に追加しました（担当区分、主担当者ID、主担当者名、日付）。既存の接客記録 1件に日付を入れました/);
   assert.match(log, /日報_コメント：足りない列を右端に追加しました（削除、削除者ID、削除者名、削除日時、送信ID）/);

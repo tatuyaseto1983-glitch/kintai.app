@@ -1,0 +1,390 @@
+<script>
+/* ============================================================
+ * RingiScripts.html — 稟議申請の動き（スタッフ画面。詳細・確定金額の画面は管理者画面からも開く）
+ *
+ *   ・申請状況（ringiModal）…… 「新しく申請する」「自分の申請」（一覧：稟議ID・申請日・申請者名・購入品名・申請金額・金額の確度・申請状態）
+ *   ・新規申請（ringiFormModal）… 申請者・申請日・メールは表示だけ（サーバーがログイン中の社員で決める）
+ *   ・詳細（ringiDetailModal）…… 全項目・履歴。概算で承認済・再承認待ちなら確定金額の入力・訂正（本人・管理者）
+ *
+ * ・承認・却下・再承認は管理者画面から（この画面から呼べる関数には入れない）
+ * ・金額・数量は数字だけ（画面でも確認するが、最終的な判定はサーバー）
+ * ・表示する文字はすべて textContent で入れています（HTMLとして解釈しないので安全）
+ * ・処理中は全ボタンを無効化し、連打しても1回だけ送ります
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var App = window.LeafApp;
+  var el = App.el;
+
+  /** 稟議申請の画面から呼んでよいサーバーの関数（承認・却下などの管理者用の関数は入れない） */
+  var RINGI_FUNCTIONS = ['getMyRingiRequests', 'submitRingiRequest', 'getRingiRequestDetail', 'enterRingiFinalAmount'];
+  var STATUS = { PENDING: '申請中', APPROVED: '承認済', REJECTED: '却下', REAPPROVAL_PENDING: '再承認待ち', REAPPROVED: '再承認済' };
+  var MODALS = ['ringiModal', 'ringiFormModal', 'ringiDetailModal'];
+
+  var R = { busy: false, data: null, seq: 0, formFromHub: false, detail: null, detailFrom: '' };
+
+  function $(id) { return document.getElementById(id); }
+  function call(fn, args) { return App.callAllowed(RINGI_FUNCTIONS, fn, args); }
+  function today() { return (R.data && R.data.today) || App.getServerDate() || App.jstDateKey(new Date()); }
+  function yen(n) { return n === null || n === undefined || n === '' ? '—' : Number(n).toLocaleString('ja-JP') + '円'; }
+  function signedYen(n) {
+    if (n === null || n === undefined || n === '') return '—';
+    n = Number(n);
+    return (n > 0 ? '+' : n < 0 ? '-' : '±') + Math.abs(n).toLocaleString('ja-JP') + '円';
+  }
+  function digitsOnly(text) { return /^\d+$/.test(text); }
+
+  function statusBadge(status) {
+    var cls = status === STATUS.PENDING || status === STATUS.REAPPROVAL_PENDING ? 'badge-warn'
+      : status === STATUS.APPROVED || status === STATUS.REAPPROVED ? 'badge-ok' : status === STATUS.REJECTED ? 'badge-ng' : 'badge-notstarted';
+    return el('span', 'badge ' + cls, status || '—');
+  }
+
+  // ============================================================ 取得・表示
+
+  function load() {
+    var seq = ++R.seq;
+    return call('getMyRingiRequests', []).then(function (res) {
+      if (seq !== R.seq) return res;
+      if (!res.success || !res.data || !res.data.eligible) {
+        // 未登録・対象外・準備中（setupSystem 前）はカードを出さない
+        R.data = res.success ? res.data : null;
+        $('ringiCard').hidden = true;
+        return res;
+      }
+      R.data = res.data;
+      $('ringiCard').hidden = false;
+      fillExpenseTypes();
+      render();
+      return res;
+    });
+  }
+
+  function fillExpenseTypes() {
+    var select = $('ringiExpenseType');
+    if (select.options.length > 1) return;
+    R.data.expenseTypes.forEach(function (t) {
+      var o = document.createElement('option');
+      o.value = t;
+      o.textContent = t;
+      select.appendChild(o);
+    });
+  }
+
+  /** 処理中（申請中・再承認待ち・概算で確定金額が未入力の承認済）を上に */
+  function needsAction(r) {
+    return r.status === STATUS.PENDING || r.status === STATUS.REAPPROVAL_PENDING || (r.canEnterFinalAmount && r.finalAmount === null);
+  }
+
+  function render() {
+    var list = (R.data && R.data.requests) || [];
+    var mini = $('ringiMiniList');
+    mini.textContent = '';
+    list.filter(needsAction).slice(0, 3).forEach(function (r) {
+      var li = document.createElement('li');
+      li.appendChild(el('span', '', r.itemName + '　' + yen(r.amount)));
+      li.appendChild(statusBadge(r.status === STATUS.APPROVED && r.finalAmount === null && r.canEnterFinalAmount ? '確定金額の入力待ち' : r.status));
+      mini.appendChild(li);
+    });
+    var box = $('ringiList');
+    box.textContent = '';
+    if (!list.length) { box.appendChild(el('p', 'empty', 'まだ申請はありません')); return; }
+    list.forEach(function (r) { box.appendChild(requestCard(r)); });
+  }
+
+  function requestCard(r) {
+    var card = el('div', 'hw-card ringi-card');
+    card.setAttribute('data-ringi-id', r.ringiId);
+    var head = el('div', 'hw-card-head');
+    head.appendChild(el('span', 'hw-card-date', r.itemName));
+    head.appendChild(statusBadge(r.status));
+    card.appendChild(head);
+    var dl = el('dl', 'hw-card-info');
+    addInfo(dl, '稟議ID', r.ringiId);
+    addInfo(dl, '申請日', App.formatDateShort(r.requestDate));
+    addInfo(dl, '申請者名', r.applicantName);
+    addInfo(dl, '申請金額', yen(r.amount) + '（' + r.certainty + '）');
+    if (r.finalAmount !== null) addInfo(dl, '確定金額', yen(r.finalAmount) + '（差額 ' + signedYen(r.diff) + '）');
+    if (r.status === STATUS.REJECTED && r.rejectReason) addInfo(dl, r.rejectKind === '再承認却下' ? '再承認の却下理由' : '却下理由', r.rejectReason);
+    card.appendChild(dl);
+    if (r.canEnterFinalAmount && r.finalAmount === null) card.appendChild(el('p', 'hw-card-note', '金額が決まったら確定金額を入力してください。'));
+    var actions = el('div', 'hw-actions');
+    actions.appendChild(actionButton(r.canEnterFinalAmount ? (r.finalAmount === null ? '確定金額を入力' : '詳細・確定金額の訂正') : '詳細', 'btn-outline js-ringi-detail',
+      function () { openDetail(r.ringiId, 'hub'); }));
+    card.appendChild(actions);
+    return card;
+  }
+
+  function addInfo(dl, label, value) {
+    dl.appendChild(el('dt', '', label));
+    dl.appendChild(el('dd', '', value === null || value === undefined || value === '' ? '—' : String(value)));
+  }
+
+  function addLink(dl, label, url) {
+    dl.appendChild(el('dt', '', label));
+    var dd = el('dd');
+    if (url) {
+      var a = el('a', '', url);
+      a.href = url; // サーバーで https:// で始まるものだけ保存している
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      dd.appendChild(a);
+    } else {
+      dd.textContent = '—';
+    }
+    dl.appendChild(dd);
+  }
+
+  function actionButton(label, cls, onClick) {
+    var b = el('button', 'btn btn-sm ' + cls, label);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  // ============================================================ 申請状況
+
+  function openHub() {
+    if (!R.data || !R.data.eligible) return;
+    render();
+    App.openModal('ringiModal');
+    $('btnRingiNew').focus();
+  }
+
+  // ============================================================ 新規申請
+
+  function openForm(fromHub) {
+    if (!R.data || !R.data.eligible) return;
+    R.formFromHub = !!fromHub;
+    if (fromHub) $('ringiModal').hidden = true;
+    var user = App.getUser();
+    $('ringiForm').reset();
+    $('ringiApplicant').value = user ? user.name + '（' + user.employeeId + '）' : '';
+    $('ringiEmail').value = user ? user.email : '';
+    $('ringiRequestDate').value = App.formatDateShort(today());
+    $('ringiAmountText').textContent = '';
+    App.openModal('ringiFormModal');
+    $('ringiItem').focus();
+  }
+
+  function closeForm() {
+    App.closeModal('ringiFormModal');
+    if (R.formFromHub) openHub();
+    R.formFromHub = false;
+  }
+
+  function certaintyValue() {
+    var checked = document.querySelector('input[name="ringiCertainty"]:checked');
+    return checked ? checked.value : '';
+  }
+
+  function collect() {
+    return {
+      itemName: $('ringiItem').value.trim(),
+      quantity: $('ringiQuantity').value.trim(),
+      expenseType: $('ringiExpenseType').value,
+      purpose: $('ringiPurpose').value.trim(),
+      certainty: certaintyValue(),
+      amount: $('ringiAmount').value.trim(),
+      plannedDate: $('ringiPlannedDate').value,
+      attachmentUrl: $('ringiUrl').value.trim(),
+    };
+  }
+
+  /** 送る前の確認（最終的なチェックはサーバー側で必ず行う） */
+  function checkBeforeSubmit(req) {
+    var limits = R.data.limits;
+    if (!req.itemName) return '購入品名を入力してください';
+    if (!digitsOnly(req.quantity) || Number(req.quantity) < 1) return '購入数量は1以上の整数（数字だけ）で入力してください';
+    if (!req.expenseType) return '経費種別を選んでください';
+    if (!req.purpose) return '支出理由・目的を入力してください';
+    if (!req.certainty) return '金額の確度（確定・概算）を選んでください';
+    if (!digitsOnly(req.amount)) return '見積金額は数字だけで入力してください（カンマ・円は不要です）';
+    if (Number(req.amount) < limits.AMOUNT_MIN || Number(req.amount) > limits.AMOUNT_MAX) return '見積金額は1円〜1億円の範囲で入力してください';
+    if (!req.plannedDate) return '支出予定日を入力してください';
+    if (req.attachmentUrl && !/^https:\/\/\S+$/.test(req.attachmentUrl)) return '見積書・関連資料のURLは https:// で始まる共有リンクを貼ってください';
+    return '';
+  }
+
+  /** 金額の入力欄の下に「120,000円」と表示（数字以外なら注意） */
+  function showAmount(input, out) {
+    var text = input.value.trim();
+    out.classList.remove('is-error');
+    if (!text) { out.textContent = ''; return; }
+    if (!digitsOnly(text)) { out.textContent = '数字だけで入力してください'; out.classList.add('is-error'); return; }
+    out.textContent = Number(text).toLocaleString('ja-JP') + '円（税込）';
+  }
+
+  function onSubmit(event) {
+    event.preventDefault();
+    var req = collect();
+    var problem = checkBeforeSubmit(req);
+    if (problem) { App.showToast('warn', problem); return; }
+    act($('btnSubmitRingi'), 'submitRingiRequest', [req], '申請中...').then(function (res) {
+      if (!res || !res.success) return;
+      load().then(closeForm);
+    });
+  }
+
+  // ============================================================ 詳細・確定金額
+
+  /**
+   * 詳細を開く（from：'hub'＝申請状況から、'admin'＝管理者画面から）。
+   * 見られるのは本人と管理者だけ（サーバーが判定）。
+   */
+  function openDetail(ringiId, from) {
+    if (R.busy) return Promise.resolve(null);
+    R.detailFrom = from || '';
+    return call('getRingiRequestDetail', [ringiId]).then(function (res) {
+      if (!res.success) { App.showToast('error', res.message); return res; }
+      if (R.detailFrom === 'hub') $('ringiModal').hidden = true;
+      R.detail = res.data;
+      renderDetail();
+      App.openModal('ringiDetailModal');
+      return res;
+    });
+  }
+
+  function renderDetail() {
+    var r = R.detail;
+    var dl = $('ringiDetailInfo');
+    dl.textContent = '';
+    $('ringiDetailTitle').textContent = '稟議の詳細（' + r.ringiId + '）';
+    addInfo(dl, '申請状態', r.status + (r.rejectKind ? '（' + r.rejectKind + '）' : ''));
+    addInfo(dl, '申請日時', r.requestedAt);
+    addInfo(dl, '申請者', r.applicantName + '（' + r.employeeId + '）');
+    addInfo(dl, '購入品名', r.itemName);
+    addInfo(dl, '購入数量', r.quantity);
+    addInfo(dl, '経費種別', r.expenseType);
+    addInfo(dl, '支出理由・目的', r.purpose);
+    addInfo(dl, '金額の確度', r.certainty);
+    addInfo(dl, '申請金額（税込）', yen(r.amount));
+    addInfo(dl, '支出予定日', App.formatDateShort(r.plannedDate));
+    addLink(dl, '見積書・資料', r.attachmentUrl);
+    if (r.approvedAt) addInfo(dl, r.status === STATUS.REJECTED && r.rejectKind !== '再承認却下' ? '却下' : '承認', r.approverName + '（' + r.approvedAt + '）');
+    if (r.rejectReason) addInfo(dl, r.rejectKind === '再承認却下' ? '再承認の却下理由' : '却下理由', r.rejectReason);
+    if (r.finalAmount !== null) {
+      addInfo(dl, '確定金額（税込）', yen(r.finalAmount) + '（差額 ' + signedYen(r.diff) + '）');
+      addInfo(dl, '確定金額の入力', r.finalAmountBy + '（' + r.finalAmountAt + '）');
+      addInfo(dl, '再承認要否', r.reapprovalRequired);
+    }
+    if (r.reapprovedAt) addInfo(dl, r.rejectKind === '再承認却下' ? '再承認の却下' : '再承認', r.reapproverName + '（' + r.reapprovedAt + '）');
+
+    var final = $('ringiFinalSection');
+    final.hidden = !r.canEnterFinalAmount;
+    if (r.canEnterFinalAmount) {
+      $('ringiFinalTitle').textContent = r.finalAmount === null ? '確定金額を入力' : '確定金額を訂正';
+      $('ringiFinalNote').textContent = '申請金額は ' + yen(r.amount) + ' です（申請金額は変わりません）。確定金額が申請金額を1円でも超えると「再承認待ち」になり、管理者の再承認が必要です。申請金額以下なら「承認済」のままです。';
+      $('ringiFinalAmount').value = r.finalAmount === null ? '' : String(r.finalAmount);
+      $('ringiFinalMemo').value = '';
+      updateFinalPreview();
+    }
+    var ul = $('ringiHistory');
+    ul.textContent = '';
+    (r.history || []).forEach(function (h) {
+      var li = el('li', '');
+      var text = h.at + '　' + h.action + '　' + h.actorName;
+      if (h.statusBefore !== h.statusAfter && h.statusAfter) text += '　' + (h.statusBefore ? h.statusBefore + ' → ' : '') + h.statusAfter;
+      if (h.amountAfter !== null) text += '　確定金額 ' + (h.amountBefore !== null ? yen(h.amountBefore) + ' → ' : '') + yen(h.amountAfter);
+      if (h.note) text += '　（' + h.note + '）';
+      li.textContent = text;
+      ul.appendChild(li);
+    });
+    if (!ul.children.length) ul.appendChild(el('li', 'empty', '履歴はありません'));
+  }
+
+  /** 確定金額の欄の下に、差額と再承認になるかを表示（判定はサーバー） */
+  function updateFinalPreview() {
+    var r = R.detail;
+    var out = $('ringiFinalPreview');
+    var text = $('ringiFinalAmount').value.trim();
+    out.classList.remove('is-error');
+    if (!r || !text) { out.textContent = ''; return; }
+    if (!digitsOnly(text)) { out.textContent = '数字だけで入力してください'; out.classList.add('is-error'); return; }
+    var diff = Number(text) - Number(r.amount);
+    out.textContent = Number(text).toLocaleString('ja-JP') + '円・差額 ' + signedYen(diff) + (diff > 0 ? '　→ 再承認待ちになります' : '　→ 承認済のままです');
+    out.classList.toggle('is-error', diff > 0);
+  }
+
+  function onSaveFinal() {
+    var r = R.detail;
+    if (!r || R.busy) return;
+    var text = $('ringiFinalAmount').value.trim();
+    if (!digitsOnly(text)) { App.showToast('warn', '確定金額は数字だけで入力してください'); $('ringiFinalAmount').focus(); return; }
+    var limits = (R.data && R.data.limits) || { AMOUNT_MIN: 1, AMOUNT_MAX: 100000000 };
+    if (Number(text) < limits.AMOUNT_MIN || Number(text) > limits.AMOUNT_MAX) { App.showToast('warn', '確定金額は1円〜1億円の範囲で入力してください'); return; }
+    act($('btnRingiFinalSave'), 'enterRingiFinalAmount', [r.ringiId, text, $('ringiFinalMemo').value.trim()], '保存中...').then(function (res) {
+      if (!res || !res.success) return;
+      var from = R.detailFrom;
+      // 最新の状態で詳細を表示し直す（一覧・管理者画面も取り直す）
+      openDetail(r.ringiId, from);
+      load();
+      if (from === 'admin' && window.LeafAdmin && window.LeafAdmin.reloadRingi) window.LeafAdmin.reloadRingi();
+    });
+  }
+
+  function closeDetail() {
+    if (R.busy) return;
+    App.closeModal('ringiDetailModal');
+    var from = R.detailFrom;
+    R.detail = null;
+    R.detailFrom = '';
+    if (from === 'hub') openHub();
+  }
+
+  // ============================================================ 操作の共通処理
+
+  function setBusy(isBusy, button, busyText) {
+    R.busy = isBusy;
+    document.body.classList.toggle('is-busy', isBusy);
+    var selector = ['#ringiCard'].concat(MODALS.map(function (id) { return '#' + id; })).map(function (s) { return s + ' button'; }).join(', ');
+    var buttons = document.querySelectorAll(selector);
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (isBusy) {
+        if (!b.hasAttribute('data-was-disabled')) b.setAttribute('data-was-disabled', b.disabled ? '1' : '');
+        b.disabled = true;
+        if (b === button) { b.setAttribute('data-original-label', b.textContent); b.textContent = busyText || '処理中...'; }
+      } else {
+        if (b.hasAttribute('data-original-label')) { b.textContent = b.getAttribute('data-original-label'); b.removeAttribute('data-original-label'); }
+        b.disabled = b.getAttribute('data-was-disabled') === '1';
+        b.removeAttribute('data-was-disabled');
+      }
+    }
+  }
+
+  /** サーバーの処理を1回だけ実行して通知する */
+  function act(button, fn, args, busyText) {
+    if (R.busy) return Promise.resolve(null);
+    setBusy(true, button, busyText);
+    return call(fn, args).then(function (res) {
+      setBusy(false);
+      App.showToast(res.success ? 'success' : 'error', res.message);
+      return res;
+    }, function (error) {
+      setBusy(false);
+      App.showToast('error', '画面の処理でエラーが発生しました：' + (error && error.message ? error.message : error));
+      return null;
+    });
+  }
+
+  function bind() {
+    $('btnOpenRingi').addEventListener('click', function () { openForm(false); });
+    $('btnOpenRingiHistory').addEventListener('click', openHub);
+    $('btnRingiNew').addEventListener('click', function () { openForm(true); });
+    $('btnRingiFormBack').addEventListener('click', closeForm);
+    $('btnRingiFormClose').addEventListener('click', closeForm);
+    $('ringiForm').addEventListener('submit', onSubmit);
+    $('ringiAmount').addEventListener('input', function () { showAmount($('ringiAmount'), $('ringiAmountText')); });
+    $('ringiFinalAmount').addEventListener('input', updateFinalPreview);
+    $('btnRingiFinalSave').addEventListener('click', onSaveFinal);
+    $('btnRingiDetailBack').addEventListener('click', closeDetail);
+    $('btnRingiDetailClose').addEventListener('click', closeDetail);
+  }
+
+  bind();
+  load();
+  window.LeafRingi = { reload: load, openDetail: function (ringiId) { return openDetail(ringiId, 'admin'); } };
+})();
+</script>

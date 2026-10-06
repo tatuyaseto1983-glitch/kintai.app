@@ -98,8 +98,16 @@ function getAllStaff_() {
         reportSubmitTarget: reportTargetFlag_(r['日報提出対象'], r['勤怠集計対象'] === undefined || String(r['勤怠集計対象']).trim() !== ATTENDANCE_TARGET.NO),
         // 日報確認対象：他の人の日報を「確認しました」する人（確認の分母）か。「対象外」だけ外す。空欄・列なし＝対象
         reportConfirmTarget: reportTargetFlag_(r['日報確認対象'], true),
+        // 自己承認可：TRUE（チェックボックス・文字のどちらでも）の人だけ自分の稟議を承認できる。空欄・列なし＝不可
+        selfApproval: isSelfApprovalValue_(r['自己承認可']),
       };
     });
+}
+
+/** スタッフマスタ「自己承認可」が TRUE か（true／'TRUE'／'true'）。それ以外・空欄・列なしは false */
+function isSelfApprovalValue_(value) {
+  if (value === true) return true;
+  return value !== undefined && value !== null && String(value).trim().toUpperCase() === SELF_APPROVAL.YES;
 }
 
 /** 「対象」→ true、「対象外」→ false、空欄・列なし → fallback */

@@ -156,6 +156,21 @@
         <p class="card-note">承認できるのは、今のシフトが通常勤務の日だけです。有給時間は実働とは別に記録します。承認・取消のあと、その日の勤怠の遅刻・早退を計算し直します（打刻・実働は変わりません）。</p>
         <div class="request-list" id="admPaidLeave"></div>
       </div>
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">稟議申請 <span class="badge badge-warn" id="rgPendingBadge" hidden></span></h2>
+          <label class="control-check small"><input type="checkbox" id="rgShowDone"> 処理済みも表示</label>
+        </div>
+        <p class="card-note">承認・却下できるのは在籍中の管理者だけです。自分の稟議は、スタッフマスタの「自己承認可」が TRUE の人だけ処理できます。概算の稟議は、確定金額が申請金額を超えると「再承認待ち」になります。</p>
+        <h3 class="section-title">申請中</h3>
+        <div class="request-list" id="admRingiPending"></div>
+        <h3 class="section-title">再承認待ち</h3>
+        <div class="request-list" id="admRingiReapproval"></div>
+        <div id="admRingiDoneWrap" hidden>
+          <h3 class="section-title">処理済み（最近）</h3>
+          <div class="request-list" id="admRingiDone"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ フレックス ============ -->

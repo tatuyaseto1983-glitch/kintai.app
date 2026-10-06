@@ -23,10 +23,11 @@
     'approveHolidayWorkRequest', 'rejectHolidayWorkRequest', 'approveHolidayWorkCancellation', 'rejectHolidayWorkCancellation',
     'getAttendanceDetail', 'getAdminDayDetail',
     'approvePaidLeaveRequest', 'rejectPaidLeaveRequest', 'approvePaidLeaveCancellation', 'rejectPaidLeaveCancellation',
+    'approveRingiRequest', 'rejectRingiRequest', 'reapproveRingiRequest', 'rejectRingiReapproval',
     'getAdminEmployeeMonth', 'exportAdminEmployeeMonthCsv', 'getAdminMonthlyAnalysis', 'exportAdminMonthlySummaryCsv', 'exportSharoushiDetailCsv',
     'exportSharoushiTimecardXlsx',
   ];
-  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports'];
+  var ALL_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports', 'ringi'];
 
   var S = {
     loaded: false,  // 一度でも管理者データを表示できたか
@@ -99,6 +100,7 @@
     if (d.overtime) renderOvertime();
     if (d.holidayWork) renderHolidayWork();
     if (d.paidLeave) renderPaidLeave();
+    if (d.ringi) renderRingi();
     if (d.flex) renderFlex();
     if (d.restDays) renderRestDays();
     if (d.reports) renderReports();
@@ -700,6 +702,91 @@
       }
       return item;
     });
+  }
+
+  // ============================================================ 稟議申請
+
+  /** 稟議申請：申請中（承認・却下）と再承認待ち（再承認・再承認を却下）。詳細・確定金額は稟議の詳細画面（RingiScripts）を開く */
+  function renderRingi() {
+    var list = S.data.ringi;
+    if (list.setupRequired) {
+      $('rgPendingBadge').hidden = true;
+      $('admRingiPending').textContent = '';
+      $('admRingiPending').appendChild(el('p', 'empty', '稟議管理シートがまだありません。Apps Script で setupSystem() を実行してください。'));
+      $('admRingiReapproval').textContent = '';
+      return;
+    }
+    var waiting = list.pendingCount + list.reapprovalCount;
+    $('rgPendingBadge').hidden = !waiting;
+    $('rgPendingBadge').textContent = '処理待ち ' + waiting + '件';
+    fillRingi($('admRingiPending'), list.pending, '申請中の稟議はありません');
+    fillRingi($('admRingiReapproval'), list.reapproval, '再承認待ちの稟議はありません');
+    $('admRingiDoneWrap').hidden = !$('rgShowDone').checked;
+    if ($('rgShowDone').checked) fillRingi($('admRingiDone'), list.processed, '処理済みの稟議はありません');
+  }
+
+  function fillRingi(box, items, emptyText) {
+    box.textContent = '';
+    if (!items.length) { box.appendChild(el('p', 'empty', emptyText)); return; }
+    items.forEach(function (r) { box.appendChild(ringiItem(r)); });
+  }
+
+  function yen(n) { return n === null || n === undefined ? '—' : Number(n).toLocaleString('ja-JP') + '円'; }
+
+  function ringiItem(r) {
+    var waiting = r.status === '申請中' || r.status === '再承認待ち';
+    var item = el('div', 'request' + (waiting ? ' is-pending' : ''));
+    item.setAttribute('data-ringi-id', r.ringiId);
+    var head = el('div', 'request-head');
+    head.appendChild(el('span', 'request-name', r.applicantName));
+    head.appendChild(el('span', 'badge ' + (waiting ? 'badge-pending' : r.status === '却下' ? 'badge-ng' : 'badge-ok'), r.status + (r.rejectKind ? '（' + r.rejectKind + '）' : '')));
+    item.appendChild(head);
+    item.appendChild(el('div', 'request-main', r.itemName + '　' + yen(r.amount) + '（' + r.certainty + '）'));
+    var meta = '稟議ID：' + r.ringiId + '　申請日：' + r.requestDate + '\n経費種別：' + r.expenseType + '　数量：' + r.quantity + '　支出予定日：' + r.plannedDate +
+      '\n支出理由・目的：' + r.purpose;
+    if (r.finalAmount !== null) meta += '\n確定金額：' + yen(r.finalAmount) + '（差額 ' + (r.diff > 0 ? '+' : r.diff < 0 ? '-' : '±') + Math.abs(r.diff).toLocaleString('ja-JP') + '円）　入力：' + r.finalAmountBy;
+    if (r.approvedAt) meta += '\n' + (r.status === '却下' && r.rejectKind !== '再承認却下' ? '却下' : '承認') + '：' + r.approverName + '（' + r.approvedAt + '）';
+    if (r.reapprovedAt) meta += '\n' + (r.rejectKind === '再承認却下' ? '再承認の却下' : '再承認') + '：' + r.reapproverName + '（' + r.reapprovedAt + '）';
+    if (r.rejectReason) meta += '\n却下理由：' + r.rejectReason;
+    item.appendChild(el('div', 'request-meta', meta));
+    if (r.selfBlocked) item.appendChild(el('div', 'cell-alert', '自分の稟議のため処理できません（ほかの管理者が処理します）'));
+
+    var who = r.applicantName + 'さん　' + r.itemName + '　申請金額 ' + yen(r.amount) + '（' + r.certainty + '）';
+    var row = el('div', 'request-actions');
+    var detail = el('button', 'btn btn-outline btn-sm js-admin-action', r.canEnterFinalAmount ? '詳細・確定金額' : '詳細');
+    detail.type = 'button';
+    detail.addEventListener('click', function () { if (window.LeafRingi) window.LeafRingi.openDetail(r.ringiId); });
+    row.appendChild(detail);
+    if (r.canDecide) {
+      appendRingiAction(row, '却下', 'btn-danger', function () {
+        confirmAction({ title: '稟議を却下しますか？', text: who, okLabel: '却下する', okClass: 'btn-danger', needReason: true,
+          run: function (btn, reason) { return adminAction(btn, 'rejectRingiRequest', [r.ringiId, reason]); } });
+      });
+      appendRingiAction(row, '承認', 'btn-primary', function () {
+        confirmAction({ title: '稟議を承認しますか？', text: who + (r.certainty === '概算' ? '\n\n概算のため、金額が決まったら確定金額を入力します。申請金額を超えた場合は再承認が必要です。' : ''),
+          okLabel: '承認する', okClass: 'btn-primary', run: function (btn) { return adminAction(btn, 'approveRingiRequest', [r.ringiId]); } });
+      });
+    }
+    if (r.canReapprove) {
+      var over = who + '\n確定金額 ' + yen(r.finalAmount) + '（申請金額を ' + Number(r.diff).toLocaleString('ja-JP') + '円 超過）';
+      appendRingiAction(row, '再承認を却下', 'btn-danger', function () {
+        confirmAction({ title: '再承認を却下しますか？', text: over + '\n\n却下すると申請状態は「却下」（却下区分：再承認却下）になります。', okLabel: '再承認を却下する', okClass: 'btn-danger', needReason: true,
+          run: function (btn, reason) { return adminAction(btn, 'rejectRingiReapproval', [r.ringiId, reason]); } });
+      });
+      appendRingiAction(row, '再承認', 'btn-primary', function () {
+        confirmAction({ title: '再承認しますか？', text: over + '\n\n再承認すると「再承認済」になり、確定金額は変更できなくなります。', okLabel: '再承認する', okClass: 'btn-primary',
+          run: function (btn) { return adminAction(btn, 'reapproveRingiRequest', [r.ringiId]); } });
+      });
+    }
+    item.appendChild(row);
+    return item;
+  }
+
+  function appendRingiAction(row, label, cls, onClick) {
+    var b = el('button', 'btn btn-sm js-admin-action ' + cls, label);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    row.appendChild(b);
   }
 
   function renderPendingBadge(id, count) {
@@ -1308,6 +1395,7 @@
     $('otShowDone').addEventListener('change', function () { if (S.data.overtime) renderOvertime(); });
     $('hwShowDone').addEventListener('change', function () { if (S.data.holidayWork) renderHolidayWork(); });
     $('plShowDone').addEventListener('change', function () { if (S.data.paidLeave) renderPaidLeave(); });
+    $('rgShowDone').addEventListener('change', function () { if (S.data.ringi) renderRingi(); });
     $('admReportFilter').addEventListener('change', function () { if (S.data.reports) renderReports(); });
     $('btnAdminReload').addEventListener('click', function () {
       if (S.busy) return;
@@ -1337,6 +1425,6 @@
   }
 
   bind();
-  window.LeafAdmin = { open: open };
+  window.LeafAdmin = { open: open, reloadRingi: function () { return load(['ringi']); } };
 })();
 </script>

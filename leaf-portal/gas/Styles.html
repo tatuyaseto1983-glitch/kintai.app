@@ -314,7 +314,7 @@ h2, h3, p { margin: 0; }
 .notice-detail { font-size: 14px; color: var(--text-sub); margin: 6px 0 12px; white-space: pre-line; }
 
 /* ---------- フォーム・モーダル ---------- */
-input[type="text"], input[type="date"], input[type="time"], select, textarea {
+input[type="text"], input[type="url"], input[type="date"], input[type="time"], select, textarea {
   width: 100%; padding: 10px 12px; border: 1px solid var(--brand-input-border); border-radius: var(--brand-radius-control); background: var(--brand-surface); min-height: 44px;
 }
 textarea { resize: vertical; }
@@ -361,6 +361,14 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--brand-focus
 .hw-range { font-size: 20px; font-weight: 600; color: var(--brand-heading); font-variant-numeric: tabular-nums; padding-top: 6px; }
 .hw-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .hw-section { padding: 16px 0; border-top: 1px solid var(--line); }
+/* 稟議申請 */
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.choice-row .control-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; }
+.form-help.is-error { color: var(--red); font-weight: 600; }
+.ringi-card .hw-card-date { font-size: 16px; overflow-wrap: anywhere; }
+.ringi-history { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.ringi-history li { padding: 6px 0; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+#ringiDetailInfo dd { overflow-wrap: anywhere; white-space: pre-line; }
 .hw-section:first-of-type { border-top: 0; padding-top: 0; }
 .hw-section-title { font-size: 15px; font-weight: 700; letter-spacing: .04em; color: var(--brand-heading); margin-bottom: 6px; }
 .hw-section-note { font-size: 12px; color: var(--text-sub); margin-bottom: 10px; }

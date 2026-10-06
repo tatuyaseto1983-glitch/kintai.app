@@ -1,0 +1,140 @@
+<!--
+  RingiView.html — 稟議申請の画面。Index.html の中に読み込まれます（休日出勤申請と同じ作り）。
+    ringiModal        … 申請状況（「新しく申請する」「自分の申請」）
+    ringiFormModal    … 新規申請のフォーム
+    ringiDetailModal  … 申請の詳細・操作の履歴・確定金額の入力と訂正（管理者画面からも開く）
+  申請者（社員ID・氏名・メール）は表示だけで、サーバーへは送りません（サーバーがログイン中の社員で決めます）。
+  承認・却下・再承認は管理者画面（AdminView.html）から行います。権限はすべてサーバーで確認します。
+-->
+
+<!-- ================= 申請状況 ================= -->
+<div class="modal" id="ringiModal" role="dialog" aria-modal="true" aria-labelledby="ringiTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="ringiTitle">稟議申請</h2>
+      <button type="button" class="modal-close" data-close aria-label="閉じる">×</button>
+    </div>
+
+    <section class="hw-section" aria-labelledby="ringiNewTitle">
+      <h3 class="hw-section-title" id="ringiNewTitle">新しく申請する</h3>
+      <p class="form-lead">備品の購入や支出の前に申請してください。管理者が承認すると「承認済」になります。</p>
+      <button type="button" class="btn btn-primary" id="btnRingiNew">＋稟議を申請</button>
+    </section>
+
+    <section class="hw-section" aria-labelledby="ringiListTitle">
+      <h3 class="hw-section-title" id="ringiListTitle">自分の申請</h3>
+      <p class="hw-section-note">「概算」で承認された申請は、金額が決まったら［詳細］から確定金額を入力してください。申請金額を超えた場合は再承認が必要です。</p>
+      <div class="hw-cards" id="ringiList"><p class="empty">読み込み中...</p></div>
+    </section>
+  </div>
+</div>
+
+<!-- ================= 新規申請のフォーム ================= -->
+<div class="modal" id="ringiFormModal" role="dialog" aria-modal="true" aria-labelledby="ringiFormTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="ringiFormTitle">稟議を申請する</h2>
+      <button type="button" class="modal-close" id="btnRingiFormClose" aria-label="閉じる">×</button>
+    </div>
+    <form id="ringiForm" novalidate>
+      <p class="form-lead">購入・支出の内容を入力してください。申請者・申請日は自動で記録します。</p>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="ringiApplicant">申請者</label>
+          <input type="text" id="ringiApplicant" readonly aria-readonly="true" class="readonly-input">
+        </div>
+        <div>
+          <label for="ringiRequestDate">申請日</label>
+          <input type="text" id="ringiRequestDate" readonly aria-readonly="true" class="readonly-input">
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="ringiEmail">メールアドレス</label>
+        <input type="text" id="ringiEmail" readonly aria-readonly="true" class="readonly-input">
+      </div>
+      <div class="form-row">
+        <label for="ringiItem">購入品名 <span class="req">必須</span></label>
+        <input type="text" id="ringiItem" maxlength="200" required placeholder="例：ショールーム用ダイニングチェア">
+      </div>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="ringiQuantity">購入数量 <span class="req">必須</span></label>
+          <input type="text" id="ringiQuantity" inputmode="numeric" pattern="[0-9]*" maxlength="6" required placeholder="例：2">
+        </div>
+        <div>
+          <label for="ringiExpenseType">経費種別 <span class="req">必須</span></label>
+          <select id="ringiExpenseType" required><option value="">選んでください</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="ringiPurpose">支出理由・目的 <span class="req">必須</span></label>
+        <textarea id="ringiPurpose" rows="3" maxlength="2000" required placeholder="例：ショールームの展示替えのため"></textarea>
+      </div>
+      <div class="form-row">
+        <span class="label-like" id="ringiCertaintyLabel">金額の確度 <span class="req">必須</span></span>
+        <div class="choice-row" role="radiogroup" aria-labelledby="ringiCertaintyLabel">
+          <label class="control-check"><input type="radio" name="ringiCertainty" value="確定"> 確定</label>
+          <label class="control-check"><input type="radio" name="ringiCertainty" value="概算"> 概算（承認後に確定金額を入力）</label>
+        </div>
+      </div>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="ringiAmount">見積金額（税込・円） <span class="req">必須</span></label>
+          <input type="text" id="ringiAmount" inputmode="numeric" pattern="[0-9]*" maxlength="9" required placeholder="例：120000">
+          <p class="form-help" id="ringiAmountText" aria-live="polite"></p>
+        </div>
+        <div>
+          <label for="ringiPlannedDate">支出予定日 <span class="req">必須</span></label>
+          <input type="date" id="ringiPlannedDate" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="ringiUrl">見積書または関連資料のURL <span class="optional">任意</span></label>
+        <input type="url" id="ringiUrl" maxlength="2000" placeholder="https://drive.google.com/...（共有リンクを貼ってください）">
+        <p class="form-help">見積書などは共有ドライブに置き、共有リンクを貼ってください（https:// で始まるもの）。</p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="btnRingiFormBack">戻る</button>
+        <button type="submit" class="btn btn-primary" id="btnSubmitRingi">申請する</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ================= 詳細・確定金額 ================= -->
+<div class="modal" id="ringiDetailModal" role="dialog" aria-modal="true" aria-labelledby="ringiDetailTitle" hidden>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h2 id="ringiDetailTitle">稟議の詳細</h2>
+      <button type="button" class="modal-close" id="btnRingiDetailClose" aria-label="閉じる">×</button>
+    </div>
+    <dl class="hw-card-info" id="ringiDetailInfo"></dl>
+
+    <section class="hw-section" id="ringiFinalSection" hidden aria-labelledby="ringiFinalTitle">
+      <h3 class="hw-section-title" id="ringiFinalTitle">確定金額</h3>
+      <p class="hw-section-note" id="ringiFinalNote"></p>
+      <div class="form-row form-row-2">
+        <div>
+          <label for="ringiFinalAmount">確定金額（税込・円） <span class="req">必須</span></label>
+          <input type="text" id="ringiFinalAmount" inputmode="numeric" pattern="[0-9]*" maxlength="9">
+          <p class="form-help" id="ringiFinalPreview" aria-live="polite"></p>
+        </div>
+        <div>
+          <label for="ringiFinalMemo">訂正の理由・備考 <span class="optional">任意</span></label>
+          <input type="text" id="ringiFinalMemo" maxlength="2000">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-primary" id="btnRingiFinalSave">確定金額を保存</button>
+      </div>
+    </section>
+
+    <section class="hw-section" aria-labelledby="ringiHistoryTitle">
+      <h3 class="hw-section-title" id="ringiHistoryTitle">履歴</h3>
+      <ul class="ringi-history" id="ringiHistory"></ul>
+    </section>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="btnRingiDetailBack">戻る</button>
+    </div>
+  </div>
+</div>

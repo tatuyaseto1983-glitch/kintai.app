@@ -39,10 +39,34 @@ const SHEET_NAMES = {
   // 段階3：シフト（管理者がシートに直接入力。行がない日＝未登録）と有給休暇申請
   SHIFTS: 'シフト',
   PAID_LEAVE: '有給休暇申請',
+  // 稟議申請（購入・支出の事前承認）と、その操作の履歴（申請・承認・却下・確定金額の入力と訂正・再承認）
+  RINGI: '稟議管理',
+  RINGI_HISTORY: '稟議_更新履歴',
 };
 
 /** 権限 */
 const ROLES = { STAFF: 'staff', ADMIN: 'admin' };
+
+/**
+ * 稟議申請。状態の流れ：申請中 →（承認）承認済 →［概算で確定金額が申請金額を超えた］再承認待ち →（再承認）再承認済
+ *                          └（却下）却下                                 └（再承認を却下）却下（却下区分＝再承認却下）
+ * 確定金額が申請金額以下なら承認済のまま。再承認済のあとは確定金額を変えられない。
+ */
+const RINGI_STATUS = { PENDING: '申請中', APPROVED: '承認済', REJECTED: '却下', REAPPROVAL_PENDING: '再承認待ち', REAPPROVED: '再承認済' };
+const RINGI_CERTAINTY = { FIXED: '確定', ESTIMATE: '概算' };
+const RINGI_EXPENSE_TYPES = ['備品購入', '旅費交通費', '接待交際費', '研修費', '広告宣伝費', '雑費', 'その他'];
+const RINGI_REAPPROVAL = { REQUIRED: '要', NOT_REQUIRED: '不要' };
+/** 却下の区分（通常の申請の却下と、再承認の却下を区別する） */
+const RINGI_REJECT_KIND = { NORMAL: '通常却下', REAPPROVAL: '再承認却下' };
+/** 稟議_更新履歴の「操作」 */
+const RINGI_ACTIONS = {
+  SUBMIT: '申請', APPROVE: '承認', REJECT: '却下', FINAL_AMOUNT: '確定金額入力', FINAL_AMOUNT_FIX: '確定金額訂正',
+  REAPPROVE: '再承認', REAPPROVAL_REJECT: '再承認却下',
+};
+/** 金額（税込・円）と数量の範囲 */
+const RINGI_LIMITS = { AMOUNT_MIN: 1, AMOUNT_MAX: 100000000, QUANTITY_MAX: 100000 };
+/** スタッフマスタ「自己承認可」：TRUE の人だけ、自分の稟議を承認・再承認できる（社長を想定。氏名では判定しない） */
+const SELF_APPROVAL = { YES: 'TRUE', NO: 'FALSE' };
 
 /** 勤務区分 */
 const WORK_TYPES = { FIXED: '固定勤務', FLEX: 'フレックス' };
@@ -251,7 +275,7 @@ const SHEET_DEFINITIONS = [
     headers: ['社員ID', '氏名', 'メールアドレス', '権限', '雇用区分', '勤務区分', '標準出勤', '標準退勤',
       '1日所定時間', '週所定時間', '月所定時間', '在籍状況', '入社日', '部署', '備考'],
     // 任意の列：setupSystem() が右端に追加する。無くても動く（空欄＝勤怠集計の対象）
-    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象', '有給申請対象', '日報提出対象', '日報確認対象'],
+    optionalHeaders: ['勤怠集計対象', '休日出勤申請対象', '有給申請対象', '日報提出対象', '日報確認対象', '自己承認可'],
     choices: {
       '権限': [ROLES.STAFF, ROLES.ADMIN],
       '勤務区分': [WORK_TYPES.FIXED, WORK_TYPES.FLEX],
@@ -262,7 +286,8 @@ const SHEET_DEFINITIONS = [
     },
     // 列を新しく作ったときだけ、初期値を入れる（既存の値は変えない）。中身は HolidayWorkService.gs・PaidLeaveService.gs
     onColumnsAdded: function (sheet, added) {
-      return [initHolidayWorkTargetColumn_(sheet, added), initPaidLeaveTargetColumn_(sheet, added), initReportTargetColumns_(sheet, added)]
+      return [initHolidayWorkTargetColumn_(sheet, added), initPaidLeaveTargetColumn_(sheet, added), initReportTargetColumns_(sheet, added),
+        initSelfApprovalColumn_(sheet, added)]
         .filter(function (x) { return x; }).join('。');
     },
     freeChoices: { '雇用区分': EMPLOYMENT_TYPES },
@@ -387,6 +412,28 @@ const SHEET_DEFINITIONS = [
       'ステータス': [HOLIDAY_WORK_STATUS.PENDING, HOLIDAY_WORK_STATUS.APPROVED, HOLIDAY_WORK_STATUS.REJECTED,
         HOLIDAY_WORK_STATUS.CANCEL_REQUESTED, HOLIDAY_WORK_STATUS.CANCELLED],
     },
+  },
+  {
+    // 稟議申請（1申請1行）。申請金額は申請後に書き換えない。確定金額の訂正の履歴は 稟議_更新履歴 に残す
+    // 添付資料URL：今は見積書などの共有リンクを貼るだけ（将来、画面からのアップロードを足すときもこの列に保存する）
+    name: SHEET_NAMES.RINGI,
+    headers: ['稟議ID', '申請日時', '申請者メール', '申請者名', '社員ID', '購入品名', '購入数量', '経費種別', '支出理由・目的',
+      '金額の確度', '申請金額', '支出予定日', '添付資料URL', '申請状態', '承認者', '承認者メール', '承認日時', '却下理由',
+      '確定金額', '確定金額入力者', '確定金額入力者メール', '確定金額入力日時', '概算との差額', '再承認要否', '再承認者',
+      '再承認者メール', '再承認日時', '最終更新日時'],
+    // 却下が「通常の却下」か「再承認の却下」か（右端に追加）
+    optionalHeaders: ['却下区分'],
+    choices: {
+      '経費種別': RINGI_EXPENSE_TYPES,
+      '金額の確度': [RINGI_CERTAINTY.FIXED, RINGI_CERTAINTY.ESTIMATE],
+      '申請状態': [RINGI_STATUS.PENDING, RINGI_STATUS.APPROVED, RINGI_STATUS.REJECTED, RINGI_STATUS.REAPPROVAL_PENDING, RINGI_STATUS.REAPPROVED],
+    },
+  },
+  {
+    // 稟議の操作ごとに1行追加（申請・承認・却下・確定金額入力・確定金額訂正・再承認・再承認却下）。行は消さない
+    name: SHEET_NAMES.RINGI_HISTORY,
+    headers: ['履歴ID', '稟議ID', '日時', '操作', '操作者', '操作者メール', '操作者社員ID', '変更前の申請状態', '変更後の申請状態',
+      '変更前の確定金額', '変更後の確定金額', '理由・備考'],
   },
   {
     name: SHEET_NAMES.SETTINGS,

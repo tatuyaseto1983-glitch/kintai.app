@@ -18,7 +18,7 @@
  */
 
 /** getAdminDashboard() で取得できる情報の種類 */
-const ADMIN_DASHBOARD_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports'];
+const ADMIN_DASHBOARD_PARTS = ['admin', 'summary', 'daily', 'monthly', 'corrections', 'overtime', 'holidayWork', 'paidLeave', 'flex', 'restDays', 'reports', 'ringi'];
 
 /** 申請一覧で返す「処理済み」の件数（承認待ちは全件返す） */
 const ADMIN_RECENT_REQUEST_LIMIT = 30;
@@ -59,6 +59,7 @@ function getAdminDashboard(params) {
     if (has('overtime')) data.overtime = listRequestsForAdmin_(SHEET_NAMES.OVERTIME, toOvertimeView_, ctx);
     if (has('holidayWork')) data.holidayWork = buildAdminHolidayWork_(ctx);
     if (has('paidLeave')) data.paidLeave = buildAdminPaidLeave_(ctx);
+    if (has('ringi')) data.ringi = buildAdminRingi_(); // 稟議申請（申請中・再承認待ち・最近の処理済み）
     if (has('flex')) data.flex = buildAdminFlex_(ctx, date, month);
     if (has('restDays')) data.restDays = buildAdminRestDays_(ctx, date);
     if (has('reports')) data.reports = buildAdminReports_(ctx, date);

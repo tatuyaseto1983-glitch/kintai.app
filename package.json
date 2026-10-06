@@ -10,7 +10,7 @@
     "start": "node dev/server.js",
     "build": "node dev/build-gas-html.js",
     "test": "node --test test/*.test.js",
-    "test:ui": "node --test test-ui/leaf-staff-screen.e2e.js test-ui/leaf-admin-screen.e2e.js test-ui/leaf-overtime-form.e2e.js test-ui/leaf-reports-screen.e2e.js test-ui/leaf-holiday-work.e2e.js test-ui/leaf-work-segments.e2e.js test-ui/leaf-stage2.e2e.js test-ui/leaf-stage3.e2e.js test-ui/leaf-stage4.e2e.js test-ui/leaf-stage5.e2e.js",
+    "test:ui": "node --test test-ui/leaf-staff-screen.e2e.js test-ui/leaf-admin-screen.e2e.js test-ui/leaf-overtime-form.e2e.js test-ui/leaf-reports-screen.e2e.js test-ui/leaf-holiday-work.e2e.js test-ui/leaf-work-segments.e2e.js test-ui/leaf-stage2.e2e.js test-ui/leaf-stage3.e2e.js test-ui/leaf-stage4.e2e.js test-ui/leaf-stage5.e2e.js test-ui/leaf-ringi.e2e.js",
     "leaf:preview": "node dev/leaf-portal-server.js"
   }
 }
